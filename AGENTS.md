@@ -38,7 +38,7 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 
 ## 阶段验收(Definition of Done)
 
-1. 阶段完成 = 该阶段验收测试全绿 + STATUS.md 已更新(完成/进行中/下一步)+ 新决策已入 DECISIONS.md,三者缺一不可。
+1. 阶段完成 = 该阶段验收测试全绿 + STATUS.md 已更新(完成/进行中/下一步)+ 新决策已入 DECISIONS.md + **学习文档 docs/learning/NN-*.md 已追加**(每章模板见 00),四者缺一不可。
 2. 测试分层:单元(注册表 fail-closed / append-only / schema 版本 / config 阈值)· 回放(录制-回放,不依赖真实 API;改 prompt / 条款 / 工具 schema 必须跑)· 端到端(引用角标链路)。
 3. 每写完一个模块立即写它的测试,不许攒到阶段末尾一次补。
 4. 测试描述行为:改行为就改测试,并在 DECISIONS.md 说明为什么。
@@ -56,3 +56,4 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 - 架构:docs/architecture-v3.md;图:docs/diagram/agent-v3.html / agent-v3.png
 - SQLite:docs/sqlite-schema.md · Qdrant:docs/qdrant-schema.md · Redis:docs/redis-usage.md
 - 骨架与 dsh 参照:docs/project-skeleton.md
+- 学习教程(过程叙事,比 README 详细):docs/learning/00-overview.md
