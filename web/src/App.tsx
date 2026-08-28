@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Message, Citation } from './lib/types'
 import { streamMockReply, mockChunk } from './lib/mock'
@@ -125,7 +125,7 @@ export default function App() {
       <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar active={active} onSelect={setActive} onNew={() => { setMsgsBy((m) => ({ ...m, [active]: [] })); setActiveChunk(null) }} busyBy={busyBy} /></div>
       <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={(c) => { setActiveChunk(c.chunk_id); setDetailsOpen(true) }} title={SESSIONS[active]} onToggleDetails={() => setDetailsOpen(!detailsOpen)} detailsOpen={detailsOpen} /></div>
       <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} activeChunk={activeChunk} sources={sources} onActiveChunk={setActiveChunk} /></div>
-      {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} side="sidebar" />}
+      {!detailsOpen && <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(true)} title="展开溯源"><I><path d="M6 9l6 6 6-6"/></I></button>}      {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} side="sidebar" />}
       {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} side="details" />}
     </div>
   )
