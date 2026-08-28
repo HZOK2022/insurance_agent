@@ -40,7 +40,7 @@ function Sidebar({ active, onSelect, onNew, busyBy }: { active: number; onSelect
       <div className="tree">
         {SESSIONS.map((it, idx) => (
           <div key={idx} className={'tree-item' + (idx === active ? ' active' : '')} onClick={() => onSelect(idx)}>
-            <I><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></I>
+            
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it}</span>
             
           </div>
