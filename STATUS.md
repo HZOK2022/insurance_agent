@@ -12,11 +12,15 @@
 ## 进行中
 - 无(待开工)
 
-## 下一步(严格按序,勿跳步)
+## 下一步(严格按序,勿跳步;每阶段验收全绿 + STATUS/DECISIONS 更新后才算完成)
 1. **session 地基**(全系统依赖它):`app/session/events.py`(事件注册表)+ `app/session/store.py`(append-only + WAL + schema 版本 fail-closed)+ 回放测试骨架(`tests/replay/`)
+   - 验收:单元测试全绿(未知事件类型拒绝 / events 无 UPDATE 路径 / schema 版本不匹配拒绝启动 / 崩溃重启可恢复)+ 回放骨架可空跑
 2. `config/config.py`:集中所有上限/预算/审批阈值,禁止散落硬编码
-3. 收集三类知识样本(条款 PDF / 结构化字段 / FAQ)各 5-10 份
-4. 引用验收端到端用例:{answer, citations} → 角标 → SQLite 原文
+   - 验收:config 单元测试全绿(默认值存在、阈值生效、无散落硬编码抽查)
+3. 收集三类知识样本(条款 PDF / 结构化字段 / FAQ)各 5-10 份,搭摄取管道
+   - 验收:三类样本冒烟测试全绿(摄取幂等、chunk_id 规范、版本过滤正确、过期版本不命中)
+4. 引用验收端到端用例:{answer, citations} → 角标 → SQLite 原文(含历史版本)
+   - 验收:端到端用例绿 + 全量回放绿(条款更新后旧会话角标仍可定位)
 
 ## 生效中的关键决策(详情见 DECISIONS.md)
 1. Python 单机单进程,SQLite 单写者

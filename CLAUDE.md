@@ -36,6 +36,13 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 - 测试优先回放(录制-回放,不依赖真实 API);改动 prompt / 条款 / 工具 schema 必须跑回放测试。
 - 单写者:SQLite 写入只允许 agent 服务进程。
 
+## 阶段验收(Definition of Done)
+
+1. 阶段完成 = 该阶段验收测试全绿 + STATUS.md 已更新(完成/进行中/下一步)+ 新决策已入 DECISIONS.md,三者缺一不可。
+2. 测试分层:单元(注册表 fail-closed / append-only / schema 版本 / config 阈值)· 回放(录制-回放,不依赖真实 API;改 prompt / 条款 / 工具 schema 必须跑)· 端到端(引用角标链路)。
+3. 每写完一个模块立即写它的测试,不许攒到阶段末尾一次补。
+4. 测试描述行为:改行为就改测试,并在 DECISIONS.md 说明为什么。
+
 ## 会话协议(防遗忘,开工必读)
 
 1. 每次开始工作(新会话或长会话中途)先依次读:**AGENTS.md → STATUS.md → DECISIONS.md**。前两份一分钟内读完,禁止凭印象开工。
