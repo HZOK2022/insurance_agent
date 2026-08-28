@@ -17,6 +17,13 @@
 | 自主度 | 关键操作审批:知识查询只读放行,写入型 API 工具审批 |
 | 追溯 | 回答带出处引用,点击角标定位 chunk 原文(含历史版本) |
 
+## dsh 参考源码
+
+本项目按模块参照 DeepSeek Harness(dsh)源码的结构与不变式实现(抄结构,不抄机制):
+- 本地 checkout:`D:\LLM\deepseek-harness-master`(当前机器)
+- 公开仓库:`https://github.com/deepseek-ai/deepseek-harness`(参照版本 0.1.2-alpha.1)
+- 模块→dsh 包路径对照:docs/project-skeleton.md
+
 ## 黄金法则
 
 > SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的加速层

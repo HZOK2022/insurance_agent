@@ -6,6 +6,12 @@
 
 单机单进程 Python agent(保险销售客服知识助手)。架构参考 DeepSeek Harness(dsh)的核心模块,但**砍掉扩展性机器,保留脊梁与不变式**。
 
+## dsh 参照源码(只读参照,不复制、不成为运行依赖)
+
+- 本地 checkout(当前机器):`D:\LLM\deepseek-harness-master`(解压副本,非 git 仓库,无历史)
+- 公开仓库(可克隆/查历史):`https://github.com/deepseek-ai/deepseek-harness`
+- 参照版本:`0.1.2-alpha.1`(apps/cli/package.json);每个模块的参照包路径见 docs/project-skeleton.md
+
 ## 黄金法则(不可破坏)
 
 SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的加速层。
