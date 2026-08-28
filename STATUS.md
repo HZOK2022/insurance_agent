@@ -1,23 +1,23 @@
 # STATUS.md —— 当前进度与下一步(每次会话第一份读物)
 
 ## 阶段
-**阶段0 完成(契约 + React 三列前端壳 + mock);阶段1 后端完成(单元 11 项全绿),前端事件流页待本机构建。**
+**阶段0 完成(契约 + 三列前端壳 + mock);阶段1 后端完成(11 项全绿);阶段2 后端完成(config 6 项全绿);前端(设置页)待本机构建。**
 
 ## 已完成
-- [x] 架构设计 v3 · SQLite/Qdrant/Redis schema · 骨架 · AGENTS/DECISIONS/README/STATUS
-- [x] 阶段0:docs/contract.md + React 前端壳(三列 dsh 布局)· mock 后端(app/main.py)
-- [x] 阶段1 后端:app/session/events.py + store.py + tests/test_session.py(11 项全绿)+ 回放骨架
-- [x] 学习文档 00 / 01 / 02
+- [x] 架构 v3 · schema · 骨架 · AGENTS/DECISIONS/README/STATUS
+- [x] 阶段0:docs/contract.md + React 三列前端壳 + mock(app/main.py)
+- [x] 阶段1 后端:app/session/events.py + store.py + 11 项测试全绿 + 回放骨架
+- [x] 阶段2 后端:app/config/config.py + 6 项测试全绿(默认/强制/越界fail/集中无散落硬编码)
+- [x] 学习文档 00 / 01 / 02 / 03
 
 ## 进行中
-- 阶段1 前端:事件流页(实时显示事件落库)—— 待本机 `npm run dev` 验收;阶段1 完整完成需前端验收后
+- 阶段2 前端:设置页(改阈值即时生效)—— 待本机 npm 验收
 
 ## 下一步(严格按序,勿跳步;每阶段验收全绿 + STATUS/DECISIONS 更新 + 学习文档追加后才算完成)
-1. **session 地基(后端已完成,前端事件流页待建)** — 单元全绿(未知事件拒绝 / 无 UPDATE 路径 / schema 拒载 / 崩溃可恢复)+ 回放骨架可空跑
-2. **config 集中** + 设置页
-   - 验收:config 单元测试全绿(默认值存在、阈值生效、无散落硬编码)
+1. **session 地基(后端完成)** — 前端事件流页待建
+2. **config 集中(后端完成)** — 前端设置页待建
 3. **知识摄取与检索** + 知识管理页
-   - 采集三类样本各 5-10 份
+   - 采集三类样本(条款 PDF / 结构化 / FAQ)各 5-10 份
    - 验收:三类样本冒烟全绿(摄取幂等、chunk_id 规范、版本过滤正确、过期版本不命中)
 4. **loop + LLM + 引用链路** + 真聊天页
    - 验收:端到端用例绿 + 全量回放绿(条款更新后旧会话角标仍可定位)
