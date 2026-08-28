@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Message, Citation } from './lib/types'
 import { streamMockReply, mockChunk } from './lib/mock'
 import './App.css'
 
-function I({ children }: { children: React.ReactNode }) {
+function I({ children }: { children: ReactNode }) {
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{children}</svg>
 }
 
@@ -67,7 +68,7 @@ function Sidebar({ active, onSelect, onNew }: { active: number; onSelect: (i: nu
 
 function renderText(text: string, citations: Citation[] | undefined, onCite: (c: Citation) => void) {
   if (!citations || citations.length === 0) return <>{text}</>
-  const parts: React.ReactNode[] = []
+  const parts: ReactNode[] = []
   let last = 0
   citations.forEach((c) => {
     const at = text.indexOf('[' + c.idx + ']', last)
