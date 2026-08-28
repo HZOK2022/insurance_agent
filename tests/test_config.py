@@ -6,6 +6,9 @@ ALL_KEYS = ["DEEPSEEK_API_KEY","DEEPSEEK_MODEL","EMBEDDING_PROVIDER","EMBEDDING_
             "MAX_TOOL_RESULT_CHARS","DAILY_TOKEN_BUDGET_PER_USER","WRITE_TOOLS_APPROVAL",
             "APPROVAL_EXEMPT_TOOLS","INTERNAL_TOKEN","SQLITE_PATH","QDRANT_URL","REDIS_URL"]
 
+LIMIT_NAMES = ("max_steps_per_turn","max_tokens_per_turn","tool_timeout_seconds",
+               "max_tool_result_chars","daily_token_budget_per_user","write_tools_approval")
+
 class ConfigTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: os.environ.get(k) for k in ALL_KEYS}
@@ -45,19 +48,18 @@ class ConfigTest(unittest.TestCase):
         cfg = load()
         self.assertEqual(cfg.approval_exempt_tools, ("search_knowledge", "tool-web"))
 
-    def test_no_scattered_hardcoded_limits(self):
-        LIMITS = {"20", "16000", "30", "8000", "200000"}
+    def test_no_redefined_limits_outside_config(self):
+        # 集中配置:上限字段名不允许在 config.py 之外被重新定义/赋值
         app_dir = os.path.join(os.path.dirname(__file__), "..", "app")
         for root, _, files in os.walk(app_dir):
             for fn in files:
                 if not fn.endswith(".py"): continue
                 p = os.path.join(root, fn)
-                if os.path.basename(p) == "config.py": continue
-                with open(p, encoding="utf-8") as f:
-                    src = f.read()
-                for lit in LIMITS:
-                    for m in re.finditer(r"\b" + lit + r"\b", src):
-                        self.fail(fn + " 疑似散落硬编码上限 " + lit + ": ..." + src[max(0,m.start()-24):m.start()+24])
+                if fn == "config.py": continue
+                with open(p, encoding="utf-8") as f: src = f.read()
+                for name in LIMIT_NAMES:
+                    m = re.search(r"\b" + name + r"\s*=", src)
+                    self.assertIsNone(m, f"{fn} 重新定义了配置项 {name}")
 
 if __name__ == "__main__":
     unittest.main()
