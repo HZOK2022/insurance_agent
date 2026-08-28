@@ -1,0 +1,13 @@
+---
+description: 项目记忆与开工协议(必读)
+globs: **/*
+---
+# 项目记忆协议
+
+开工前依次读(共约 2 分钟):**AGENTS.md → STATUS.md → DECISIONS.md**
+
+- AGENTS.md:常设指令、四条铁律、写代码约束、会话协议
+- STATUS.md:当前进度与下一步;**里程碑完成后必须立即更新**
+- DECISIONS.md:已定设计决策与理由;不凭记忆复述设计,不确定就查它
+
+文档与代码不一致时:先查 DECISIONS.md 再决定改哪边,禁止静默漂移。
