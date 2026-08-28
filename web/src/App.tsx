@@ -42,7 +42,7 @@ function Sidebar({ active, onSelect, onNew, busyBy }: { active: number; onSelect
           <div key={idx} className={'tree-item' + (idx === active ? ' active' : '')} onClick={() => onSelect(idx)}>
             <I><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></I>
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it}</span>
-            {busyBy[idx] && <span className="task-clock" title="任务执行中" />}
+            
           </div>
         ))}
       </div>
@@ -63,7 +63,7 @@ function renderText(text: string, citations: Citation[] | undefined, onCite: (c:
 function Details({ open, onToggle, activeChunk, sources, onActiveChunk }: { open: boolean; onToggle: () => void; activeChunk: string | null; sources: { chunk_id: string; title: string; content: string }[]; onActiveChunk: (id: string) => void }) {
   return (
     <div className="details" data-open={open || undefined}>
-      <div className="details-head"><span>溯源 · 引用来源</span><button className="dt-close" onClick={onToggle} title={open ? '收起' : '展开'}><I><path d={open ? 'M9 18l6-6-6-6' : 'M6 9l6 6 6-6'}/></I></button></div>
+      <div className="details-head"><span>溯源 · 引用来源</span></div>
       <div className="details-body">
         {sources.length === 0 && <div className="details-empty">暂无引用来源</div>}
         {sources.map((s) => (<div key={s.chunk_id} className={'src-card' + (s.chunk_id === activeChunk ? ' active' : '')} onClick={() => onActiveChunk(s.chunk_id)}><div className="src-title">{s.title}</div><div className="src-content">{s.content}</div></div>))}
@@ -77,7 +77,7 @@ function Center({ messages, input, setInput, busy, send, onCite, title, onToggle
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   return (
     <div className="center">
-      <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div><button className="dt-toggle" onClick={onToggleDetails}><span>溯源</span><I><path d={detailsOpen ? 'M6 9l6 6 6-6' : 'M6 9l6 6 6-6'}/></I></button></div></div>
+      <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div></div></div>
       <div className="messages" ref={listRef}>
         {messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}
         {messages.map((m) => (<div key={m.id} className={'message ' + m.role}>{m.role === 'tool' ? (<div className="tool-card"><span className="tool-name">{m.tool?.name}</span><span className="tool-status">{m.tool?.ok ? '✓ 完成' : '✗ ' + (m.tool?.error || '失败')}</span></div>) : (<div className="message-text">{renderText(m.text || '', m.citations, onCite)}</div>)}</div>))}
@@ -125,7 +125,7 @@ export default function App() {
       <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar active={active} onSelect={setActive} onNew={() => { setMsgsBy((m) => ({ ...m, [active]: [] })); setActiveChunk(null) }} busyBy={busyBy} /></div>
       <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={(c) => { setActiveChunk(c.chunk_id); setDetailsOpen(true) }} title={SESSIONS[active]} onToggleDetails={() => setDetailsOpen(!detailsOpen)} detailsOpen={detailsOpen} /></div>
       <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} activeChunk={activeChunk} sources={sources} onActiveChunk={setActiveChunk} /></div>
-      {!detailsOpen && <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(true)} title="展开溯源"><I><path d="M6 9l6 6 6-6"/></I></button>}      {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} side="sidebar" />}
+      <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? '收起溯源' : '展开溯源'}><I><path d={detailsOpen ? 'M15 18l-6-6 6-6' : 'M9 18l6-6-6-6'}/></I></button>      {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} side="sidebar" />}
       {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} side="details" />}
     </div>
   )
