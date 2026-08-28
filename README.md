@@ -10,7 +10,7 @@
 | 语言/运行时 | Python 3.12+ |
 | LLM | DeepSeek API(外部调用,已确认合规) |
 | 嵌入 | bge-m3(本地,默认)或 API |
-| 服务外壳 | FastAPI + SSE |
+| 前端 | Vite + React 18 + TS(仿 dsh 视觉,零插件机制)\n| 服务外壳 | FastAPI + SSE |
 | 事实源 | SQLite(WAL · append-only · 单写者) |
 | 派生索引 | Qdrant(只索引当前生效版本) |
 | 加速层 | Redis(嵌入缓存/工具缓存/限流/预算) |

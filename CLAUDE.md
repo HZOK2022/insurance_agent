@@ -35,6 +35,13 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 - 每个模块的 dsh 参照实现见 docs/project-skeleton.md:照抄结构,不抄机制。
 - 测试优先回放(录制-回放,不依赖真实 API);改动 prompt / 条款 / 工具 schema 必须跑回放测试。
 - 单写者:SQLite 写入只允许 agent 服务进程。
+- 前端 = Vite + React 18 + TS(web/):借鉴 dsh 视觉,不引入前端 Cordis/slot/模块图;状态用轻量 store;样式用 CSS 变量,不引入 Tailwind/组件库。改前端后本机 `npm run build` 或 `npm run dev` 验收(沙箱无法构建前端)。
+
+## 运行与清理(强制)
+
+1. 临时/中间文件(构建产物、临时脚本、录制样本、中间数据)用完即删,项目目录不留残余。
+2. 测试/演示启动的服务与端口(uvicorn、vite dev、任何 node server)结束后必须 kill,禁止留在后台;用后台 job 启动的,结束即 job_kill。
+3. 项目目录(D:\LLM\insurance-agent)是唯一权威源;在别处(如沙箱镜像)构建/编辑后,必须复制到项目目录并删除镜像。
 
 ## 阶段验收(Definition of Done)
 

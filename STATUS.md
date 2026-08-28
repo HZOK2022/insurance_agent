@@ -1,21 +1,22 @@
 # STATUS.md —— 当前进度与下一步(每次会话第一份读物)
 
 ## 阶段
-**设计完成,尚未写代码。** 开工前必读:AGENTS.md → 本文件 → DECISIONS.md。
+**阶段0(契约 + React 前端壳 + mock)编码完成,前端待本机 `npm run dev` 验收。** 开工前必读:AGENTS.md → 本文件 → DECISIONS.md。
 
 ## 已完成
 - [x] 架构设计 v3(图:docs/diagram/agent-v3.html / agent-v3.png)
 - [x] SQLite / Qdrant / Redis 三份 schema 设计(docs/)
 - [x] 项目骨架目录(app/ 十一个包 + tests/ + scripts/)
 - [x] AGENTS.md(常设指令 + 会话协议)、DECISIONS.md(决策记录)、README.md(准备清单)
+- [x] 阶段0:契约文档 docs/contract.md + React 前端壳(web/)+ mock 后端(编码完成,待本机验收)
 
 ## 进行中
-- 无(待开工)
+- 阶段0 前端壳待本机验收:`cd web && npm install && npm run dev`(默认 mock,可发句假对话);或 `uvicorn app.main:app` 起 mock 后代理 /api。验收通过即进入阶段1。
 
 ## 下一步(严格按序,勿跳步;每阶段验收全绿 + STATUS/DECISIONS 更新 + 学习文档追加后才算完成)
 0. **契约 + 前端壳 + mock(新增,契约先行)**
    - 后端:定 API/SSE 契约与事件类型表(只定不实现);mock 后端(脚本/录制数据驱动前端)
-   - 前端:纯 HTML+JS 单页,仿 dsh 聊天区视觉(会话侧栏 + 聊天窗 + 流式消息 + 工具卡片),FastAPI 托管静态
+   - 前端:Vite + React 18 + TS 单页 `web/`,仿 dsh 聊天区(侧栏 + 聊天窗 + 流式 + 工具卡片),默认 VITE_MOCK=1
    - 验收:前端壳可打开并"演"一次假对话;契约文档成文(docs/contract.md)
 1. **session 地基** + 事件流页
    - 后端:`app/session/events.py`(事件注册表)+ `app/session/store.py`(append-only + WAL + schema 版本 fail-closed)+ 回放骨架(`tests/replay/`)

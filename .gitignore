@@ -25,6 +25,10 @@ data/
 *.db-wal
 *.db-shm
 
+# ===== Web(frontend) =====
+node_modules/
+.vite/
+
 # ===== 日志 =====
 *.log
 logs/
