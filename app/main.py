@@ -4,11 +4,12 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import citation, prompt, sessions
+from app.api.routers import citation, health, prompt, sessions
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="insurance-agent", version="0.1")
+    app.include_router(health.router)
     app.include_router(sessions.router)
     app.include_router(prompt.router)
     app.include_router(citation.router)
@@ -19,3 +20,7 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
