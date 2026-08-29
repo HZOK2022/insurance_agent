@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { listSessions, createSession, listEvents, sendPrompt, type Session, type PEvent, type Citation } from "./lib/api"
 import "./App.css"
@@ -98,7 +98,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
-  const [detailsOpen, setDetailsOpen] = useState(true)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
   const [activeIdx, setActiveIdx] = useState<number | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
@@ -146,7 +146,7 @@ export default function App() {
     <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeIdx={activeIdx} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
-    <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起溯源" : "展开溯源"}><I><path d={detailsOpen ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"}/></I></button>
+    <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起溯源" : "展开溯源"}><I><path d={detailsOpen ? "M12 4l8 8-8 8" : "M12 4l-8 8 8 8"}/></I></button>
     {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
   </div>)
 }

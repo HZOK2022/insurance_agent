@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """UI 自测脚本:build 前端 -> 起后端 -> 造会话+prompt -> 截图 -> 停后端。
 
 用法(用 rag_env 解释器,含 fastapi/uvicorn/requests/bge):
@@ -72,7 +72,7 @@ def prompt(sid: str, text: str) -> str:
 
 def screenshot(out: str) -> None:
     subprocess.run([CHROME, "--no-sandbox", "--disable-gpu", "--disable-crash-reporter", "--disable-crashpad",
-                    "--screenshot=" + out, "--window-size=1280,900", "--hide-scrollbars",
+                    "--screenshot=" + out, "--window-size=" + os.environ.get("SELFTEST_W", "1280") + "," + os.environ.get("SELFTEST_H", "900"), "--hide-scrollbars",
                     "--virtual-time-budget=9000", URL + "/"], check=False)
 
 
