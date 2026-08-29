@@ -15,24 +15,45 @@ function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void 
 interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; citations?: Citation[]; tool?: { name: string; ok: boolean } }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 
-// 渲染文本:仅在回答引用了 [idx] 时显示角标;未引用的 [数字] 一律剥掉
-function renderText(text: string, citations: Citation[] | undefined, onCite: (idx: number) => void) {
-  const raw = text || ""
-  const cit = (citations || []).filter((c) => raw.indexOf("[" + c.idx + "]") >= 0)
-  if (cit.length === 0) return <>{raw.replace(/\[\d+\]/g, "")}</>
-  const idxs = cit.map((c) => c.idx)
-  const p: ReactNode[] = []; let cursor = 0
-  const re = /\[(\d+)\]/g; let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) {
-    const n = parseInt(m[1], 10)
-    if (idxs.includes(n)) {
-      p.push(<span key={"t" + n}>{raw.slice(cursor, m.index)}</span>)
-      p.push(<button key={"b" + n} className="cite" onClick={() => onCite(n)}>[{n}]</button>)
-      cursor = m.index + m[0].length
+// 结构化渲染:识别列表(（一）（二）/1./-)、加粗、引用角标
+function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void): ReactNode[] {
+  const out: ReactNode[] = []
+  const re = /(\*\*[^*]+\*\*|\[\d+\])/g
+  let last = 0, m: RegExpExecArray | null
+  while ((m = re.exec(seg))) {
+    const tok = m[0]
+    if (tok.startsWith("[")) {
+      const idx = parseInt(tok.slice(1, -1), 10)
+      out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
+      if (citIdx.has(idx)) out.push(<button key={key + "-b" + idx} className="cite" onClick={() => onCite(idx)}>[{idx}]</button>)
+    } else {
+      out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
+      out.push(<strong key={key + "-b" + m.index}>{tok.slice(2, -2)}</strong>)
     }
+    last = m.index + tok.length
   }
-  p.push(<span key="tail">{raw.slice(cursor)}</span>)
-  return <>{p}</>
+  out.push(<span key={key + "-end"}>{seg.slice(last)}</span>)
+  return out
+}
+
+function renderAnswer(text: string, citations: Citation[] | undefined, onCite: (idx: number) => void) {
+  const raw = (text || "").trim(); if (!raw) return null
+  const citIdx = new Set((citations || []).map((c) => c.idx))
+  const marker = /(?=[（(][一二三四五六七八九十百\d]+[)）])|(?=^\s*[-*·]\s+)/g
+  const parts = raw.split(marker)
+  const blocks: ReactNode[] = []; let liBuf: { content: ReactNode[]; key: number }[] = []
+  const flushLi = (key: number) => { if (liBuf.length) { blocks.push(<ul key={"ul" + key}>{liBuf.map((it, i) => (<li key={i}>{it.content}</li>))}</ul>); liBuf = [] } }
+  let pKey = 0
+  parts.forEach((seg, i) => {
+    const t = seg.trim(); if (!t) return
+    const isItem = /^[（(][一二三四五六七八九十百\d]+[)）]/.test(t) || /^[-*·]/.test(t) || /^\d+[.、)）]/.test(t)
+    const clean = t.replace(/^[；：，,。\s]*/, "").replace(/^[（(][一二三四五六七八九十百\d]+[)）]\s*/, "").replace(/^[-*·]\s*/, "").replace(/^\d+[.、)）]\s*/, "")
+    if (!clean) return
+    if (isItem) liBuf.push({ content: inline(clean, i * 100, citIdx, onCite), key: i })
+    else { flushLi(i); blocks.push(<p key={"p" + pKey++}>{inline(clean, i * 100, citIdx, onCite)}</p>) }
+  })
+  flushLi(9999)
+  return <>{blocks}</>
 }
 
 function Sidebar({ sessions, activeId, onSelect, onNew }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void }) {
@@ -66,7 +87,7 @@ function Center({ messages, input, setInput, busy, send, onCite, title }: { mess
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div></div></div>
-    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="message-text">{renderText(m.text || "", m.citations, onCite)}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
+    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="message-text">{renderAnswer(m.text || "", m.citations, onCite)}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-select"><span className="model-dot"></span><span>deepseek · 高</span></div><button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
     <div className="footer-stats">引用:点击回答中的角标,右侧展开对应溯源片段</div>
   </div>)

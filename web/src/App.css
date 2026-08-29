@@ -102,3 +102,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 
 .dt-expand { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--dsw-border-l2); background: var(--dsw-bg); color: var(--dsw-text-2); display: grid; place-items: center; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); z-index: 5; }
 .dt-expand:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); }
+.message.assistant .message-text p { margin: 0 0 8px; }
+.message.assistant .message-text ul { margin: 4px 0 10px; padding-left: 20px; }
+.message.assistant .message-text li { margin-bottom: 5px; line-height: 1.62; }
+.message.assistant .message-text strong { color: var(--dsw-text); }
