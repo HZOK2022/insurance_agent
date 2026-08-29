@@ -16,7 +16,7 @@ interface Block { t?: string; text?: string; items?: string[] }
 interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; blocks?: Block[]; citations?: Citation[]; tool?: { name: string; ok: boolean } }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 
-function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void): ReactNode[] {
+function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
   const out: ReactNode[] = []
   const re = /(\*\*[^*]+\*\*|\[\d+\])/g
   let last = 0, m: RegExpExecArray | null
@@ -25,7 +25,7 @@ function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: num
     if (tok.startsWith("[")) {
       const idx = parseInt(tok.slice(1, -1), 10)
       out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
-      if (citIdx.has(idx)) out.push(<button key={key + "-b" + idx} className="cite" onClick={() => onCite(idx)}>[{idx}]</button>)
+      if (citIdx.has(idx)) out.push(<button key={key + "-b" + idx} className={"cite" + (idx === activeIdx ? " active" : "")} onClick={() => onCite(idx)}>[{idx}]</button>)
     } else {
       out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
       out.push(<strong key={key + "-b" + m.index}>{tok.slice(2, -2)}</strong>)
@@ -36,7 +36,7 @@ function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: num
   return out
 }
 
-function renderAnswer(blocks: Block[] | undefined, citations: Citation[] | undefined, onCite: (idx: number) => void): ReactNode {
+function renderAnswer(blocks: Block[] | undefined, citations: Citation[] | undefined, onCite: (idx: number) => void, activeIdx: number | null): ReactNode {
   const list: Block[] = blocks || []
   const citIdx = new Set((citations || []).map((c) => c.idx))
   const out: ReactNode[] = []
@@ -44,9 +44,9 @@ function renderAnswer(blocks: Block[] | undefined, citations: Citation[] | undef
   list.forEach((b) => {
     key += 1
     const t = b.t || "p"
-    if (t === "ul" || t === "ol") { const items = b.items || []; out.push(t === "ol" ? (<ol key={"o" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite)}</li>))}</ol>) : (<ul key={"u" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite)}</li>))}</ul>)) }
-    else if (t === "h") { out.push(<div key={"h" + key} className="ans-heading">{inline(b.text || "", key * 100, citIdx, onCite)}</div>) }
-    else { out.push(<p key={"p" + key}>{inline(b.text || "", key * 100, citIdx, onCite)}</p>) }
+    if (t === "ul" || t === "ol") { const items = b.items || []; out.push(t === "ol" ? (<ol key={"o" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite, activeIdx)}</li>))}</ol>) : (<ul key={"u" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite, activeIdx)}</li>))}</ul>)) }
+    else if (t === "h") { out.push(<div key={"h" + key} className="ans-heading">{inline(b.text || "", key * 100, citIdx, onCite, activeIdx)}</div>) }
+    else { out.push(<p key={"p" + key}>{inline(b.text || "", key * 100, citIdx, onCite, activeIdx)}</p>) }
   })
   return <>{out}</>
 }
@@ -78,12 +78,12 @@ function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolea
     </div>
   </div>)
 }
-function Center({ messages, input, setInput, busy, send, onCite, title }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; title: string }) {
+function Center({ messages, input, setInput, busy, send, onCite, activeIdx, title }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; activeIdx: number | null; title: string }) {
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div></div></div>
-    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="ans-wrap"><div className="message-text">{m.role === "assistant" ? renderAnswer(m.blocks, m.citations, onCite) : m.text}</div>{m.role === "assistant" && <CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
+    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="ans-wrap"><div className="message-text">{m.role === "assistant" ? renderAnswer(m.blocks, m.citations, onCite, activeIdx) : m.text}</div>{m.role === "assistant" && <CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-select"><span className="model-dot"></span><span>deepseek · 高</span></div><button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
     <div className="footer-stats">引用:点击回答中的角标,右侧展开对应溯源片段</div>
   </div>)
@@ -143,7 +143,7 @@ export default function App() {
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeIdx={activeIdx} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起溯源" : "展开溯源"}><I><path d={detailsOpen ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"}/></I></button>

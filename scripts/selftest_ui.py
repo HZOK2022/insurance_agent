@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 CHROME = os.environ.get("SELFTEST_CHROME",
     "C:/Users/mi/AppData/Local/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-win64/chrome-headless-shell.exe")
-PORT = 8000
+PORT = int(os.environ.get("SELFTEST_PORT", "8000"))
 URL = "http://127.0.0.1:" + str(PORT)
 
 
@@ -87,7 +87,7 @@ def main() -> None:
 
     build()
     print("[2/5] start backend ...")
-    backend = subprocess.Popen([sys.executable, "run.py"], cwd=ROOT,
+    backend = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PORT)], cwd=ROOT,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         if not wait_api():
