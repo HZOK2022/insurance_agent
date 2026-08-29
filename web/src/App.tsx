@@ -39,20 +39,19 @@ function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: num
 function renderAnswer(text: string, citations: Citation[] | undefined, onCite: (idx: number) => void) {
   const raw = (text || "").trim(); if (!raw) return null
   const citIdx = new Set((citations || []).map((c) => c.idx))
-  const marker = /(?=[（(][一二三四五六七八九十百\d]+[)）])|(?=^\s*[-*·]\s+)/g
-  const parts = raw.split(marker)
+  const lines = raw.split("\n")
   const blocks: ReactNode[] = []; let liBuf: { content: ReactNode[]; key: number }[] = []
-  const flushLi = (key: number) => { if (liBuf.length) { blocks.push(<ul key={"ul" + key}>{liBuf.map((it, i) => (<li key={i}>{it.content}</li>))}</ul>); liBuf = [] } }
+  const flush = (key: number) => { if (liBuf.length) { blocks.push(<ul key={"ul" + key}>{liBuf.map((it, i) => (<li key={i}>{it.content}</li>))}</ul>); liBuf = [] } }
   let pKey = 0
-  parts.forEach((seg, i) => {
-    const t = seg.trim(); if (!t) return
-    const isItem = /^[（(][一二三四五六七八九十百\d]+[)）]/.test(t) || /^[-*·]/.test(t) || /^\d+[.、)）]/.test(t)
-    const clean = t.replace(/^[；：，,。\s]*/, "").replace(/^[（(][一二三四五六七八九十百\d]+[)）]\s*/, "").replace(/^[-*·]\s*/, "").replace(/^\d+[.、)）]\s*/, "")
-    if (!clean) return
-    if (isItem) liBuf.push({ content: inline(clean, i * 100, citIdx, onCite), key: i })
-    else { flushLi(i); blocks.push(<p key={"p" + pKey++}>{inline(clean, i * 100, citIdx, onCite)}</p>) }
+  lines.forEach((ln, i) => {
+    const t = ln.trim(); if (!t) { flush(i); return }
+    const isHeading = /^[一二三四五六七八九十]+[、.．]/.test(t) || /^#{1,3}\s+/.test(t)
+    const isItem = /^[（(][一二三四五六七八九十百\d]+[)）]/.test(t) || /^[-*·]\s+/.test(t) || /^\d+[.、)）]\s*/.test(t)
+    if (isHeading) { flush(i); blocks.push(<div key={"h" + i} className="ans-heading">{inline(t.replace(/^#{1,3}\s+/, ""), i * 50, citIdx, onCite)}</div>) }
+    else if (isItem) { const clean = t.replace(/^[（(][一二三四五六七八九十百\d]+[)）]\s*/, "").replace(/^[-*·]\s+/, "").replace(/^\d+[.、)）]\s*/, ""); if (clean) liBuf.push({ content: inline(clean, i * 50, citIdx, onCite), key: i }) }
+    else { flush(i); blocks.push(<p key={"p" + pKey++}>{inline(t, i * 50, citIdx, onCite)}</p>) }
   })
-  flushLi(9999)
+  flush(9999)
   return <>{blocks}</>
 }
 

@@ -106,3 +106,4 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .message.assistant .message-text ul { margin: 4px 0 10px; padding-left: 20px; }
 .message.assistant .message-text li { margin-bottom: 5px; line-height: 1.62; }
 .message.assistant .message-text strong { color: var(--dsw-text); }
+.message.assistant .ans-heading { font-weight: 600; color: var(--dsw-text); margin: 6px 0 4px; }
