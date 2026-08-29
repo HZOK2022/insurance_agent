@@ -70,7 +70,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .message.tool { justify-content: flex-start; }
 .message.tool .tool-card { display: inline-flex; align-items: center; gap: 8px; max-width: fit-content; margin: 0; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-sidebar-fill); padding: 6px 12px; font-size: 12px; color: var(--dsw-text-2); }
 .message-text { font-size: 14.5px; line-height: 1.7; color: var(--dsw-text); white-space: pre-wrap; }
-.tool-card { max-width: 800px; margin: 0 auto 16px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-sidebar-fill); padding: 8px 12px; font-size: 13px; color: var(--dsw-text-2); display: flex; align-items: center; gap: 10px; }
+.tool-card { max-width: fit-content; margin: 0 0 16px 0; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-sidebar-fill); padding: 8px 12px; font-size: 13px; color: var(--dsw-text-2); display: flex; align-items: center; gap: 10px; }
 .tool-name { color: var(--dsw-text); font-weight: 500; } .tool-status { color: var(--dsw-green); }
 .cite { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin: 0 2px; padding: 0 4px; font-size: 11px; color: var(--dsw-primary); background: var(--dsw-primary-soft); border: 1px solid rgba(86,134,254,.4); border-radius: 4px; cursor: pointer; vertical-align: super; }
 .input-wrap { padding: 12px 24px 16px; }
