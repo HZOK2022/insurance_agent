@@ -1,4 +1,4 @@
-﻿"""SQLite append-only 会话事件存储 + 会话元数据。参照 dsh core/session + session-persistence-sqlite。
+"""SQLite append-only 会话事件存储 + 会话元数据。参照 dsh core/session + session-persistence-sqlite。
 
 规则(AGENTS.md):
 - WAL + busy_timeout;单写者
@@ -10,7 +10,7 @@ import json
 import sqlite3
 import uuid
 
-from . import events
+from . import events, title
 
 SCHEMA_VERSION = 1
 
@@ -67,7 +67,34 @@ class SessionStore:
             "INSERT INTO events (session_id, type, ts, payload) VALUES (?,?,?,?)",
             (session_id, ev["type"], ev["ts"], json.dumps(ev["payload"], ensure_ascii=False)))
         self._conn.commit()
+        # 首条用户消息 → 自动生成确定性 fallback 标题(照抄 dsh-session-title fallback 语义)
+        if type_ == "user_message":
+            self._maybe_title_from_first_message(session_id)
         return cur.lastrowid
+
+    def _maybe_title_from_first_message(self, session_id: str) -> None:
+        """若会话标题仍是默认值(未命名),用首条用户消息生成 fallback 标题并更新。"""
+        sess = self.get_session(session_id)
+        if sess is None:
+            return
+        if sess.get("title") and sess["title"] != "新会话":
+            return  # 已有命名标题,不覆盖(dsh: fallback 只在尚无标题时生成)
+        first = title.first_user_text(self.read(session_id))
+        if not first:
+            return
+        gen = title.fallback_session_title(first)
+        if gen:
+            self._conn.execute("UPDATE sessions SET title=? WHERE id=?", (gen, session_id))
+            self._conn.commit()
+
+    def set_title(self, session_id: str, title_text: str) -> dict | None:
+        """显式设置会话标题(供用户重命名/强制刷新)。返回更新后的会话或 None。"""
+        norm = title.fallback_session_title(title_text, max_bytes=200)
+        if not norm:
+            return None
+        self._conn.execute("UPDATE sessions SET title=? WHERE id=?", (norm, session_id))
+        self._conn.commit()
+        return self.get_session(session_id)
 
     def read(self, session_id: str, after_seq: int = 0, limit: int | None = None) -> list[dict]:
         sql = "SELECT seq, type, ts, payload FROM events WHERE session_id=? AND seq>? ORDER BY seq"
@@ -96,6 +123,13 @@ class SessionStore:
                            (sid, title, user_id, now))
         self._conn.commit()
         return {"id": sid, "title": title, "user_id": user_id, "created_at": now}
+
+    def delete_sessions_meta(self, ids: list[str]) -> int:
+        """仅删除 sessions 元数据记录(不动 events,遵守 events append-only 铁律)。
+        返回删除条数。用于清理空会话/测试会话,不触碰事件历史。"""
+        cur = self._conn.executemany("DELETE FROM sessions WHERE id=?", [(i,) for i in ids])
+        self._conn.commit()
+        return cur.rowcount
 
     def list_sessions(self) -> list[dict]:
         rows = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions ORDER BY created_at DESC").fetchall()

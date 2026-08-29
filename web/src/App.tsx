@@ -1,9 +1,9 @@
-﻿import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { listSessions, createSession, listEvents, sendPrompt, type Session, type PEvent, type Citation } from "./lib/api"
 import "./App.css"
 
-const SIDEBAR_MIN = 264, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 280
+const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
 const SIDEBAR_COLLAPSED = 56, SIDEBAR_AUTO_COLLAPSE = 1024
 const DETAILS_MAX = 520, DETAILS_DEFAULT = 360, CENTER_MIN = 640
 
@@ -13,7 +13,21 @@ function solve(vp: number, side: number, det: number, narrow: boolean) { let s =
 function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void }) { const start = useRef(0); return (<div className="col-handle" style={{ left: pos - 3 }} onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); start.current = e.clientX }} onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) onDrag(e.clientX - start.current) }} onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }} />) }
 
 interface Block { t?: string; text?: string; items?: string[] }
-interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; blocks?: Block[]; citations?: Citation[]; tool?: { name: string; ok: boolean } }
+interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; reasoning?: string; blocks?: Block[]; citations?: Citation[]; tool?: { name: string; ok: boolean; args?: any; running?: boolean }; time?: string; streaming?: boolean; runMs?: number; ttftMs?: number; tps?: number }
+function fmtDur(ms?: number): string { if (ms == null) return ""; const s = ms / 1000; if (s < 60) return s.toFixed(1) + "秒"; const m = Math.floor(s / 60); const r = Math.round(s % 60); return m + "分" + r + "秒" }
+function fmtTps(v?: number): string { return v == null ? "" : v + " tok/s" }
+// 照 dsh formatMessageClock:同日 HH:mm;本年度其它天 {m}月{d}日 HH:mm;跨年 {y}年{m}月{d}日 HH:mm
+function formatClock(iso?: string): string {
+  if (!iso) return ""
+  const d = new Date(iso); if (isNaN(d.getTime())) return ""
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const hhmm = pad(d.getHours()) + ":" + pad(d.getMinutes())
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  if (sameDay) return hhmm
+  const sameYear = d.getFullYear() === now.getFullYear()
+  return sameYear ? `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`
+}
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 
 function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
@@ -70,7 +84,6 @@ function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolea
   return (<div className="details" data-open={open || undefined}>
     <div className="details-head">
       <span>溯源</span>
-      <button className="dt-close" onClick={onClose} title="收起"><I><path d="M9 18l6-6-6-6"/></I></button>
     </div>
     <div className="details-body">
       {!src ? <div className="details-empty">点击回答中的角标查看对应溯源</div> :
@@ -78,12 +91,30 @@ function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolea
     </div>
   </div>)
 }
-function Center({ messages, input, setInput, busy, send, onCite, activeIdx, title }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; activeIdx: number | null; title: string }) {
+function Center({ messages, input, setInput, busy, send, onCite, activeIdx, title, trace, activeTab, setActiveTab }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; activeIdx: number | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void }) {
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
+  const fmtDur = (ms?: number) => { if (ms == null) return "—"; if (ms < 1000) return ms + "ms"; return (ms / 1000).toFixed(1) + "s" }
+  const fmtTps = (v?: number) => (v == null ? "—" : v + " tok/s")
   return (<div className="center">
-    <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div></div></div>
-    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="ans-wrap"><div className="message-text">{m.role === "assistant" ? renderAnswer(m.blocks, m.citations, onCite, activeIdx) : m.text}</div>{m.role === "assistant" && <CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
+    <div className="c-head"><div className="c-title">{title}</div><div className="tabs">
+      <div className={"tab" + (activeTab === "chat" ? " active" : "")} onClick={() => setActiveTab("chat")}>对话</div>
+      <div className={"tab" + (activeTab === "trace" ? " active" : "")} onClick={() => setActiveTab("trace")}>轨迹</div>
+    </div></div>
+    {activeTab === "chat"
+      ? <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role} data-time-hover-root>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span>{m.tool?.args ? <span className="tool-args">{JSON.stringify(m.tool.args)}</span> : ""}<span className={"tool-status" + (m.tool?.running ? " running" : "")}>{m.tool?.running ? "调用中…" : "✓ 完成"}</span></div>) : (<div className="ans-wrap">{m.role === "assistant" && m.reasoning ? (<details className="think-row"><summary><span className="think-label">Think</span><span className="think-summary">{m.streaming ? m.reasoning.split("\n").pop() : m.reasoning.split("\n")[0]}</span></summary><div className="think-body">{m.reasoning}</div></details>) : ""}<div className="message-text">{m.role === "assistant" ? (m.streaming ? m.text : renderAnswer(m.blocks, m.citations, onCite, activeIdx)) : m.text}{m.streaming && <span className="stream-caret" />}</div><div className={"msg-chrome" + (m.role === "user" ? " user" : "")}>{m.role === "assistant" && <CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />}{formatClock(m.time)}{m.role === "assistant" && (m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtDur(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtDur(m.ttftMs) : "") + (m.tps != null ? " · " + fmtTps(m.tps) : "")}</span>) : ""}</div></div>)}</div>))}
+
+      </div>
+      : <div className="trace-view">
+          {trace.length === 0 && <div className="hint">本轮暂无轨迹</div>}
+          {trace.map((t, i) => (
+            <div key={i} className={"trace-row " + t.type}>
+              <span className="trace-seq">{i + 1}</span>
+              <span className="trace-type">{t.type}</span>
+              <span className="trace-detail">{t.type === "tool_call" ? (t.tool + " " + JSON.stringify(t.args || {})) : t.type === "turn_end" ? ("完成 · 耗时 " + fmtDur(t.elapsed_ms)) : formatClock(t.ts)}</span>
+            </div>
+          ))}
+        </div>}
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-select"><span className="model-dot"></span><span>deepseek · 高</span></div><button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
     <div className="footer-stats">引用:点击回答中的角标,右侧展开对应溯源片段</div>
   </div>)
@@ -96,6 +127,8 @@ export default function App() {
   const [sources, setSources] = useState<Source[]>([])
   const [input, setInput] = useState("")
   const [busy, setBusy] = useState(false)
+    const [trace, setTrace] = useState<any[]>([])
+  const [activeTab, setActiveTab] = useState<"chat" | "trace">("chat")
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -117,25 +150,41 @@ export default function App() {
   }
   const loadEvents = async (sid: string) => {
     const evs = await listEvents(sid)
-    const msgs: Msg[] = []; let chunks: any[] = []; let cites: Citation[] = []
+    const msgs: Msg[] = []; let chunks: any[] = []; let cites: Citation[] = []; const tr: any[] = []
     evs.forEach((e) => {
-      if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text })
-      else if (e.type === "retrieval") { chunks = e.payload.chunks || []; msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true } }) }
-      else if (e.type === "assistant_message") { cites = e.payload.citations || []; msgs.push({ id: mid(), role: "assistant", blocks: e.payload.blocks || [{ t: "p", text: e.payload.text || "" }], citations: cites }) }
+      if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text, time: e.ts })
+      else if (e.type === "tool_call") { tr.push({ type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }) }
+      else if (e.type === "retrieval") { chunks = e.payload.chunks || []; msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true, args: { query: e.payload?.query } }, time: e.ts }) }
+      else if (e.type === "assistant_message") { cites = e.payload.citations || []; const bl = e.payload.blocks || []; const reason = (bl.find((b:any) => b.t === "r")?.text) || ""; msgs.push({ id: mid(), role: "assistant", blocks: bl.filter((b:any) => b.t !== "r"), reasoning: reason, citations: cites, time: e.ts }) }
+      else if (e.type === "turn_end") { const p = e.payload || {}; const last = [...msgs].reverse().find((x) => x.role === "assistant"); if (last) { last.runMs = p.elapsed_ms ?? last.runMs; last.ttftMs = p.ttft_ms ?? last.ttftMs; last.tps = p.tokens_per_second ?? last.tps } tr.push({ type: "turn_end", ...p, ts: e.ts }) }
     })
     setMessages(msgs); setSources(buildSources(cites, chunks)); setActiveIdx(null)
+    if (tr.length) setTrace(tr)
   }
   const selectSession = async (sid: string) => { setActiveId(sid); setActiveIdx(null); try { await loadEvents(sid) } catch { setMessages([]); setSources([]) } }
-  useEffect(() => { listSessions().then(async (s) => { setSessions(s); if (s.length) await selectSession(s[0].id) }).catch(() => {}) }, []) // eslint-disable-line
+  useEffect(() => { listSessions().then(async (s) => { setSessions(s); if (s.length) await selectSession(s[0].id); else { const n = await createSession("u1"); setActiveId(n.id) } }).catch(() => {}) }, []) // eslint-disable-line
   const newSession = async () => { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); idRef.current = 0; setMessages([]); setSources([]); setActiveIdx(null) }
   const send = async () => {
-    const text = input.trim(); if (!text || busy || !activeId) return
+    const text = input.trim(); if (!text || busy) return
+    if (!activeId) { const n = await createSession("u1"); setActiveId(n.id); setSessions(await listSessions()) }
+    const sid = activeId as string
     setInput(""); setBusy(true)
-    setMessages((m) => [...m, { id: mid(), role: "user", text }])
+    setMessages((m) => [...m, { id: mid(), role: "user", text, time: new Date().toISOString() }])
+    let astId: string | null = null
     try {
-      await sendPrompt(activeId, text, (e: PEvent) => {
-        if (e.type === "retrieval") { retrievalRef.current = e.payload.chunks || []; setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true } }]) }
-        else if (e.type === "assistant_message") { const cites = e.payload.citations || []; setSources(buildSources(cites, retrievalRef.current)); setActiveIdx(null); setMessages((m) => [...m, { id: mid(), role: "assistant", blocks: e.payload.blocks || [{ t: "p", text: e.payload.text || "" }], citations: cites }]) }
+      await sendPrompt(sid, text, (e: PEvent) => {
+        if (e.type === "turn_start") { setBusy(true) }
+        else if (e.type === "tool_call") { setTrace((t) => [...t, { type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }]); setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: e.payload?.tool || "search_knowledge", ok: true, args: e.payload?.args, running: true }, time: e.ts }]) }
+        else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args } } : x)) }
+        else if (e.type === "assistant_chunk") {
+          const kind = e.payload?.kind || "text"
+          const delta = e.payload?.delta || ""
+          if (!astId) { const aid = mid(); astId = aid; setMessages((m) => [...m, { id: aid, role: "assistant", text: "", reasoning: "", streaming: true, time: e.ts }]) }
+          setMessages((m) => m.map((x) => x.id === astId && x.role === "assistant" ? (kind === "reasoning" ? { ...x, reasoning: (x.reasoning || "") + delta, streaming: true } : { ...x, text: (x.text || "") + delta, streaming: true, time: x.time || e.ts }) : x))
+        }
+        else if (e.type === "retrieval") { retrievalRef.current = e.payload?.chunks || [] }
+        else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; setSources(buildSources(cites, retrievalRef.current)); setActiveIdx(null); if (astId) { setMessages((m) => m.map((x) => x.id === astId ? { ...x, blocks: e.payload?.blocks || [{ t: "p", text: x.text || "" }], citations: cites, streaming: false, time: x.time || e.ts } : x)) } else { setMessages((m) => [...m, { id: mid(), role: "assistant", blocks: e.payload?.blocks || [{ t: "p", text: e.payload?.text || "" }], citations: cites, time: e.ts }]) } }
+        else if (e.type === "turn_end") { const m = e.payload || {}; if (astId) setMessages((mm) => mm.map((x) => x.id === astId ? { ...x, runMs: m.elapsed_ms ?? x.runMs, ttftMs: m.ttft_ms ?? x.ttftMs, tps: m.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...m, ts: e.ts }]); setBusy(false) }
       })
     } catch { } finally { setBusy(false) }
   }
@@ -143,10 +192,10 @@ export default function App() {
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeIdx={activeIdx} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeIdx={activeIdx} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
-    <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起溯源" : "展开溯源"}><I><path d={detailsOpen ? "M12 4l8 8-8 8" : "M12 4l-8 8 8 8"}/></I></button>
+    <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
     {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
   </div>)
 }

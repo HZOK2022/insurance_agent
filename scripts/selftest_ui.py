@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """UI 自测脚本:build 前端 -> 起后端 -> 造会话+prompt -> 截图 -> 停后端。
 
 用法(用 rag_env 解释器,含 fastapi/uvicorn/requests/bge):
@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 CHROME = os.environ.get("SELFTEST_CHROME",
     "C:/Users/mi/AppData/Local/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-win64/chrome-headless-shell.exe")
-PORT = int(os.environ.get("SELFTEST_PORT", "8000"))
+PORT = int(os.environ.get("SELFTEST_PORT", "8181"))
 URL = "http://127.0.0.1:" + str(PORT)
 
 
@@ -42,6 +42,21 @@ def port_free(port: int) -> bool:
     finally:
         s.close()
 
+
+def delete_session(sid: str) -> None:
+    """测试完删除本次自测创建的会话(默认执行;SELFTEST_CLEANUP=0 可关)。"""
+    if os.environ.get("SELFTEST_CLEANUP", "1") == "0":
+        print("      (SELFTEST_CLEANUP=0,跳过删除会话)")
+        return
+    try:
+        sys.path.insert(0, ROOT)
+        from app.session.store import SessionStore
+        from app.config import load
+        st = SessionStore(load().sqlite_path)
+        st.delete_sessions_meta([sid])
+        print("      cleanup: 已删除自测会话", sid)
+    except Exception as e:
+        print("      cleanup 失败(忽略):", e)
 
 def wait_api(timeout: int = 60) -> bool:
     for _ in range(timeout * 2):
@@ -90,6 +105,7 @@ def main() -> None:
     print("[2/5] start backend ...")
     backend = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PORT)], cwd=ROOT,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sid = None
     try:
         if not wait_api():
             print("后端未起来"); sys.exit(1)
@@ -110,6 +126,8 @@ def main() -> None:
             backend.wait(timeout=10)
         except Exception:
             backend.kill()
+        if sid:
+            delete_session(sid)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿"""会话事件:类型注册表 + 校验(fail-closed)。参照 dsh core/session 的 SessionEventMap。
+"""会话事件:类型注册表 + 校验(fail-closed)。参照 dsh core/session 的 SessionEventMap。
 
 铁律:模型可见 ⟺ 已记录。新模型可见输入 = 新事件类型,必须先 register_type。
 未注册类型在 validate / 加载时一律拒绝(fail-closed),绝不静默猜测。
@@ -49,6 +49,8 @@ def _validate_assistant_message(p):
             t = b.get("t", "p")
             if t in ("ul", "ol"):
                 norm.append({"t": t, "items": [str(x) for x in (b.get("items") or []) if x]})
+            elif t == "r":
+                norm.append({"t": "r", "text": str(b.get("text", ""))})
             else:
                 norm.append({"t": "p", "text": str(b.get("text", ""))})
     else:
@@ -60,7 +62,15 @@ def _validate_assistant_message(p):
     return {"blocks": norm, "citations": cites}
 
 
-def _validate_assistant_chunk(p): return {"delta": _req(p, "delta", str)}
+def _validate_assistant_chunk(p):
+    out = {"delta": _req(p, "delta", str)}
+    if p.get("kind") in ("text", "reasoning", "tool-call"):
+        out["kind"] = p["kind"]
+    else:
+        out["kind"] = "text"
+    if p.get("ttft_ms") is not None:
+        out["ttft_ms"] = p["ttft_ms"]
+    return out
 def _validate_tool_call(p): return {"tool": _req(p, "tool", str), "args": p.get("args")}
 def _validate_tool_result(p):
     return {"tool": _req(p, "tool", str), "ok": bool(p.get("ok", False)),
@@ -68,9 +78,19 @@ def _validate_tool_result(p):
 def _validate_approval_request(p): return {"tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
 def _validate_approval_decision(p): return {"status": _req(p, "status", str), "decided_by": p.get("decided_by")}
 def _validate_usage(p):
-    return {"model": _req(p, "model", str), "prompt_tokens": _req(p, "prompt_tokens", int),
-            "completion_tokens": _req(p, "completion_tokens", int), "cost_estimate": p.get("cost_estimate")}
-def _validate_turn(p): return {}
+    out = {"model": _req(p, "model", str), "prompt_tokens": _req(p, "prompt_tokens", int),
+           "completion_tokens": _req(p, "completion_tokens", int), "cost_estimate": p.get("cost_estimate")}
+    for k in ("ttft_ms", "run_ms", "tokens_per_second", "prompt_tokens_cache_hit", "context_used_tokens", "context_window"):
+        if k in p and p[k] is not None:
+            out[k] = p[k]
+    return out
+def _validate_turn(p):
+    out = {}
+    for k in ("turn", "reason", "elapsed_ms", "ttft_ms", "run_ms", "tokens_per_second"):
+        if k in p and p[k] is not None:
+            out[k] = p[k]
+    return out
+def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
 
 _EVENT_TYPES.update({
     "user_message": _validate_user_message,
@@ -84,6 +104,8 @@ _EVENT_TYPES.update({
     "usage": _validate_usage,
     "turn_start": _validate_turn,
     "turn_end": _validate_turn,
+    "step_start": _validate_step,
+    "step_end": _validate_step,
 })
 
 

@@ -8,9 +8,18 @@
 
 ## dsh 参照源码(只读参照,不复制、不成为运行依赖)
 
-- 本地 checkout(当前机器):`D:\LLM\deepseek-harness-master`(解压副本,非 git 仓库,无历史)
+- 本地 checkout(当前机器):`D:\LLM\deepseek-harness-master`(**完整源码仓库,含前端 packages/client**;非 git 仓库、无历史)
 - 公开仓库(可克隆/查历史):`https://github.com/deepseek-ai/deepseek-harness`
 - 参照版本:`0.1.2-alpha.1`(apps/cli/package.json);每个模块的参照包路径见 docs/project-skeleton.md
+### ⚠ 前端源码位置(改前端**必须先看这里,禁止只从发布版 lib/*.js 编译产物反推**)
+
+- dsh 前端源码目录:`D:\LLM\deepseek-harness-master\packages\client\`
+  - 对话 UI 核心:`packages\client\ui-conversation\src\client\chat\`(MessageIconActions.tsx / message-chrome.ts / MessageItem.tsx / turn-assistant.ts / tool-node-reader.ts)
+  - 会话 UI:`packages\client\ui-session\src\`;模型选择 ui-model-selection;引用 ui-reference;原语 ui-primitives;布局 ui-layout
+  - 源码命名是 `ui-conversation`(在 packages/client/ 下),不是 `dsh-client-ui-conversation`(那是发布名,只有编译产物)——别搜错
+- **铁律(AGENTS 新增)**:改任何前端交互(消息chrome/状态/工具节点/统计栏/hover/角标)之前,必须先读上面对应的 `packages\client\*` 的 .ts/.tsx 源码,搞清 dsh 的实现(布局、hover、时序、状态),再动手。**禁止**凭记忆/凭发布版编译产物猜测,否则必然偏离 dsh、返工。
+- 发布版编译产物(仅当源码缺某细节时参考,需标注可信度):`D:\Program Files\...\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-client-ui-*\lib\*.js`
+
 
 ## 黄金法则(不可破坏)
 
@@ -44,7 +53,18 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 3. 项目目录(D:\LLM\insurance-agent)是唯一权威源;在别处(如沙箱镜像)构建/编辑后,必须复制到项目目录并删除镜像。
 4. 后端 reload 只监视 app/(run.py 已配 reload_dirs=["app"]);**不要**往项目根写会被 reload 扫描的临时产物(自测截图等放 OS temp 目录),删除临时文件不会惊动 reloader。
 
-- **前端/交互改动必须自测截图判读**:改完 web/ 或交互逻辑后,运行 `python scripts/selftest_ui.py`(build→起后端→造会话→截图),再用视觉桥/人工判读截图(结构化/角标/复制按钮/分侧)符合预期后才交付。不得仅改代码就让用户验证。
+- **前端/交互改动必须自测(分两类,先分类再选验证手段)**:改完 web/ 或交互逻辑后,运行 `python scripts/selftest_ui.py`(build→起后端→造会话→截图)。
+  - **视觉类**(配色/布局/间距/图标/动效):用视觉桥/人工判读截图,确认符合预期。
+  - **几何类**(换行/宽度/对齐/是否竖排/气泡大小):**禁止只用视觉判读**(OCR 区分不了"每字一行"vs"一行两个字")。必须用 DOM 测量断言——注入脚本用 `Range.getClientRects()`/`getBoundingClientRect()` 量出真实行数与尺寸(如 `你好` 必须 LINES=1 且 W≈贴内容宽),用 `chrome --headless --dump-dom` 读出数字,断言通过才算修好。
+  - 交付前**核对端口返回的 index.html 资源 hash 与磁盘 dist 一致**(避免"我改了、你浏览器用的是旧构建");并提醒用户硬刷新(Ctrl+F5)清缓存。
+  - 不得仅改代码就让用户验证,也不得重复"我修好了"却无测量证据。
+## 修复与验证协议(防"我改完=修好"的假阳性)
+
+1. **先复现,后动手**:用户报告 bug 后,必须先用其确切条件把现象**造出来**(能测量到"错误行为"),确认根因,才允许改代码。复现不出来就把还缺的信息问清楚,禁止带假设直接改。
+2. **修复 = 有可测证据**:几何类缺陷必须 A/B 证明"旧规则确实触发、新规则确实不触发",并给出测量数字(行数/尺寸),而非"看起来可以了"。
+3. **交付前核对用户加载的产物**:确认正在服务的 index.html 引用的资源 hash == 磁盘最新 dist,避免用户硬刷新后依然加载到旧包导致"误以为没修好"。
+4. **诚实沟通**:未实际执行的操作不得声称已完成(如"已写进 AGENTS.md")。每轮结束前自查:我声称做过的,是否真的做了并有据可查。
+
 ## 阶段验收(Definition of Done)
 
 1. 阶段完成 = 该阶段验收测试全绿 + STATUS.md 已更新(完成/进行中/下一步)+ 新决策已入 DECISIONS.md + **学习文档 docs/learning/NN-*.md 已追加**(每章模板见 00),四者缺一不可。

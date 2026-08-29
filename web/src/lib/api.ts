@@ -1,5 +1,5 @@
 export interface Session { id: string; title: string; user_id: string; created_at: string }
-export interface PEvent { type: string; payload: any }
+export interface PEvent { type: string; payload: any; ts?: string }
 export interface Citation { idx: number; chunk_id: string }
 export interface Source { chunk_id: string; title: string; content: string }
 
