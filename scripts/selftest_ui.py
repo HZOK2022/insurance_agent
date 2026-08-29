@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """UI 自测脚本:build 前端 -> 起后端 -> 造会话+prompt -> 截图 -> 停后端。
 
 用法(用 rag_env 解释器,含 fastapi/uvicorn/requests/bge):
@@ -14,6 +14,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -78,7 +79,7 @@ def screenshot(out: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--question", default="责任免除包括哪些情形?")
-    ap.add_argument("--out", default=os.path.join(ROOT, "_tmp", "ui_shot.png"))
+    ap.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "dsh_selftest_ui.png"))
     a = ap.parse_args()
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
 

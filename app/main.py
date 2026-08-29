@@ -1,4 +1,4 @@
-﻿"""App 入口:仅初始化 FastAPI、注册路由、托管前端 dist。不写任何接口。"""
+"""App 入口:仅初始化 FastAPI、注册路由、托管前端 dist。不写任何接口。"""
 import os
 
 from fastapi import FastAPI
@@ -23,4 +23,4 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True, reload_dirs=["app"])

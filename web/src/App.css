@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --dsw-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --dsw-bg: rgb(255, 255, 255);
@@ -104,9 +104,11 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .src-title { font-size: 12px; font-weight: 600; color: var(--dsw-primary); margin-bottom: 4px; }
 .src-content { font-size: 12.5px; line-height: 1.6; color: var(--dsw-text-2); }
 
-.dt-expand { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--dsw-border-l2); background: var(--dsw-bg); color: var(--dsw-text-2); display: grid; place-items: center; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); z-index: 5; }
-.dt-expand:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); }
+.dt-expand { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 22px; height: 42px; border-radius: 12px; border: 1px solid var(--dsw-border-l3); background: var(--dsw-bg); color: var(--dsw-text-2); display: grid; place-items: center; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 12px rgba(0,0,0,.10); z-index: 5; transition: color .15s, background .15s, border-color .15s, box-shadow .15s, transform .12s; }
+.dt-expand:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); background: var(--dsw-primary-soft); box-shadow: 0 2px 8px rgba(86,134,254,.28); }
+.dt-expand:active { transform: translate(-50%,-50%) scale(.94); }
 .dt-expand:focus-visible { outline: 2px solid var(--dsw-primary); outline-offset: 1px; }
+.dt-expand .icon { stroke-linecap: round; stroke-linejoin: round; }
 .message.assistant .message-text p { margin: 0 0 8px; }
 .message.assistant .message-text ul { margin: 4px 0 10px; padding-left: 20px; }
 .message.assistant .message-text li { margin-bottom: 5px; line-height: 1.62; }

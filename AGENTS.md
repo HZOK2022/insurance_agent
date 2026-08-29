@@ -42,6 +42,7 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 1. 临时/中间文件(构建产物、临时脚本、录制样本、中间数据)用完即删,项目目录不留残余。
 2. 测试/演示启动的服务与端口(uvicorn、vite dev、任何 node server)结束后必须 kill,禁止留在后台;用后台 job 启动的,结束即 job_kill。
 3. 项目目录(D:\LLM\insurance-agent)是唯一权威源;在别处(如沙箱镜像)构建/编辑后,必须复制到项目目录并删除镜像。
+4. 后端 reload 只监视 app/(run.py 已配 reload_dirs=["app"]);**不要**往项目根写会被 reload 扫描的临时产物(自测截图等放 OS temp 目录),删除临时文件不会惊动 reloader。
 
 - **前端/交互改动必须自测截图判读**:改完 web/ 或交互逻辑后,运行 `python scripts/selftest_ui.py`(build→起后端→造会话→截图),再用视觉桥/人工判读截图(结构化/角标/复制按钮/分侧)符合预期后才交付。不得仅改代码就让用户验证。
 ## 阶段验收(Definition of Done)

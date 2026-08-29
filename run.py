@@ -11,4 +11,4 @@ import uvicorn
 
 if __name__ == "__main__":
     # 从项目根运行;reload=True 代码改动自动重启
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True, reload_dirs=["app"])
