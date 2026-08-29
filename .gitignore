@@ -38,3 +38,4 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+_tmp/
