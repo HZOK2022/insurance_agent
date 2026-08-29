@@ -1,42 +1,42 @@
-import type { SessionSummary } from './types'
+export interface Session { id: string; title: string; user_id: string; created_at: string }
+export interface PEvent { type: string; payload: any }
+export interface Citation { idx: number; chunk_id: string }
+export interface Source { chunk_id: string; title: string; content: string }
 
-// 契约 v0 客户端(默认 VITE_MOCK=1 时不走这里;置 0 后连真实/mock 后端)
 const BASE = '' // 同源;Vite 已代理 /api
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
+  const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json' }, ...init })
   if (!r.ok) throw new Error(path + ' -> ' + r.status)
   return r.json() as Promise<T>
 }
 
-export const listSessions = () => json<SessionSummary[]>('/api/sessions')
-export const createSession = (userId: string) => json<SessionSummary>('/api/sessions', { method: 'POST', body: JSON.stringify({ user_id: userId }) })
-export const sendPrompt = (id: string, text: string) => json<{ accepted: boolean }>('/api/sessions/' + id + '/prompt', { method: 'POST', body: JSON.stringify({ text }) })
+export const listSessions = () => json<Session[]>('/api/sessions')
+export const createSession = (user_id: string) => json<Session>('/api/sessions', { method: 'POST', body: JSON.stringify({ user_id }) })
+export const listEvents = (sid: string) => json<PEvent[]>('/api/sessions/' + sid + '/events')
+export const getCitation = (sid: string, cid: string) =>
+  json<{ content: string; source: string; doc_id: string; version: string; section: string }>(
+    '/api/sessions/' + sid + '/citation/' + encodeURIComponent(cid))
 
-// SSE 事件订阅(契约核心):把事件帧推给回调
-export function subscribeEvents(sessionId: string, onEvent: (ev: any) => void) {
-  const ctrl = new AbortController()
-  fetch(BASE + '/api/sessions/' + sessionId + '/events', { signal: ctrl.signal })
-    .then(async (resp) => {
-      if (!resp.body) return
-      const reader = resp.body.getReader()
-      const dec = new TextDecoder()
-      let buf = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buf.indexOf('\n\n')) >= 0) {
-          const frame = buf.slice(0, idx); buf = buf.slice(idx + 2)
-          const line = frame.split('\n').find((l) => l.startsWith('data:'))
-          if (line) onEvent(JSON.parse(line.slice(5)))
-        }
+// POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
+export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void): Promise<void> {
+  return fetch(BASE + '/api/sessions/' + sid + '/prompt', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+  }).then(async (r) => {
+    if (!r.body) return
+    const reader = r.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let i
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2)
+        const line = frame.split('\n').find((l) => l.startsWith('data:'))
+        if (line) onEvent(JSON.parse(line.slice(5)))
       }
-    })
-    .catch(() => {})
-  return () => ctrl.abort()
+    }
+  })
 }
