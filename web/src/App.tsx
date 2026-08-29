@@ -65,10 +65,19 @@ function Sidebar({ sessions, activeId, onSelect, onNew }: { sessions: Session[];
   </aside>)
 }
 
-function Details({ open, activeIdx, sources, onToggle }: { open: boolean; activeIdx: number | null; sources: Source[]; onToggle: (idx: number) => void }) {
-  return (<div className="details" data-open={open || undefined}><div className="details-head"><span>溯源 · 引用来源</span></div><div className="details-body">{sources.length === 0 && <div className="details-empty">回答未引用资料,无溯源片段</div>}{sources.map((s) => { const on = s.idx === activeIdx; return (<div key={s.idx} className={"src-card" + (on ? " active" : "")} onClick={() => onToggle(s.idx)}><div className="src-title">[{s.idx}] {s.title}</div>{on && <div className="src-content">{s.content}</div>}</div>) })}</div></div>)
+function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolean; activeIdx: number | null; sources: Source[]; onToggle: (idx: number) => void; onClose: () => void }) {
+  const src = sources.find((s) => s.idx === activeIdx)
+  return (<div className="details" data-open={open || undefined}>
+    <div className="details-head">
+      <span>溯源</span>
+      <button className="dt-close" onClick={onClose} title="收起"><I><path d="M9 18l6-6-6-6"/></I></button>
+    </div>
+    <div className="details-body">
+      {!src ? <div className="details-empty">点击回答中的角标查看对应溯源</div> :
+        <div className="src-card active"><div className="src-title">[{src.idx}] {src.title}</div><div className="src-content">{src.content}</div></div>}
+    </div>
+  </div>)
 }
-
 function Center({ messages, input, setInput, busy, send, onCite, title }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; title: string }) {
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
@@ -130,13 +139,14 @@ export default function App() {
       })
     } catch { } finally { setBusy(false) }
   }
-  const toggleSource = (idx: number) => { setActiveIdx((cur) => (cur === idx ? null : idx)); setDetailsOpen(true) }
+  const toggleSource = (idx: number) => { setActiveIdx(idx); setDetailsOpen(true) }
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} /></div>
     <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} /></div>
-    <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} /></div>
+    <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
+    <button className="dt-expand" style={{ left: cols.sidebar + cols.center }} onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起溯源" : "展开溯源"}><I><path d={detailsOpen ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"}/></I></button>
     {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
   </div>)
 }

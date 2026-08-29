@@ -109,3 +109,5 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .message.assistant .ans-heading { font-weight: 600; color: var(--dsw-text); margin: 6px 0 4px; }
 .copy-btn { margin-top: 6px; padding: 3px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 6px; background: var(--dsw-bg); color: var(--dsw-text-2); font-size: 12px; cursor: pointer; }
 .copy-btn:hover { border-color: var(--dsw-primary); color: var(--dsw-primary); }
+.dt-close { display: grid; place-items: center; width: 22px; height: 22px; border: none; background: transparent; color: var(--dsw-text-2); cursor: pointer; border-radius: 5px; }
+.dt-close:hover { background: rgba(0,0,0,.06); color: var(--dsw-text); }
