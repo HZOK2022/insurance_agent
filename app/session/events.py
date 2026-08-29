@@ -1,4 +1,4 @@
-"""会话事件:类型注册表 + 校验(fail-closed)。参照 dsh core/session 的 SessionEventMap。
+﻿"""会话事件:类型注册表 + 校验(fail-closed)。参照 dsh core/session 的 SessionEventMap。
 
 铁律:模型可见 ⟺ 已记录。新模型可见输入 = 新事件类型,必须先 register_type。
 未注册类型在 validate / 加载时一律拒绝(fail-closed),绝不静默猜测。
@@ -14,7 +14,6 @@ class UnknownEventError(ValueError):
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
-# type -> validate(payload) -> normalized payload
 _EVENT_TYPES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 
@@ -40,46 +39,44 @@ def _validate_retrieval(p):
     return {"query": _req(p, "query", str), "chunks": chunks}
 
 
-def _validate_assistant_chunk(p): return {"delta": _req(p, "delta", str)}
-
-
 def _validate_assistant_message(p):
-    cites = p.get("citations", [])
-    norm = []
-    for c in cites:
-        if not isinstance(c, dict) or "idx" not in c or "chunk_id" not in c:
-            raise ValueError("citation 缺 idx/chunk_id")
-        norm.append({"idx": int(c["idx"]), "chunk_id": str(c["chunk_id"])})
-    return {"text": _req(p, "text", str), "citations": norm}
+    blocks = p.get("blocks")
+    if isinstance(blocks, list) and blocks:
+        norm = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            t = b.get("t", "p")
+            if t in ("ul", "ol"):
+                norm.append({"t": t, "items": [str(x) for x in (b.get("items") or []) if x]})
+            else:
+                norm.append({"t": "p", "text": str(b.get("text", ""))})
+    else:
+        norm = [{"t": "p", "text": str(p.get("text", ""))}]
+    cites = []
+    for c in p.get("citations", []):
+        if isinstance(c, dict) and "chunk_id" in c:
+            cites.append({"idx": int(c["idx"]), "chunk_id": str(c["chunk_id"])})
+    return {"blocks": norm, "citations": cites}
 
 
+def _validate_assistant_chunk(p): return {"delta": _req(p, "delta", str)}
 def _validate_tool_call(p): return {"tool": _req(p, "tool", str), "args": p.get("args")}
-
-
 def _validate_tool_result(p):
     return {"tool": _req(p, "tool", str), "ok": bool(p.get("ok", False)),
             "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
-
-
 def _validate_approval_request(p): return {"tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
-
-
 def _validate_approval_decision(p): return {"status": _req(p, "status", str), "decided_by": p.get("decided_by")}
-
-
 def _validate_usage(p):
     return {"model": _req(p, "model", str), "prompt_tokens": _req(p, "prompt_tokens", int),
             "completion_tokens": _req(p, "completion_tokens", int), "cost_estimate": p.get("cost_estimate")}
-
-
 def _validate_turn(p): return {}
-
 
 _EVENT_TYPES.update({
     "user_message": _validate_user_message,
     "retrieval": _validate_retrieval,
-    "assistant_chunk": _validate_assistant_chunk,
     "assistant_message": _validate_assistant_message,
+    "assistant_chunk": _validate_assistant_chunk,
     "tool_call": _validate_tool_call,
     "tool_result": _validate_tool_result,
     "approval_request": _validate_approval_request,
@@ -91,7 +88,6 @@ _EVENT_TYPES.update({
 
 
 def register_type(name: str, validator: Callable[[dict], dict]) -> None:
-    """注册新事件类型(新的模型可见输入必须先调用它)。"""
     if name in _EVENT_TYPES:
         raise ValueError(f"重复注册事件类型: {name}")
     _EVENT_TYPES[name] = validator
@@ -102,12 +98,10 @@ def known_types() -> set[str]:
 
 
 def validate(type_: str, payload: dict) -> dict:
-    """校验并规范化 payload。未知 type 抛 UnknownEventError(fail-closed)。"""
     if type_ not in _EVENT_TYPES:
         raise UnknownEventError(f"未知事件类型: {type_}")
     return _EVENT_TYPES[type_](payload)
 
 
 def make_event(type_: str, payload: dict) -> dict:
-    """构造一个待写库的事件 dict(seq 由 store 分配)。"""
     return {"type": type_, "ts": utcnow(), "payload": validate(type_, payload)}

@@ -1,11 +1,18 @@
-﻿"""AgentLoop: question -> retrieve -> assemble -> LLM answer -> log."""
+﻿"""AgentLoop: question -> retrieve -> assemble -> LLM structured answer -> log.
+
+铁律:模型可见 ⟺ 已记录(检索片段/回答/引用都写会话日志)。
+"""
+from __future__ import annotations
+
 from app.llm.structured import parse_answer
 from app.retrieval.search_tool import search_knowledge
 
-SYSTEM = ("你是保险销售知识助手。基于【检索资料】用 Markdown 回答客服问题。"
-          "回答必须引用资料:正文中用 [idx] 标注,并在 citations 里给出对应 chunk_id。"
-          '只输出 JSON:{"answer":"...","citations":[{"idx":1,"chunk_id":"..."}]}。'
-          "资料不足就明确说不知道,不要编造。")
+SYSTEM = ("你是保险销售知识助手。基于【检索资料】回答客服问题。"
+          "answer 必须是数组,每个元素是块:{t:'p'|'h'|'ul', text 或 items}。"
+          "要点用 t:'ul',items 为字符串数组每项一条;小标题用 t:'h';普通段落用 t:'p'。"
+          "正文引用处写 [idx] 并在 citations 给出 chunk_id。"
+          '只输出 JSON:{"answer":[{"t":"p","text":"..."},{"t":"h","text":"..."},{"t":"ul","items":["...","..."]}],"citations":[{"idx":1,"chunk_id":"..."}]}。'
+          "资料不足就说不知道,不要编造。")
 
 class AgentLoop:
     def __init__(self, store, embedder, qstore, llm, cfg):
@@ -36,8 +43,10 @@ class AgentLoop:
                   {"role":"user","content":"【检索资料】\n"+self._format(chunks)+"\n\n【问题】"+text}]
         content, usage = self.llm.chat(messages)
         parsed = parse_answer(content)
+        blocks = parsed["blocks"]
         citations = self._resolve(parsed, chunks)
-        self.store.append(session_id, "assistant_message", {"text": parsed["answer"], "citations": citations})
+        self.store.append(session_id, "assistant_message", {"blocks": blocks, "citations": citations})
         self.store.append(session_id, "usage", {"model": self.cfg.deepseek_model,
             "prompt_tokens": int(usage.get("prompt_tokens",0)), "completion_tokens": int(usage.get("completion_tokens",0)), "cost_estimate": None})
-        return {"answer": parsed["answer"], "citations": citations, "chunks": chunks}
+        return {"answer": "\n".join(b.get("text","") if b.get("t")!="ul" else "\n".join(b.get("items",[])) for b in blocks),
+                "citations": citations, "chunks": chunks}

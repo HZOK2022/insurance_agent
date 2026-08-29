@@ -12,10 +12,10 @@ function clamp(v: number, min: number, max: number) { return Math.min(max, Math.
 function solve(vp: number, side: number, det: number, narrow: boolean) { let s = side === 0 ? SIDEBAR_COLLAPSED : side; let d = det; while (vp - s - d < CENTER_MIN) { if (d > 0) { d = Math.max(0, d - 20) } else if (!narrow && s > SIDEBAR_COLLAPSED) { s = SIDEBAR_COLLAPSED } else { break } } return { sidebar: s, center: Math.max(0, vp - s - d), details: d } }
 function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void }) { const start = useRef(0); return (<div className="col-handle" style={{ left: pos - 3 }} onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); start.current = e.clientX }} onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) onDrag(e.clientX - start.current) }} onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }} />) }
 
-interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; citations?: Citation[]; tool?: { name: string; ok: boolean } }
+interface Block { t?: string; text?: string; items?: string[] }
+interface Msg { id: string; role: "user" | "assistant" | "tool"; text?: string; blocks?: Block[]; citations?: Citation[]; tool?: { name: string; ok: boolean } }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 
-// 结构化渲染:识别列表(（一）（二）/1./-)、加粗、引用角标
 function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void): ReactNode[] {
   const out: ReactNode[] = []
   const re = /(\*\*[^*]+\*\*|\[\d+\])/g
@@ -36,23 +36,24 @@ function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: num
   return out
 }
 
-function renderAnswer(text: string, citations: Citation[] | undefined, onCite: (idx: number) => void) {
-  const raw = (text || "").trim(); if (!raw) return null
+function renderAnswer(blocks: Block[] | undefined, citations: Citation[] | undefined, onCite: (idx: number) => void): ReactNode {
+  const list: Block[] = blocks || []
   const citIdx = new Set((citations || []).map((c) => c.idx))
-  const lines = raw.split("\n")
-  const blocks: ReactNode[] = []; let liBuf: { content: ReactNode[]; key: number }[] = []
-  const flush = (key: number) => { if (liBuf.length) { blocks.push(<ul key={"ul" + key}>{liBuf.map((it, i) => (<li key={i}>{it.content}</li>))}</ul>); liBuf = [] } }
-  let pKey = 0
-  lines.forEach((ln, i) => {
-    const t = ln.trim(); if (!t) { flush(i); return }
-    const isHeading = /^[一二三四五六七八九十]+[、.．]/.test(t) || /^#{1,3}\s+/.test(t)
-    const isItem = /^[（(][一二三四五六七八九十百\d]+[)）]/.test(t) || /^[-*·]\s+/.test(t) || /^\d+[.、)）]\s*/.test(t)
-    if (isHeading) { flush(i); blocks.push(<div key={"h" + i} className="ans-heading">{inline(t.replace(/^#{1,3}\s+/, ""), i * 50, citIdx, onCite)}</div>) }
-    else if (isItem) { const clean = t.replace(/^[（(][一二三四五六七八九十百\d]+[)）]\s*/, "").replace(/^[-*·]\s+/, "").replace(/^\d+[.、)）]\s*/, ""); if (clean) liBuf.push({ content: inline(clean, i * 50, citIdx, onCite), key: i }) }
-    else { flush(i); blocks.push(<p key={"p" + pKey++}>{inline(t, i * 50, citIdx, onCite)}</p>) }
+  const out: ReactNode[] = []
+  let key = 0
+  list.forEach((b) => {
+    key += 1
+    const t = b.t || "p"
+    if (t === "ul" || t === "ol") { const items = b.items || []; out.push(t === "ol" ? (<ol key={"o" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite)}</li>))}</ol>) : (<ul key={"u" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite)}</li>))}</ul>)) }
+    else if (t === "h") { out.push(<div key={"h" + key} className="ans-heading">{inline(b.text || "", key * 100, citIdx, onCite)}</div>) }
+    else { out.push(<p key={"p" + key}>{inline(b.text || "", key * 100, citIdx, onCite)}</p>) }
   })
-  flush(9999)
-  return <>{blocks}</>
+  return <>{out}</>
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const [ok, setOk] = useState(false)
+  return (<button className="copy-btn" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? "已复制" : "复制"}</button>)
 }
 
 function Sidebar({ sessions, activeId, onSelect, onNew }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void }) {
@@ -64,21 +65,8 @@ function Sidebar({ sessions, activeId, onSelect, onNew }: { sessions: Session[];
   </aside>)
 }
 
-// 溯源面板:只显示被引用的片段;点 [n] 展开/收起
 function Details({ open, activeIdx, sources, onToggle }: { open: boolean; activeIdx: number | null; sources: Source[]; onToggle: (idx: number) => void }) {
-  return (<div className="details" data-open={open || undefined}>
-    <div className="details-head"><span>溯源 · 引用来源</span></div>
-    <div className="details-body">
-      {sources.length === 0 && <div className="details-empty">回答未引用资料,无溯源片段</div>}
-      {sources.map((s) => {
-        const on = s.idx === activeIdx
-        return (<div key={s.idx} className={"src-card" + (on ? " active" : "")} onClick={() => onToggle(s.idx)}>
-          <div className="src-title">[{s.idx}] {s.title}</div>
-          {on && <div className="src-content">{s.content}</div>}
-        </div>)
-      })}
-    </div>
-  </div>)
+  return (<div className="details" data-open={open || undefined}><div className="details-head"><span>溯源 · 引用来源</span></div><div className="details-body">{sources.length === 0 && <div className="details-empty">回答未引用资料,无溯源片段</div>}{sources.map((s) => { const on = s.idx === activeIdx; return (<div key={s.idx} className={"src-card" + (on ? " active" : "")} onClick={() => onToggle(s.idx)}><div className="src-title">[{s.idx}] {s.title}</div>{on && <div className="src-content">{s.content}</div>}</div>) })}</div></div>)
 }
 
 function Center({ messages, input, setInput, busy, send, onCite, title }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; title: string }) {
@@ -86,7 +74,7 @@ function Center({ messages, input, setInput, busy, send, onCite, title }: { mess
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs"><div className="tab active">对话</div><div className="tab">轨迹</div></div></div>
-    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="message-text">{renderAnswer(m.text || "", m.citations, onCite)}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
+    <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{messages.map((m) => (<div key={m.id} className={"message " + m.role}>{m.role === "tool" ? (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span><span className="tool-status">✓ 完成</span></div>) : (<div className="ans-wrap"><div className="message-text">{m.role === "assistant" ? renderAnswer(m.blocks, m.citations, onCite) : m.text}</div>{m.role === "assistant" && <CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />}</div>)}</div>))}{busy && <div className="hint">检索中…</div>}</div>
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-select"><span className="model-dot"></span><span>deepseek · 高</span></div><button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
     <div className="footer-stats">引用:点击回答中的角标,右侧展开对应溯源片段</div>
   </div>)
@@ -118,22 +106,19 @@ export default function App() {
     const byId = new Map(chunks.map((c: any) => [c.chunk_id, c]))
     return (cites || []).map((c) => { const ch = byId.get(c.chunk_id) || {}; return { idx: c.idx, chunk_id: c.chunk_id, title: (ch.doc_id || "") + " " + (ch.version || "") + " · " + (ch.section || ""), content: ch.content || "(未找到原文)" } })
   }
-
   const loadEvents = async (sid: string) => {
     const evs = await listEvents(sid)
     const msgs: Msg[] = []; let chunks: any[] = []; let cites: Citation[] = []
     evs.forEach((e) => {
       if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text })
       else if (e.type === "retrieval") { chunks = e.payload.chunks || []; msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true } }) }
-      else if (e.type === "assistant_message") { cites = e.payload.citations || []; msgs.push({ id: mid(), role: "assistant", text: e.payload.text, citations: cites }) }
+      else if (e.type === "assistant_message") { cites = e.payload.citations || []; msgs.push({ id: mid(), role: "assistant", blocks: e.payload.blocks || [{ t: "p", text: e.payload.text || "" }], citations: cites }) }
     })
     setMessages(msgs); setSources(buildSources(cites, chunks)); setActiveIdx(null)
   }
-
   const selectSession = async (sid: string) => { setActiveId(sid); setActiveIdx(null); try { await loadEvents(sid) } catch { setMessages([]); setSources([]) } }
   useEffect(() => { listSessions().then(async (s) => { setSessions(s); if (s.length) await selectSession(s[0].id) }).catch(() => {}) }, []) // eslint-disable-line
   const newSession = async () => { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); idRef.current = 0; setMessages([]); setSources([]); setActiveIdx(null) }
-
   const send = async () => {
     const text = input.trim(); if (!text || busy || !activeId) return
     setInput(""); setBusy(true)
@@ -141,11 +126,10 @@ export default function App() {
     try {
       await sendPrompt(activeId, text, (e: PEvent) => {
         if (e.type === "retrieval") { retrievalRef.current = e.payload.chunks || []; setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true } }]) }
-        else if (e.type === "assistant_message") { const cites = e.payload.citations || []; setSources(buildSources(cites, retrievalRef.current)); setActiveIdx(null); setMessages((m) => [...m, { id: mid(), role: "assistant", text: e.payload.text, citations: cites }]) }
+        else if (e.type === "assistant_message") { const cites = e.payload.citations || []; setSources(buildSources(cites, retrievalRef.current)); setActiveIdx(null); setMessages((m) => [...m, { id: mid(), role: "assistant", blocks: e.payload.blocks || [{ t: "p", text: e.payload.text || "" }], citations: cites }]) }
       })
     } catch { } finally { setBusy(false) }
   }
-
   const toggleSource = (idx: number) => { setActiveIdx((cur) => (cur === idx ? null : idx)); setDetailsOpen(true) }
 
   return (<div className="frame" ref={frameRef}>
