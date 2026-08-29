@@ -53,7 +53,7 @@ function renderAnswer(blocks: Block[] | undefined, citations: Citation[] | undef
 
 function CopyBtn({ text }: { text: string }) {
   const [ok, setOk] = useState(false)
-  return (<button className="copy-btn" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? "已复制" : "复制"}</button>)
+  return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
 function Sidebar({ sessions, activeId, onSelect, onNew }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void }) {
