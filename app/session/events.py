@@ -52,6 +52,8 @@ def _validate_assistant_message(p):
                 norm.append({"t": t, "items": [str(x) for x in (b.get("items") or []) if x]})
             elif t == "r":
                 norm.append({"t": "r", "text": str(b.get("text", ""))})
+            elif t == "h":
+                norm.append({"t": "h", "text": str(b.get("text", ""))})
             else:
                 norm.append({"t": "p", "text": str(b.get("text", ""))})
     else:
@@ -83,6 +85,11 @@ def _validate_tool_result(p):
             "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
 def _validate_approval_request(p): return {"tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
 def _validate_approval_decision(p): return {"status": _req(p, "status", str), "decided_by": p.get("decided_by")}
+def _validate_compaction_prune(p):
+    return {"seq": _req(p, "seq", int), "shadowed_token_count": p.get("shadowed_token_count"),
+            "chars_removed": _req(p, "chars_removed", int)}
+
+
 def _validate_usage(p):
     out = {"model": _req(p, "model", str), "prompt_tokens": _req(p, "prompt_tokens", int),
            "completion_tokens": _req(p, "completion_tokens", int), "cost_estimate": p.get("cost_estimate")}
@@ -106,6 +113,7 @@ _EVENT_TYPES.update({
     "assistant_chunk": _validate_assistant_chunk,
     "tool_call": _validate_tool_call,
     "tool_result": _validate_tool_result,
+    "compaction_prune": _validate_compaction_prune,
     "approval_request": _validate_approval_request,
     "approval_decision": _validate_approval_decision,
     "usage": _validate_usage,

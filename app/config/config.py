@@ -63,6 +63,8 @@ class Config:
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
     max_tool_result_chars: int = 8000
+    tool_result_head_chars: int = 4000
+    tool_result_tail_chars: int = 1000
     daily_token_budget_per_user: int = 200000
     # 审批
     write_tools_approval: str = "auto"
@@ -104,6 +106,8 @@ _ENV = {
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
     "max_tool_result_chars": "MAX_TOOL_RESULT_CHARS",
+    "tool_result_head_chars": "TOOL_RESULT_HEAD_CHARS",
+    "tool_result_tail_chars": "TOOL_RESULT_TAIL_CHARS",
     "daily_token_budget_per_user": "DAILY_TOKEN_BUDGET_PER_USER",
     "write_tools_approval": "WRITE_TOOLS_APPROVAL",
     "approval_exempt_tools": "APPROVAL_EXEMPT_TOOLS",
@@ -117,7 +121,8 @@ _ENV = {
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
-                  "max_tool_result_chars", "daily_token_budget_per_user")
+                  "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
+                  "daily_token_budget_per_user")
 _NONNEG_INTS = ("chunk_overlap",)
 _FLOATS_01 = ("hybrid_bm25_weight",)
 

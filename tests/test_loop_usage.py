@@ -141,6 +141,15 @@ class BusinessLayerTest(_Base):
         self.assertEqual(cites, [{"idx": 1, "chunk_id": "条款:24"}])
         self.assertTrue(blocks)
 
+    def test_present_answer_parses_markdown_into_blocks(self):
+        # 业务层把模型 markdown 拆成结构化块:## 标题→h、- 要点→ul、**加粗**/[idx] 保留给前端 inline
+        text = "## 一、重大疾病\n\n- 病种A **加粗** [1]\n- 病种B [2]\n\n## 二、等待期\n\n- 30日 [3]"
+        blocks, cites = ins_present(text, [[{"chunk_id": "c1", "content": "x"}], [{"chunk_id": "c2", "content": "y"}], [{"chunk_id": "c3", "content": "z"}]])
+        self.assertEqual([b["t"] for b in blocks], ["h", "ul", "h", "ul"])
+        self.assertIn("**加粗**", blocks[1]["items"][0])
+        self.assertIn("30日", blocks[3]["items"][0])
+        self.assertEqual(cites, [{"idx": 1, "chunk_id": "c1"}, {"idx": 2, "chunk_id": "c2"}, {"idx": 3, "chunk_id": "c3"}])
+
     def test_no_idx_citation_completes_with_valid_int_idx(self):
         class CiteNoIdxLLM:
             def __init__(self): self.calls = 0
@@ -178,6 +187,57 @@ class LoopConvergenceTest(_Base):
         te = next(r["payload"] for r in self.store.read("s1") if r["type"] == "turn_end")
         self.assertEqual(te["reason"], "completed")
 
+
+
+
+class HistoryInjectionTest(_Base):
+    """阶段 A:history 应作为跨轮上下文,在第一次模型请求里、当前 user 之前。"""
+    def test_history_prepended_before_current_user(self):
+        seen = []
+        class CaptureLLM:
+            def chat_stream(self, messages, json_mode=False, tools=None):
+                seen.append(messages)
+                yield {"kind": "text", "delta": "答案", "block_index": 0}
+                yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+        history = [
+            {"role": "user", "content": "重疾险责任免除包括哪些?"},
+            {"role": "assistant", "content": "责任免除包括A、B"},
+        ]
+        list(self.make_loop(CaptureLLM()).turn("s1", "那等待期呢?", history=history))
+        self.assertTrue(seen, "llm 至少被调用一次")
+        msgs = seen[0]
+        self.assertIn({"role": "user", "content": "重疾险责任免除包括哪些?"}, msgs)
+        self.assertIn({"role": "assistant", "content": "责任免除包括A、B"}, msgs)
+        self.assertEqual(msgs[-1], {"role": "user", "content": "那等待期呢?"})
+
+
+
+class ToolTruncationTest(_Base):
+    """阶段 B-1:工具结果超过 max_tool_result_chars → 截断喂模型 content,result_truncated=True,"""
+    """reference(原始 chunks)仍完整落 retrieval 事件。"""
+    def test_long_tool_result_truncated_and_reference_kept(self):
+        long_content = "A" * 12000
+        chunks = [{"chunk_id": "doc:1", "content": "x", "doc_id": "doc", "version": "v1",
+                  "section": "s", "source": "src", "score": 0.9}]
+        def handler(args):
+            return {"content": long_content, "reference": chunks}
+        tools = {"search_knowledge": {"schema": {"type": "function", "function": {"name": "search_knowledge",
+                                        "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                                                        "required": ["query"]}}}, "handler": handler}}
+        cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake",
+                                    max_tool_result_chars=8000, tool_result_head_chars=4000, tool_result_tail_chars=1000)
+        def emit(t_, p_):
+            ev = make_event(t_, p_); self.store.append("s1", t_, p_); return ev
+        loop = AgentLoop(FakeRetrieveLLM(), "系统", tools, ins_present, cfg, emit=emit, force_answer=ins_force)
+        evs = list(loop.turn("s1", "100种重大疾病"))
+        tr = next((e["payload"] for e in evs if e["type"] == "tool_result"), None)
+        self.assertIsNotNone(tr)
+        self.assertTrue(tr["result_truncated"])
+        # 模型侧 conversation 里 content 被截断
+        ret = next((e["payload"] for e in evs if e["type"] == "retrieval"), None)
+        self.assertIsNotNone(ret)
+        self.assertEqual(ret["chunks"], chunks)   # reference 完整
 
 if __name__ == "__main__":
     unittest.main()

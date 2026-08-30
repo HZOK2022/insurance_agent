@@ -2,6 +2,7 @@
 from typing import Iterator
 
 from app.loop.agent_loop import AgentLoop
+from app.session.context import build_history
 from app.session.events import make_event
 from app.session.store import SessionStore
 
@@ -13,7 +14,10 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
         ev = make_event(type_, payload)
         store.append(session_id, type_, payload)
         return ev
+    # 阶段 A:构建跨轮历史。在 loop 写入当前 user_message 之前调用,
+    # 这样历史不含当前问题,只含此前轮次的 user/assistant(已剥旧 [idx])。
+    history = build_history(store, session_id)
     loop = AgentLoop(llm, bundle["system"], bundle["tools"], bundle["present_answer"],
                      bundle["cfg"], emit=emit, force_answer=bundle.get("force_answer"))
-    for ev in loop.turn(session_id, text):
+    for ev in loop.turn(session_id, text, history=history):
         yield ev

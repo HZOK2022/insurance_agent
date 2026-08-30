@@ -14,7 +14,7 @@ function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void 
 
 interface Block { t?: string; text?: string; items?: string[] }
 // 行模型:每条消息是一个"节点"——user | think(该步推理,交错在工具之间) | tool(工具卡) | answer(最终回答)
-interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer"; text?: string; reasoning?: string; blocks?: Block[]; citations?: Citation[]; tool?: { name: string; ok: boolean; args?: any; running?: boolean }; time?: string; streaming?: boolean; runMs?: number; ttftMs?: number; tps?: number }
+interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer"; text?: string; reasoning?: string; blocks?: Block[]; citations?: Citation[]; sources?: Source[]; tool?: { name: string; ok: boolean; args?: any; running?: boolean }; time?: string; streaming?: boolean; runMs?: number; ttftMs?: number; tps?: number }
 // 照 dsh formatLatencySeconds/formatTokensPerSecond:<10s 一位小数,>=10s 取整;tps >=10 取整
 function fmtDur(ms?: number): string { if (ms == null) return ""; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
 function fmtTps(v?: number): string { if (v == null) return ""; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
@@ -86,8 +86,8 @@ function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, load
   </aside>)
 }
 
-function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolean; activeIdx: number | null; sources: Source[]; onToggle: (idx: number) => void; onClose: () => void }) {
-  const src = sources.find((s) => s.idx === activeIdx)
+function Details({ open, activeSource, onClose }: { open: boolean; activeSource: Source | null; onClose: () => void }) {
+  const src = activeSource
   return (<div className="details" data-open={open || undefined}>
     <div className="details-head">
       <span>溯源</span>
@@ -98,14 +98,14 @@ function Details({ open, activeIdx, sources, onToggle, onClose }: { open: boolea
     </div>
   </div>)
 }
-function Center({ messages, input, setInput, busy, send, onCite, activeIdx, title, trace, activeTab, setActiveTab }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (idx: number) => void; activeIdx: number | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void }) {
+function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void }) {
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   const fmtD = (ms?: number) => { if (ms == null) return "—"; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
   const fmtT = (v?: number) => { if (v == null) return "—"; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
   // 每行渲染一个"节点":user / think / tool / answer,按事件序交错
   const renderRow = (m: Msg) => {
-    if (m.role === "user") return (<div className="ans-wrap"><div className="message-text">{m.text}</div><div className="msg-chrome user">{formatClock(m.time)}</div></div>)
+    if (m.role === "user") return (<div className="ans-wrap"><div className="message-text">{m.text}</div><div className="msg-chrome user">{formatClock(m.time)}<CopyBtn text={m.text || ""} /></div></div>)
     if (m.role === "text") return (<div className="ans-wrap"><div className="message-text">{m.text}</div></div>)
     if (m.role === "tool") return (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span>{m.tool?.args ? <span className="tool-args">{JSON.stringify(m.tool.args)}</span> : ""}<span className={"tool-status" + (m.tool?.running ? " running" : "")}>{m.tool?.running ? "调用中…" : "✓ 完成"}</span></div>)
     if (m.role === "think") {
@@ -113,7 +113,7 @@ function Center({ messages, input, setInput, busy, send, onCite, activeIdx, titl
       return (<div className="ans-wrap"><details className="think-row"><summary><span className="think-label">Think</span><span className="think-summary">{summary}</span>{m.streaming && <span className="stream-caret" />}</summary><div className="think-body">{m.reasoning}</div></details></div>)
     }
     // answer
-    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.citations, onCite, activeIdx)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}</div></div>)
+    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.citations, (idx) => onCite(m.id, idx), activeCite?.msgId === m.id ? activeCite.idx : null)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}</div></div>)
   }
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs">
@@ -141,7 +141,6 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Msg[]>([])
-  const [sources, setSources] = useState<Source[]>([])
   const [input, setInput] = useState("")
   const [busy, setBusy] = useState(false)
     const [trace, setTrace] = useState<any[]>([])
@@ -151,7 +150,7 @@ export default function App() {
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
-  const [activeIdx, setActiveIdx] = useState<number | null>(null)
+  const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const [vp, setVp] = useState(1280)
   const idRef = useRef(0)
@@ -162,6 +161,9 @@ export default function App() {
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
   const cols = solve(vp, narrow ? 0 : sideW, detailsOpen ? detW : 0, narrow)
+  // 激活的引用只属于"被点击的那条回答":按其自身的 sources 解析溯源,不在其它轮编号上高亮。
+  const activeMsg = messages.find((m) => m.id === activeCite?.msgId)
+  const activeSource = activeMsg?.sources?.find((s) => s.idx === activeCite?.idx) || null
 
   const buildSources = (cites: Citation[], chunks: any[]): Source[] => {
     const byId = new Map(chunks.map((c: any) => [c.chunk_id, c]))
@@ -178,15 +180,15 @@ export default function App() {
       else if (e.type === "assistant_chunk") { const k = e.payload?.kind; const d = e.payload?.delta || ""; if (k === "reasoning") step.reason += d; else if (k === "text") step.text += d }
       else if (e.type === "tool_call") { step.kind = "tool"; tr.push({ type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }) }
       else if (e.type === "retrieval") { chunks = e.payload.chunks || []; step.tools.push({ query: e.payload?.query }) }
-      else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, time: e.ts }) }
+      else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, sources: buildSources(cites, chunks), time: e.ts }) }
       else if (e.type === "step_end") { if (step.kind === "tool") { if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); if (step.text.trim()) msgs.push({ id: mid(), role: "text", text: step.text, time: e.ts }); for (const t of step.tools) msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true, args: { query: t.query } }, time: e.ts }) } }
       else if (e.type === "usage") { const p = e.payload || {}; const last = [...msgs].reverse().find((x) => x.role === "answer"); if (last) { last.ttftMs = p.ttft_ms ?? last.ttftMs; last.tps = p.tokens_per_second ?? last.tps } }
       else if (e.type === "turn_end") { const p = e.payload || {}; const last = [...msgs].reverse().find((x) => x.role === "answer"); if (last) { last.runMs = p.elapsed_ms ?? last.runMs; last.ttftMs = p.ttft_ms ?? last.ttftMs; last.tps = p.tokens_per_second ?? last.tps } tr.push({ type: "turn_end", ...p, ts: e.ts }) }
     })
-    setMessages(msgs); setSources(buildSources(cites, chunks)); setActiveIdx(null)
+    setMessages(msgs); setActiveCite(null)
     if (tr.length) setTrace(tr)
   }
-  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveIdx(null); try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setSources([]); setLoadErr("加载会话失败,请稍后重试") } }
+  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveCite(null); try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setLoadErr("加载会话失败,请稍后重试") } }
   // 后端重启有启动窗口(~12s):失败不显示"暂无会话",自动重试并提示
   useEffect(() => {
     let alive = true; let timer: number | undefined
@@ -202,8 +204,8 @@ export default function App() {
     load()
     return () => { alive = false; if (timer) window.clearTimeout(timer) }
   }, []) // eslint-disable-line
-  const newSession = async () => { try { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setSources([]); setActiveIdx(null); setTrace([]); setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
-  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setSources([]); setActiveIdx(null); setTrace([]); if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession("u1"); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
+  const newSession = async () => { try { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setTrace([]); setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
+  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setTrace([]); if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession("u1"); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
   const renameSess = async (id: string, title: string) => { try { await renameSession(id, title); setSessions(await listSessions()) } catch { setLoadErr("重命名失败,请稍后重试") } }
   const send = async () => {
     const text = input.trim(); if (!text || busy) return
@@ -250,18 +252,18 @@ export default function App() {
         else if (e.type === "tool_call") { setTrace((t) => [...t, { type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }]); closeThink(); if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, streaming: false } : x)) } setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: e.payload?.tool || "search_knowledge", ok: true, args: e.payload?.args, running: true }, time: e.ts }]) }
         else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args } } : x)) }
         else if (e.type === "retrieval") { retrievalRef.current = e.payload?.chunks || [] }
-        else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; setSources(buildSources(cites, retrievalRef.current)); setActiveIdx(null); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, time: e.ts }]) } }
+        else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(cites, retrievalRef.current); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
         else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...p, ts: e.ts }]); setBusy(false) }
       })
     } catch { } finally { setBusy(false); try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
   }
-  const toggleSource = (idx: number) => { setActiveIdx(idx); setDetailsOpen(true) }
+  const toggleSource = (msgId: string, idx: number) => { setActiveCite({ msgId, idx }); setDetailsOpen(true) }
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeIdx={activeIdx} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} /></div>
-    <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeIdx={activeIdx} sources={sources} onToggle={toggleSource} onClose={() => setDetailsOpen(false)} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} /></div>
+    <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
     {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}

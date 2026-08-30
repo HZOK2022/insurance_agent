@@ -36,12 +36,83 @@ def _format_chunks(chunks: list[dict]) -> str:
 
 
 def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
+    # 重排:cfg.reranking_engine 非空 → 外部 SiliconeFlow bge-reranker,每次只留 top_k_reranker 条精确片段;
+    # 失败(None)时 search_knowledge 回退原 top_k 顺序(不崩、不硬切)。
+    rerank_fn = None
+    if getattr(cfg, "reranking_engine", ""):
+        from app.retrieval import reranker
+        _url = cfg.reranking_external_url
+        _key = cfg.reranking_external_api_key
+        _model = cfg.reranking_external_model
+        _topn = cfg.top_k_reranker
+        _to = cfg.reranking_external_timeout
+        def _rerank(query: str, docs: list[str]):
+            return reranker.rerank(query, docs, _url, _key, _model, top_n=_topn, timeout=_to)
+        rerank_fn = _rerank
+
+    # 混合检索:hybrid_bm25_weight>0 时惰性构建 BM25(派生索引),与稠密融合;0 则纯稠密。
+    _hybrid: Any = None
+    _hybrid_loaded = False
+
+    def _get_hybrid():
+        nonlocal _hybrid, _hybrid_loaded
+        if not _hybrid_loaded:
+            _hybrid_loaded = True
+            if getattr(cfg, "hybrid_bm25_weight", 0.0) > 0:
+                chunks = qstore.all_chunks()
+                if chunks:
+                    from app.retrieval.hybrid import BM25Index
+                    _hybrid = BM25Index(chunks)
+        return _hybrid
+
     def handler(args: Any) -> dict:
         query = (args or {}).get("query") or ""
-        chunks = search_knowledge(embedder, qstore, query, top_k=cfg.top_k, top_rerank=cfg.top_k_reranker)
+        chunks = search_knowledge(embedder, qstore, query, top_k=cfg.top_k, top_rerank=cfg.top_k_reranker,
+                                  rerank_fn=rerank_fn, hybrid=_get_hybrid(),
+                                  hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0))
         # 喂给 LLM 的 content 用格式化文本;reference 保留原始 chunks 供溯源
         return {"content": _format_chunks(chunks), "reference": chunks}
     return {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler}}
+
+
+def _split_answer_blocks(text: str) -> list[dict]:
+    """把模型的可读 markdown(## 标题 / '- '要点)拆成结构化块。
+
+    只切块级结构(标题/列表/段落);不剥离 ** 加粗与 [idx] 引用,
+    交由前端 inline 渲染为加粗与引用角标(跨块仍可)。"""
+    if not text:
+        return [{"t": "p", "text": "（无回答）"}]
+    blocks: list[dict] = []
+    para: list[str] = []
+    items: list[str] = []
+
+    def flush_para():
+        if para:
+            blocks.append({"t": "p", "text": "\n".join(para).strip()})
+            para.clear()
+
+    def flush_list():
+        if items:
+            blocks.append({"t": "ul", "items": list(items)})
+            items.clear()
+
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
+            flush_para(); flush_list(); continue
+        h = re.match(r"^#{1,4}\s+(.*)$", line)
+        b = re.match(r"^[-*]\s+(.*)$", line)
+        if h:
+            flush_para(); flush_list()
+            blocks.append({"t": "h", "text": h.group(1).strip()})
+        elif b:
+            flush_para()
+            items.append(b.group(1).strip())
+        else:
+            flush_list()
+            para.append(line)
+    flush_para(); flush_list()
+    return blocks or [{"t": "p", "text": text or "（无回答）"}]
 
 
 def present_answer(answer_text: str, chunks_list: list) -> tuple[list, list]:
@@ -56,7 +127,7 @@ def present_answer(answer_text: str, chunks_list: list) -> tuple[list, list]:
         if cid and cid not in seen:
             cites.append({"idx": idx, "chunk_id": cid})
             seen.add(cid)
-    blocks = [{"t": "p", "text": answer_text or "（无回答）"}]
+    blocks = _split_answer_blocks(answer_text)
     return blocks, cites
 
 

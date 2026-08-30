@@ -35,6 +35,24 @@ class QdrantStore:
         if pts:
             self.client.upsert(self.collection, points=pts)
 
+    def all_chunks(self) -> list[dict]:
+        """全量导出语料({chunk_id, content, meta}),供 BM25 派生索引构建。"""
+        out: list[dict] = []
+        offset = None
+        while True:
+            pts, nxt = self.client.scroll(self.collection, limit=1000, with_payload=True, offset=offset)
+            for h in pts:
+                p = h.payload
+                cid = p.get("chunk_id")
+                if not cid:
+                    continue
+                out.append({"chunk_id": cid, "content": p.get("content", ""),
+                            "meta": {k: v for k, v in p.items() if k != "content"}})
+            if not nxt:
+                break
+            offset = nxt
+        return out
+
     def search(self, vector: list[float], top_k: int = 20) -> list[dict]:
         try:
             pts = self.client.query_points(self.collection, query=vector, limit=top_k, with_payload=True).points

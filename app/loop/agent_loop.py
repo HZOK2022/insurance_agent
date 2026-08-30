@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
+from app.utils.text import prune_tool_content
+
 logger = logging.getLogger("insurance.agent")
 
 
@@ -131,7 +133,7 @@ class AgentLoop:
                        "id": piece.get("call_id"), "name": piece.get("name"),
                        "argumentsDelta": piece.get("delta", ""), "ttft_ms": ttft}
 
-    def turn(self, session_id: str, text: str) -> Iterator[dict]:
+    def turn(self, session_id: str, text: str, history: list[dict] | None = None) -> Iterator[dict]:
         """turn/start → step* → turn/end(ReAct:思考→行动→观察→回答)。生成器:每写一条事件 yield 一条。"""
         t0 = time.time()
         yield self._emit("turn_start", {"turn": 1})
@@ -145,7 +147,8 @@ class AgentLoop:
         reason = "completed"
         n_steps = 0
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
-        conversation: list[dict] = [{"role": "user", "content": text}]
+        # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
+        conversation: list[dict] = (list(history) if history else []) + [{"role": "user", "content": text}]
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
         max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
@@ -202,11 +205,23 @@ class AgentLoop:
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
                         content, reference = self._run_tool(name, args)
+                        # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
+                        # reference(原始 chunks)不动,完整进 retrieval 事件(引用/溯源不丢)。
+                        pruned, truncated = content, False
+                        if isinstance(content, str) and content:
+                            _th = int(getattr(self.cfg, "max_tool_result_chars", 0) or 0)
+                            if _th > 0:
+                                _p = prune_tool_content(
+                                    content, _th,
+                                    int(getattr(self.cfg, "tool_result_head_chars", 0) or 0),
+                                    int(getattr(self.cfg, "tool_result_tail_chars", 0) or 0))
+                                if _p is not None:
+                                    pruned, truncated = _p, True
                         yield self._emit("tool_result", {"tool": name, "ok": reference is not None or bool(content),
-                                                         "result_truncated": False,
+                                                         "result_truncated": truncated,
                                                          "error": None if (reference is not None or content) else "no_hits"})
                         conversation.append({"role": "tool", "tool_call_id": tc.id or f"call_{i}",
-                                             "name": name, "content": content})
+                                             "name": name, "content": pruned})
                         references.append(reference)
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
