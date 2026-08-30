@@ -22,7 +22,8 @@ SYSTEM = (
     "你是保险销售知识助手。可调用 search_knowledge 工具检索知识库回答问题。\n"
     "规则:\n"
     "- 需要知识库资料时,调用 search_knowledge,并**先写一句叙述**(查到了什么、还缺什么、下一步要查什么),再调用工具。\n"
-    "- 调用后看到检索结果;资料不足可再查,但别用几乎相同的词反复查,连续检索无新增就停止。\n"
+    "- 调用后看到检索结果;资料不足可再查,但别用几乎相同的词反复查,连续检索无新增就停止。\n" +
+    "- 涉及保费/年缴/费率(某年龄某方案多少钱)时:调用 calculate_premium(product/age/items,可带 family_member_count)算出确切金额再回答,别自己心算;按结果引用角标。\n"
     "- 资料足够或这是寒暄/常识时,不要再调工具,**直接输出最终回答**。\n"
     "- 最终回答:写成要回复客户的**可读文本**(可分段;要点行用'- '开头;关键结论用**加粗**)。在引用处标 [idx](对应你检索结果里的片段编号,如 [1])。不要输出 JSON/代码块。\n"
     "- 诚实优先:只写实际检索到的。未获得完整清单必须写明'以下为检索到的部分病种,完整清单以保险条款原文为准',严禁声称'共N种/完整列表'除非确实列全;查不到就说不知道,不要编造。"
@@ -73,7 +74,15 @@ def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
                                   hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0))
         # 喂给 LLM 的 content 用格式化文本(整轮全局编号);reference 保留原始 chunks 供溯源
         return {"content": _format_chunks(chunks, start_idx), "reference": chunks}
-    return {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler}}
+    tools = {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler}}
+    # 保费计算(查表确定性,不靠 LLM 手算):费率事实源 PremiumStore(SQLite);费率库缺失则降级不加该工具。
+    try:
+        from app.businesses.premium import PremiumStore, build_premium_tool
+        _pstore = PremiumStore(getattr(cfg, "premium_db_path", "data/premium.db"))
+        tools["calculate_premium"] = build_premium_tool(_pstore)
+    except Exception:
+        pass
+    return tools
 
 
 def _split_answer_blocks(text: str) -> list[dict]:
