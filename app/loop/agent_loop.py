@@ -153,13 +153,19 @@ class AgentLoop:
         win = int(getattr(self.cfg, "context_window", 0) or 0)
         if win > 0:
             _budget = max(0, int(win * 0.8) - estimate_tokens(self.system))
+            _before = len(conversation)
             while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
                 conversation.pop(0)
+            _sys_t = estimate_tokens(self.system)
+            _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
+            _msg_t = self._estimate_conversation(conversation)
             yield self._emit("request_context", {
                 "model": getattr(self.cfg, "deepseek_model", ""),
                 "context_window": win,
-                "prompt_tokens": estimate_tokens(self.system) + self._estimate_conversation(conversation),
+                "system_tokens": _sys_t, "tools_tokens": _tools_t, "messages_tokens": _msg_t,
+                "prompt_tokens": _sys_t + _tools_t + _msg_t,
                 "completion_tokens": 0,
+                "compression_triggered": len(conversation) < _before,
             })
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)

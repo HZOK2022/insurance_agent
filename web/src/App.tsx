@@ -18,6 +18,8 @@ interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer";
 // 照 dsh formatLatencySeconds/formatTokensPerSecond:<10s 一位小数,>=10s 取整;tps >=10 取整
 function fmtDur(ms?: number): string { if (ms == null) return ""; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
 function fmtTps(v?: number): string { if (v == null) return ""; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
+// 上下文用量:~9.9K / ~720K / ~1M(照 dsh)
+function fmtCtx(n?: number): string { if (n == null) return "—"; if (n >= 1_000_000) { const v = n / 1_000_000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "M" } if (n >= 1000) { const v = n / 1000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "K" } return "~" + String(n) }
 // 任务耗时:2m25s / 45s / 800ms
 function fmtElapsed(ms?: number): string { if (ms == null) return ""; if (ms < 1000) return ms + "ms"; const s = Math.round(ms / 1000); if (s < 60) return s + "s"; return Math.floor(s / 60) + "m" + (s % 60) + "s" }
 // 照 dsh formatMessageClock:同日 HH:mm;本年度其它天 {m}月{d}日 HH:mm;跨年 {y}年{m}月{d}日 HH:mm
@@ -98,7 +100,7 @@ function Details({ open, activeSource, onClose }: { open: boolean; activeSource:
     </div>
   </div>)
 }
-function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void }) {
+function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null }) {  const ctxPct = ctxUsage && ctxUsage.window > 0 ? Math.min(100, Math.round((ctxUsage.used / ctxUsage.window) * 100)) : 0
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
   const fmtD = (ms?: number) => { if (ms == null) return "—"; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
@@ -133,7 +135,19 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
           ))}
         </div>}
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-select"><span className="model-dot"></span><span>deepseek · 高</span></div><button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
-    <div className="footer-stats">引用:点击回答中的角标,右侧展开对应溯源片段</div>
+    <div className="footer-stats">
+      {ctxUsage && (<div className="ctx-usage">
+        <div className="ctx-head"><span>上下文已用 <b>{ctxPct}%</b></span><span className="ctx-total">{fmtCtx(ctxUsage.used)} / {fmtCtx(ctxUsage.window)}</span></div>
+        <div className="ctx-bar"><div className="ctx-fill" style={{ width: ctxPct + "%" }} /></div>
+        <div className="ctx-rows">
+          <div className="ctx-row"><span className="ctx-dot sys" />系统提示词<span className="ctx-val">{fmtCtx(ctxUsage.system)}</span></div>
+          <div className="ctx-row"><span className="ctx-dot tool" />工具<span className="ctx-val">{fmtCtx(ctxUsage.tools)}</span></div>
+          <div className="ctx-row"><span className="ctx-dot msg" />对话消息<span className="ctx-val">{fmtCtx(ctxUsage.messages)}</span></div>
+        </div>
+        {ctxUsage.compression && <div className="ctx-remind">⚠ 上下文已达上限,已压缩历史</div>}
+      </div>)}
+      <span>引用:点击回答中的角标,右侧展开对应溯源片段</span>
+    </div>
   </div>)
 }
 
@@ -151,6 +165,7 @@ export default function App() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
+  const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const [vp, setVp] = useState(1280)
   const idRef = useRef(0)
@@ -182,6 +197,7 @@ export default function App() {
       else if (e.type === "retrieval") { chunks = e.payload.chunks || []; step.tools.push({ query: e.payload?.query }) }
       else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, sources: buildSources(cites, chunks), time: e.ts }) }
       else if (e.type === "step_end") { if (step.kind === "tool") { if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); if (step.text.trim()) msgs.push({ id: mid(), role: "text", text: step.text, time: e.ts }); for (const t of step.tools) msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true, args: { query: t.query } }, time: e.ts }) } }
+      else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
       else if (e.type === "usage") { const p = e.payload || {}; const last = [...msgs].reverse().find((x) => x.role === "answer"); if (last) { last.ttftMs = p.ttft_ms ?? last.ttftMs; last.tps = p.tokens_per_second ?? last.tps } }
       else if (e.type === "turn_end") { const p = e.payload || {}; const last = [...msgs].reverse().find((x) => x.role === "answer"); if (last) { last.runMs = p.elapsed_ms ?? last.runMs; last.ttftMs = p.ttft_ms ?? last.ttftMs; last.tps = p.tokens_per_second ?? last.tps } tr.push({ type: "turn_end", ...p, ts: e.ts }) }
     })
@@ -253,6 +269,7 @@ export default function App() {
         else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args } } : x)) }
         else if (e.type === "retrieval") { retrievalRef.current = e.payload?.chunks || [] }
         else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(cites, retrievalRef.current); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
+        else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
         else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...p, ts: e.ts }]); setBusy(false) }
       })
@@ -262,7 +279,7 @@ export default function App() {
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>

@@ -90,9 +90,27 @@ def _validate_compaction_prune(p):
             "chars_removed": _req(p, "chars_removed", int)}
 
 
+def _validate_compaction_start(p):
+    return {"from_seq": p.get("from_seq"), "to_seq": p.get("to_seq"),
+            "reason": p.get("reason"), "turn": p.get("turn")}
+
+
+def _validate_compaction_summary(p):
+    return {"summary": _req(p, "summary", str), "shadowed_seqs": p.get("shadowed_seqs"),
+            "shadowed_token_count": p.get("shadowed_token_count")}
+
+
+def _validate_compaction_end(p):
+    return {"reason": p.get("reason"), "chars_saved": p.get("chars_saved"),
+            "turn": p.get("turn")}
+
+
 def _validate_request_context(p):
     return {"model": _req(p, "model", str), "context_window": _req(p, "context_window", int),
-            "prompt_tokens": p.get("prompt_tokens"), "completion_tokens": p.get("completion_tokens")}
+            "system_tokens": p.get("system_tokens"), "tools_tokens": p.get("tools_tokens"),
+            "messages_tokens": p.get("messages_tokens"),
+            "prompt_tokens": p.get("prompt_tokens"), "completion_tokens": p.get("completion_tokens"),
+            "compression_triggered": bool(p.get("compression_triggered", False))}
 
 
 def _validate_usage(p):
@@ -120,6 +138,9 @@ _EVENT_TYPES.update({
     "tool_result": _validate_tool_result,
     "compaction_prune": _validate_compaction_prune,
     "request_context": _validate_request_context,
+    "compaction_start": _validate_compaction_start,
+    "compaction_summary": _validate_compaction_summary,
+    "compaction_end": _validate_compaction_end,
     "approval_request": _validate_approval_request,
     "approval_decision": _validate_approval_decision,
     "usage": _validate_usage,
