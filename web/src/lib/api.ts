@@ -21,9 +21,10 @@ export const getCitation = (sid: string, cid: string) =>
     '/api/sessions/' + sid + '/citation/' + encodeURIComponent(cid))
 
 // POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
-export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void): Promise<void> {
+export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string): Promise<void> {
   return fetch(BASE + '/api/sessions/' + sid + '/prompt', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(model ? { text, model } : { text }),
   }).then(async (r) => {
     if (!r.body) return
     const reader = r.body.getReader()

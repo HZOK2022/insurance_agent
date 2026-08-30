@@ -40,8 +40,8 @@ class LLMClient:
         self.api_key=api_key; self.base_url=base_url.rstrip("/"); self.model=model
         self.temperature=temperature; self.max_tokens=max_tokens; self.timeout=timeout
 
-    def chat(self, messages, json_mode=True, tools=None):
-        body={"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens}
+    def chat(self, messages, json_mode=True, tools=None, model=None):
+        body={"model":model or self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens}
         if json_mode: body["response_format"]={"type":"json_object"}
         if tools: body["tools"]=tools
         r=requests.post(self.base_url+"/chat/completions",
@@ -51,7 +51,7 @@ class LLMClient:
         d=r.json()
         return d["choices"][0]["message"]["content"], d.get("usage", {})
 
-    def chat_stream(self, messages, json_mode=False, tools=None):
+    def chat_stream(self, messages, json_mode=False, tools=None, model=None):
         """流式调用,归一化为 StreamChunk(text/reasoning/tool-call/usage)。
 
         照 dsh llm-deepseek/serialize.ts + translate.ts:
@@ -60,7 +60,7 @@ class LLMClient:
         - 逐 chunk 读 delta.reasoning_content / delta.content / delta.tool_calls,为每种 open 一个 block。
         include_usage 让 API 在收尾 chunk 返回真实 token 数,以 kind=="usage" 收尾。
         """
-        body={"model":self.model,"messages":messages,"stream":True,"stream_options":{"include_usage":True}}
+        body={"model":model or self.model,"messages":messages,"stream":True,"stream_options":{"include_usage":True}}
         if json_mode: body["response_format"]={"type":"json_object"}
         if tools:
             body["tools"]=tools

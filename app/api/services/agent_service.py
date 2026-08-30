@@ -7,7 +7,7 @@ from app.session.events import make_event
 from app.session.store import SessionStore
 
 
-def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: str) -> Iterator[dict]:
+def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: str, model: str | None = None) -> Iterator[dict]:
     """真流式:构造会话绑定的核心 AgentLoop(业务层注入 system/tools/present_answer/force_answer),
     emit 落库;调用 turn(),逐个 yield 事件(含 assistant_chunk),供 SSE 逐帧推流。"""
     def emit(type_: str, payload: dict) -> dict:
@@ -18,6 +18,6 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     # 这样历史不含当前问题,只含此前轮次的 user/assistant(已剥旧 [idx])。
     history = build_history(store, session_id)
     loop = AgentLoop(llm, bundle["system"], bundle["tools"], bundle["present_answer"],
-                     bundle["cfg"], emit=emit, force_answer=bundle.get("force_answer"))
+                     bundle["cfg"], emit=emit, force_answer=bundle.get("force_answer"), model=model)
     for ev in loop.turn(session_id, text, history=history):
         yield ev

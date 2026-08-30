@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/sessions", tags=["prompt"])
 @router.post("/{sid}/prompt")
 def prompt(sid: str, body: PromptRequest):
     def gen() -> Iterator[str]:
-        for ev in agent_service.run_prompt(container.get_store(), container.get_llm(), container.get_insurance_bundle(), sid, body.text):
+        for ev in agent_service.run_prompt(container.get_store(), container.get_llm(), container.get_insurance_bundle(), sid, body.text, model=body.model):
             yield event_frame(ev)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

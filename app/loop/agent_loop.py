@@ -98,7 +98,8 @@ class AgentLoop:
     def __init__(self, llm, system: str, tools: dict[str, dict],
                  present_answer: Callable[[str, list], tuple[list, list]], cfg,
                  emit: Callable[[str, dict], dict] | None = None,
-                 force_answer: Callable[[list], tuple[list, list]] | None = None):
+                 force_answer: Callable[[list], tuple[list, list]] | None = None,
+                 model: str | None = None):
         # llm: .chat_stream(messages, json_mode, tools) -> iter chunks
         # system: 业务 prompt
         # tools: {name: {"schema": openai 工具 schema, "handler": fn(args)->{"content":str,"reference":any}}}
@@ -111,6 +112,11 @@ class AgentLoop:
         self.cfg = cfg
         self._emit = emit or (lambda t, p: p)
         self.force_answer = force_answer   # 检索达上限强制结束时的业务兜底(如保险的"诚实说明")
+        self.model_override = model   # 模型可配置:前端选 deepseek-v4-flash / deepseek-v4-pro
+
+    @property
+    def _effective_model(self) -> str:
+        return self.model_override or getattr(self.cfg, "deepseek_model", "")
 
     def _tools_schemas(self) -> list[dict] | None:
         schemas = [t["schema"] for t in self.tools.values()]
@@ -118,7 +124,7 @@ class AgentLoop:
 
     def _stream_blocks(self, msgs: list[dict]) -> Iterator[dict]:
         """流式取块:走 llm.chat_stream,产出标准化 chunk 供 BlockAssembler + 推送。"""
-        for piece in self.llm.chat_stream(msgs, json_mode=False, tools=self._tools_schemas()):
+        for piece in self.llm.chat_stream(msgs, json_mode=False, tools=self._tools_schemas(), model=self.model_override):
             kind = piece.get("kind", "text")
             if kind == "usage":
                 yield {"type": "usage", "usage": piece.get("usage")}
@@ -160,7 +166,7 @@ class AgentLoop:
             _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
             _msg_t = self._estimate_conversation(conversation)
             yield self._emit("request_context", {
-                "model": getattr(self.cfg, "deepseek_model", ""),
+                "model": self._effective_model,
                 "context_window": win,
                 "system_tokens": _sys_t, "tools_tokens": _tools_t, "messages_tokens": _msg_t,
                 "prompt_tokens": _sys_t + _tools_t + _msg_t,
@@ -270,7 +276,7 @@ class AgentLoop:
                     self._emit("assistant_message", {"blocks": blocks, "citations": cits})
             _run_ms = int((time.time() - t0) * 1000)
             tps = (_completion_tokens / (_run_ms / 1000)) if (_completion_tokens > 0 and _run_ms > 0) else None
-            use_ev = self._emit("usage", {"model": getattr(self.cfg, "deepseek_model", ""), "prompt_tokens": _prompt_tokens,
+            use_ev = self._emit("usage", {"model": self._effective_model, "prompt_tokens": _prompt_tokens,
                                           "completion_tokens": _completion_tokens, "cost_estimate": None,
                                           "ttft_ms": _ttft, "run_ms": _run_ms, "tokens_per_second": tps})
             end_ev = self._emit("turn_end", {"turn": 1, "reason": reason, "elapsed_ms": _run_ms,

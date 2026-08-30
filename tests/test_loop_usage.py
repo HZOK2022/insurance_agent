@@ -22,7 +22,7 @@ def make_cfg(ms=6, mr=5):
 
 class FakeAnswerLLM:
     """单步直接 answer(无工具):reasoning(ttft 2100)+ text。"""
-    def chat_stream(self, messages, json_mode=False, tools=None):
+    def chat_stream(self, messages, json_mode=False, tools=None, model=None):
         yield {"kind": "reasoning", "delta": "思考", "block_index": 0, "ttft_ms": 2100}
         yield {"kind": "text", "delta": "你好", "block_index": 1}
         yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 120, "completion_tokens": 105}}
@@ -31,7 +31,7 @@ class FakeAnswerLLM:
 class FakeRetrieveLLM:
     """两步:step1 叙述+原生 tool-call(ttft 2100),step2 回答(ttft 900)。"""
     def __init__(self): self.calls = 0
-    def chat_stream(self, messages, json_mode=False, tools=None):
+    def chat_stream(self, messages, json_mode=False, tools=None, model=None):
         self.calls += 1
         if self.calls == 1:
             yield {"kind": "reasoning", "delta": "先查资料", "block_index": 0, "ttft_ms": 2100}
@@ -97,7 +97,7 @@ class LoopMetricsTest(_Base):
 class LoopTerminalTest(_Base):
     def test_trailing_llm_error_still_records_turn_end_error(self):
         class ErrLLM:
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 yield {"kind": "text", "delta": "a", "block_index": 0, "ttft_ms": 10}
                 raise RuntimeError("connection reset")
         evs = self.run_turn(ErrLLM())
@@ -108,7 +108,7 @@ class LoopTerminalTest(_Base):
 
     def test_generator_close_records_turn_end_interrupted(self):
         class NormalLLM:
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 yield {"kind": "text", "delta": "好", "block_index": 0, "ttft_ms": 5}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
         gen = self.make_loop(NormalLLM()).turn("s1", "问题")
@@ -122,7 +122,7 @@ class LoopTerminalTest(_Base):
 
     def test_assistant_chunk_persisted_before_yield(self):
         class OneChunkLLM:
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 yield {"kind": "text", "delta": "x", "block_index": 0, "ttft_ms": 5}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
         gen = self.make_loop(OneChunkLLM()).turn("s1", "问题")
@@ -153,7 +153,7 @@ class BusinessLayerTest(_Base):
     def test_no_idx_citation_completes_with_valid_int_idx(self):
         class CiteNoIdxLLM:
             def __init__(self): self.calls = 0
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 self.calls += 1
                 if self.calls == 1:
                     yield {"kind": "text", "delta": "先查", "block_index": 0, "ttft_ms": 10}
@@ -173,7 +173,7 @@ class LoopConvergenceTest(_Base):
     def test_retrieve_forever_stops_at_cap_and_force_answers(self):
         class RetrieveForeverLLM:
             def __init__(self): self.calls = 0
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 self.calls += 1
                 yield {"kind": "text", "delta": "仍不够,再查", "block_index": 0, "ttft_ms": 10}
                 yield {"kind": "tool-call", "delta": '{"query":"完整列表"}', "block_index": 1, "name": "search_knowledge", "call_id": "c1"}
@@ -195,7 +195,7 @@ class HistoryInjectionTest(_Base):
     def test_history_prepended_before_current_user(self):
         seen = []
         class CaptureLLM:
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 seen.append(messages)
                 yield {"kind": "text", "delta": "答案", "block_index": 0}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
@@ -246,7 +246,7 @@ class WindowBoundTest(_Base):
     def _capture(self, cfg, history):
         seen = []
         class CapLLM:
-            def chat_stream(self, messages, json_mode=False, tools=None):
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 seen.append(messages)
                 yield {"kind": "text", "delta": "答", "block_index": 0}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
