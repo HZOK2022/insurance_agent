@@ -155,17 +155,18 @@ class AgentLoop:
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
         # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
         conversation: list[dict] = (list(history) if history else []) + [{"role": "user", "content": text}]
-        # 阶段 B:窗口上限。若 system+history+当前 超出 context_window×0.8,丢弃最旧历史,保留当前。
+        # 阶段 B:窗口上限。若 system+tools+history+当前 超出 context_window×0.8,丢弃最旧历史,保留当前。
+        # 口径与 dsh 对齐:80% 触发算"全量"= system + tools + 对话(学习文档:dsh 的 totalTokens=estimateHeader(system+tools)+surfaceTokens)。
         win = int(getattr(self.cfg, "context_window", 0) or 0)
         _ctx_compressed = False
         if win > 0:
-            _budget = max(0, int(win * 0.8) - estimate_tokens(self.system))
+            _sys_t = estimate_tokens(self.system)
+            _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
+            _budget = max(0, int(win * 0.8) - _sys_t - _tools_t)
             _before = len(conversation)
             while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
                 conversation.pop(0)
             _ctx_compressed = len(conversation) < _before
-            _sys_t = estimate_tokens(self.system)
-            _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
             _msg_t = self._estimate_conversation(conversation)
             yield self._emit("request_context", {
                 "model": self._effective_model,
