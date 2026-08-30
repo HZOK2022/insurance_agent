@@ -196,7 +196,7 @@ export default function App() {
     setMessages(msgs); setActiveCite(null)
     if (tr.length) setTrace(tr)
   }
-  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveCite(null); try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setLoadErr("加载会话失败,请稍后重试") } }
+  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveCite(null); setCtxUsage(null); try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setLoadErr("加载会话失败,请稍后重试") } }
   // 后端重启有启动窗口(~12s):失败不显示"暂无会话",自动重试并提示
   useEffect(() => {
     let alive = true; let timer: number | undefined
@@ -212,8 +212,8 @@ export default function App() {
     load()
     return () => { alive = false; if (timer) window.clearTimeout(timer) }
   }, []) // eslint-disable-line
-  const newSession = async () => { try { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setTrace([]); setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
-  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setTrace([]); if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession("u1"); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
+  const newSession = async () => { try { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
+  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession("u1"); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
   const renameSess = async (id: string, title: string) => { try { await renameSession(id, title); setSessions(await listSessions()) } catch { setLoadErr("重命名失败,请稍后重试") } }
   const send = async () => {
     const text = input.trim(); if (!text || busy) return
