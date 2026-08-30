@@ -1,27 +1,22 @@
 # -*- coding: utf-8 -*-
 """保费计算(PremiumStore 费率事实源 + calculate_premium 工具)。
 
-设计要点:
-- 费率"数据"一张表(premium_rates):产品 × 责任列(item_key) × 维度(dims JSON) × 年龄区间 × 保费 × 单位。
-  不同产品、不同结构(区间年龄/逐岁、有无社保、性别、免赔额档、计划一/二等)都表达为同构行。
-- "计算逻辑"按产品分:calculate_premium 是通用分发器,按 product_id 找到该产品的计算器(策略)。
-  尊享e生2025 的计算器:必选计划(3免赔额档×计划一/二)+ 加油包(家庭共享/门急诊A/B/药费院/重疾每5万保额×男/女)。
-  重疾按「每5万保额」计 = premium × (coverage/50000);家庭单优享 = 2人×0.95、≥3人×0.90。
-- 金额走"查表+确定性计算",LLM 只整理答复 + 引用角标,不自己算(保险=金融,务必准确可追溯)。
-- 引用 [idx] 绑定费率行 id(chunk_id = 费率行确定性 hash)+ product_id/version,可追溯(铁律 3)。
-
-费率数据来源:Excel(openpyxl 解析入库,比手敲准确)。
+设计(定稿):
+- products: id 自增主键;key 稳定业务键/代码(LLM 引用+外键);name 显示名;kb_doc_id 关联向量库条款文档。
+- premium_rates: id 自增主键;product_key 外键→products.key;无 chunk_id(费率行不是文档片段);
+  引用角标直接用该行 id(快照在会话 retrieval 事件里,事件解析可溯)。
+- 不同产品计算方式/附加包不同 → calculate_premium 按 product_key 分发到各产品计算器(策略)。
+- 金额查表+确定计算(重疾每5万保额、家庭单折扣),LLM 不手算。
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import sqlite3
 from typing import Any
 
-PRODUCT_XX = "尊享e生2025"
+PRODUCT_XX = "尊享e生2025"                        # key(稳定业务键,LLM 引用)
 PRODUCT_XX_NAME = "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）"
 VERSION_XX = "v2025"
 
@@ -38,11 +33,6 @@ _XX_ADDON_COLS = [
     ("critical", "重疾加油包（每5万保额）", {"gender": "男"}, "元/每5万保额"),
     ("critical", "重疾加油包（每5万保额）", {"gender": "女"}, "元/每5万保额"),
 ]
-
-
-def _rate_id(product_id, version, item_key, dims, age_min, age_max):
-    s = f"{product_id}|{version}|{item_key}|{json.dumps(dims, sort_keys=True, ensure_ascii=False)}|{age_min}-{age_max}"
-    return "p_" + hashlib.sha1(s.encode("utf-8")).hexdigest()[:20]
 
 
 def _age_range(label):
@@ -71,6 +61,8 @@ def _fmt_dims(dims):
 
 
 class PremiumStore:
+    """费率事实源(SQLite)。单写者;只 INSERT/UPSERT。"""
+
     def __init__(self, path):
         d = os.path.dirname(path)
         if d:
@@ -83,66 +75,67 @@ class PremiumStore:
 
     def _init_schema(self):
         self.conn.executescript("""
-        CREATE TABLE IF NOT EXISTS premium_rates (
-          id TEXT PRIMARY KEY,
-          product_id TEXT NOT NULL,
-          product_name TEXT,
-          version TEXT,
-          table_type TEXT,
-          item_key TEXT NOT NULL,
-          item_name TEXT,
-          dims TEXT NOT NULL DEFAULT '{}',
-          age_min INTEGER NOT NULL,
-          age_max INTEGER NOT NULL,
-          premium REAL,
-          unit TEXT,
-          source TEXT,
-          section TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_rate_lookup ON premium_rates(product_id, item_key, age_min, age_max);
         CREATE TABLE IF NOT EXISTS products (
-          product_id TEXT PRIMARY KEY,
-          product_name TEXT,
-          version TEXT,
-          coverage TEXT,
-          rules TEXT,
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          key        TEXT NOT NULL UNIQUE,
+          name       TEXT NOT NULL,
+          kb_doc_id  TEXT,
+          version    TEXT,
+          coverage   TEXT,
+          rules      TEXT,
           calc_config TEXT,
-          source TEXT,
-          created_at TEXT
+          source     TEXT
         );
+        CREATE TABLE IF NOT EXISTS premium_rates (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_key TEXT NOT NULL,
+          item_key    TEXT NOT NULL,
+          item_name   TEXT,
+          dims        TEXT NOT NULL DEFAULT '{}',
+          age_min     INTEGER NOT NULL,
+          age_max     INTEGER NOT NULL,
+          premium     REAL,
+          unit        TEXT,
+          source      TEXT,
+          section     TEXT,
+          UNIQUE(product_key, item_key, dims, age_min, age_max)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rate_lookup ON premium_rates(product_key, item_key, age_min, age_max);
         """)
         self.conn.commit()
 
-    def upsert_rate(self, product_id, version, table_type, item_key, item_name, dims,
-                    age_min, age_max, premium, unit, source, section):
-        rid = _rate_id(product_id, version, item_key, dims, age_min, age_max)
+    def upsert_product(self, key, name, kb_doc_id, version, coverage, rules, calc_config, source):
         self.conn.execute(
-            """INSERT INTO premium_rates(id, product_id, product_name, version, table_type, item_key, item_name,
-                 dims, age_min, age_max, premium, unit, source, section)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET premium=excluded.premium, unit=excluded.unit""",
-            (rid, product_id, PRODUCT_XX_NAME, version, table_type, item_key, item_name,
-             json.dumps(dims, sort_keys=True, ensure_ascii=False), age_min, age_max,
-             premium, unit, source, section))
-        self.conn.commit()
-        return {"chunk_id": rid, "product_id": product_id, "product_name": PRODUCT_XX_NAME,
-                "version": version, "table_type": table_type, "item_key": item_key,
-                "item_name": item_name, "dims": dims, "age_min": age_min, "age_max": age_max,
-                "premium": premium, "unit": unit, "source": source, "section": section}
-
-    def upsert_product(self, product_id, name, version, coverage, rules, calc_config, source):
-        self.conn.execute(
-            """INSERT INTO products(product_id, product_name, version, coverage, rules, calc_config, source, created_at)
-               VALUES(?,?,?,?,?,?,?,datetime('now'))
-               ON CONFLICT(product_id) DO UPDATE SET calc_config=excluded.calc_config, rules=excluded.rules""",
-            (product_id, name, version, coverage, rules,
+            """INSERT INTO products(key, name, kb_doc_id, version, coverage, rules, calc_config, source)
+               VALUES(?,?,?,?,?,?,?,?)
+               ON CONFLICT(key) DO UPDATE SET name=excluded.name, kb_doc_id=excluded.kb_doc_id,
+                 coverage=excluded.coverage, rules=excluded.rules, calc_config=excluded.calc_config""",
+            (key, name, kb_doc_id, version, coverage, rules,
              json.dumps(calc_config, ensure_ascii=False).replace("\n", ""), source))
         self.conn.commit()
 
-    def get_rate(self, product_id, item_key, dims, age):
+    def upsert_rate(self, product_key, item_key, item_name, dims, age_min, age_max,
+                    premium, unit, source, section):
+        d = json.dumps(dims, sort_keys=True, ensure_ascii=False)
+        self.conn.execute(
+            """INSERT INTO premium_rates(product_key, item_key, item_name, dims, age_min, age_max,
+                 premium, unit, source, section)
+               VALUES(?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(product_key, item_key, dims, age_min, age_max)
+               DO UPDATE SET premium=excluded.premium, item_name=excluded.item_name, unit=excluded.unit""",
+            (product_key, item_key, item_name, d, age_min, age_max, premium, unit, source, section))
+        self.conn.commit()
+        row = self.conn.execute(
+            """SELECT * FROM premium_rates WHERE product_key=? AND item_key=? AND dims=? AND age_min=? AND age_max=?""",
+            (product_key, item_key, d, age_min, age_max)).fetchone()
+        out = dict(row)
+        out["dims"] = json.loads(out["dims"])
+        return out
+
+    def get_rate(self, product_key, item_key, dims, age):
         cur = self.conn.execute(
-            "SELECT * FROM premium_rates WHERE product_id=? AND item_key=? AND ?>=age_min AND ?<=age_max",
-            (product_id, item_key, age, age))
+            "SELECT * FROM premium_rates WHERE product_key=? AND item_key=? AND ?>=age_min AND ?<=age_max",
+            (product_key, item_key, age, age))
         for row in cur.fetchall():
             if json.loads(row["dims"]) == dims:
                 d = dict(row)
@@ -150,8 +143,12 @@ class PremiumStore:
                 return d
         return None
 
-    def get_product(self, product_id):
-        row = self.conn.execute("SELECT * FROM products WHERE product_id=?", (product_id,)).fetchone()
+    def get_product(self, ref):
+        """按 key 或 name 查产品。"""
+        ref = (ref or "").strip()
+        if not ref:
+            return None
+        row = self.conn.execute("SELECT * FROM products WHERE key=? OR name=?", (ref, ref)).fetchone()
         if not row:
             return None
         d = dict(row)
@@ -165,23 +162,21 @@ class PremiumStore:
 CALCULATORS = {}
 
 
-def register(product_id):
+def register(product_key):
     def deco(fn):
-        CALCULATORS[product_id] = fn
+        CALCULATORS[product_key] = fn
         return fn
     return deco
 
 
 @register(PRODUCT_XX)
-def _calc_xx2025(store, product_id, age, items, family_member_count=1):
-    lines = []
-    rows = []
-    total = 0.0
+def _calc_xx2025(store, product_key, age, items, family_member_count=1):
+    lines, rows, total = [], [], 0.0
     for it in items:
         item_key = it.get("item_key")
         dims = it.get("dims") or {}
         coverage = it.get("coverage")
-        row = store.get_rate(product_id, item_key, dims, age)
+        row = store.get_rate(product_key, item_key, dims, age)
         if not row:
             lines.append(f"方案 {item_key}{_fmt_dims(dims)}:未找到费率")
             continue
@@ -192,8 +187,7 @@ def _calc_xx2025(store, product_id, age, items, family_member_count=1):
         amount = float(row["premium"])
         if row.get("unit") == "元/每5万保额" and coverage:
             amount = amount * (coverage / 50000)
-        idx = len(rows) + 1
-        lines.append(f"{row['item_name']}{_fmt_dims(row['dims'])}: {amount:,.2f}元/年 [^{idx}]")
+        lines.append(f"{row['item_name']}{_fmt_dims(dims)}: {amount:,.2f}元/年 [{len(rows)+1}]")
         total += amount
         rows.append(row)
     disc = 1.0
@@ -209,12 +203,16 @@ def _calc_xx2025(store, product_id, age, items, family_member_count=1):
 
 
 def calculate_premium(store, args):
-    product_id = (args.get("product") or "").strip()
-    if not product_id:
-        return {"content": "请指定产品(product)", "reference": []}
-    calc = CALCULATORS.get(product_id)
+    ref_name = (args.get("product") or "").strip()
+    if not ref_name:
+        return {"content": "请指定产品(product,填产品 key 或名称)", "reference": []}
+    prod = store.get_product(ref_name)
+    if not prod:
+        return {"content": f"产品 {ref_name} 不存在/暂无费率", "reference": []}
+    key = prod["key"]
+    calc = CALCULATORS.get(key)
     if not calc:
-        return {"content": f"产品 {product_id} 暂无保费计算配置", "reference": []}
+        return {"content": f"产品 {ref_name} 暂无保费计算配置", "reference": []}
     try:
         age = int(args.get("age"))
     except (TypeError, ValueError):
@@ -226,13 +224,13 @@ def calculate_premium(store, args):
         family = int(args.get("family_member_count")) if args.get("family_member_count") is not None else 1
     except (TypeError, ValueError):
         family = 1
-    content, store_rows = calc(store, product_id, age, items, family)
+    content, store_rows = calc(store, key, age, items, family)
     ref = []
     for r in store_rows:
         ref.append({
-            "chunk_id": r.get("chunk_id") or r.get("id"), "score": None,
-            "doc_id": r["product_id"], "version": r["version"],
-            "section": r["section"] or r["table_type"],
+            "chunk_id": str(r["id"]), "score": None,
+            "doc_id": key, "version": prod.get("version", ""),
+            "section": r.get("section") or r.get("item_name", ""),
             "source": r.get("source", ""),
             "content": f"{r['item_name']}{_fmt_dims(r['dims'])}: {r['premium']}元/年({r['unit']})",
         })
@@ -242,17 +240,17 @@ def calculate_premium(store, args):
 def build_premium_tool(store):
     schema = {"type": "function", "function": {
         "name": "calculate_premium",
-        "description": "按产品/投保年龄/所选方案计算年缴保费(查表确定性计算,含免赔额/计划/性别/社保维度的选档、重疾按每5万保额按比例、家庭单优享折扣)。返回可读账单+可溯源引用",
+        "description": "按产品/投保年龄/所选方案计算年缴保费(查表确定性计算)。product 传产品 key 或名称(如 尊享e生2025 / 安盛天平卓越馨选2025);items 可多选(必选计划+若干加油包),critical 按每5万保额×coverage/50000,family_member_count≥2 享家庭单折扣。返回可读账单+可溯源引用",
         "parameters": {"type": "object", "properties": {
-            "product": {"type": "string", "description": "产品ID,如 尊享e生2025"},
+            "product": {"type": "string", "description": "产品 key 或名称"},
             "age": {"type": "integer", "description": "投保年龄(周岁)"},
-            "items": {"type": "array", "description": "要计算的方案/包,可多选(必选计划+若干加油包)",
+            "items": {"type": "array", "description": "要计算的方案/包,可多选",
                       "items": {"type": "object", "properties": {
-                          "item_key": {"type": "string", "description": "方案键:plan=必选计划;family_deductible/clinic_a/clinic_b/drug/critical=加油包"},
-                          "dims": {"type": "object", "description": "plan 用 {\"deductible\":\"0元|1.5万|3万\",\"plan_variant\":\"计划一|计划二\"};critical 用 {\"gender\":\"男|女\"};其余留空"},
-                          "coverage": {"type": "number", "description": "保额(元),仅 critical(每5万保额)需传,如 100000=10万保额"},
+                          "item_key": {"type": "string"},
+                          "dims": {"type": "object", "description": "plan 用 {deductible,plan_variant};critical 用 {gender};其余留空"},
+                          "coverage": {"type": "number", "description": "保额(元),仅 critical 需传"},
                       }, "required": ["item_key"]}},
-            "family_member_count": {"type": "integer", "description": "家庭单成员数(可选);2人95折,≥3人9折"},
+            "family_member_count": {"type": "integer", "description": "家庭单成员数;2人95折,≥3人9折"},
         }, "required": ["product", "age", "items"]}}}
 
     def handler(args):
@@ -273,11 +271,10 @@ def load_xx2025_xlsx(store, xlsx_path):
             continue
         age_min, age_max = _age_range(str(label))
         for i, (deductible, plan) in enumerate(_XX_PLAN_COLS):
-            premium = _num(row[i + 1])
-            store.upsert_rate(product_id=PRODUCT_XX, version=VERSION_XX, table_type="必选计划",
-                              item_key="plan", item_name=f"必选计划({deductible}年免赔额,{plan})",
+            store.upsert_rate(product_key=PRODUCT_XX, item_key="plan",
+                              item_name=f"必选计划({deductible}年免赔额,{plan})",
                               dims={"deductible": deductible, "plan_variant": plan},
-                              age_min=age_min, age_max=age_max, premium=premium,
+                              age_min=age_min, age_max=age_max, premium=_num(row[i + 1]),
                               unit="元/年", source=source, section="必选计划费率表")
             n += 1
     ws = wb["加油包费率表"]
@@ -287,26 +284,21 @@ def load_xx2025_xlsx(store, xlsx_path):
             continue
         age_min, age_max = _age_range(str(label))
         for i, (item_key, item_name, dims, unit) in enumerate(_XX_ADDON_COLS):
-            premium = _num(row[i + 1])
-            store.upsert_rate(product_id=PRODUCT_XX, version=VERSION_XX, table_type="加油包",
-                              item_key=item_key, item_name=item_name, dims=dims,
-                              age_min=age_min, age_max=age_max, premium=premium,
+            store.upsert_rate(product_key=PRODUCT_XX, item_key=item_key, item_name=item_name, dims=dims,
+                              age_min=age_min, age_max=age_max, premium=_num(row[i + 1]),
                               unit=unit, source=source, section="加油包费率表")
             n += 1
     store.upsert_product(
-        product_id=PRODUCT_XX, name=PRODUCT_XX_NAME, version=VERSION_XX,
+        key=PRODUCT_XX, name=PRODUCT_XX_NAME, kb_doc_id=PRODUCT_XX, version=VERSION_XX,
         coverage=("一般医疗(对应年免赔额)+特定疾病医疗+外购药品及外购医疗器械费用医疗+特定药品费用医疗"
                   "+恶性肿瘤先进疗法医疗+特定疾病异地转诊公共交通费用及住宿费用+特定疾病住院津贴"
                   "+意外紧急牙齿门急诊医疗费用+全球紧急救援服务。"),
         rules=("首次投保年龄:出生满30天-70周岁;71周岁及以上仅限保单期满指定期限内重新投保;"
                "投保保单数量=1,个人单标准保费。家庭单优享:同投保人 尊享/众民保 系列家庭成员 2人享95折,3人及以上享9折。"),
-        calc_config={
-            "mandatory": ["plan"],
-            "optional": ["family_deductible", "clinic_a", "clinic_b", "drug", "critical"],
-            "unit_map": {"critical": 50000},
-            "discounts": {"family": [[2, 0.95], [3, 0.90]]},
-            "item_dims": {"plan": ["deductible", "plan_variant"], "critical": ["gender"],
-                          "family_deductible": [], "clinic_a": [], "clinic_b": [], "drug": []},
-        },
+        calc_config={"mandatory": ["plan"],
+                     "optional": ["family_deductible", "clinic_a", "clinic_b", "drug", "critical"],
+                     "unit_map": {"critical": 50000},
+                     "discounts": {"family": [[2, 0.95], [3, 0.90]]},
+                     "item_dims": {"plan": ["deductible", "plan_variant"], "critical": ["gender"]}},
         source=source)
     return n

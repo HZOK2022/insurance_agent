@@ -22,18 +22,18 @@ class _Base(unittest.TestCase):
 
     def _seed(self):
         st = self.store
-        st.upsert_rate(PRODUCT_XX, "v2025", "必选计划", "plan", "必选计划(0元年免赔额,计划一)",
+        st.upsert_rate(PRODUCT_XX, "plan", "必选计划(0元年免赔额,计划一)",
                        {"deductible": "0元", "plan_variant": "计划一"}, 26, 30, 2312.0, "元/年", "x", "必选计划费率表")
-        st.upsert_rate(PRODUCT_XX, "v2025", "必选计划", "plan", "必选计划(3万年免赔额,计划二)",
+        st.upsert_rate(PRODUCT_XX, "plan", "必选计划(3万年免赔额,计划二)",
                        {"deductible": "3万", "plan_variant": "计划二"}, 26, 30, 1244.0, "元/年", "x", "必选计划费率表")
-        st.upsert_rate(PRODUCT_XX, "v2025", "加油包", "critical", "重疾加油包（每5万保额）",
+        st.upsert_rate(PRODUCT_XX, "critical", "重疾加油包（每5万保额）",
                        {"gender": "男"}, 26, 30, 56.0, "元/每5万保额", "x", "加油包费率表")
-        st.upsert_rate(PRODUCT_XX, "v2025", "加油包", "clinic_a", "门急诊加油包A-不含器质",
+        st.upsert_rate(PRODUCT_XX, "clinic_a", "门急诊加油包A-不含器质",
                        {}, 26, 30, 6055.0, "元/年", "x", "加油包费率表")
-        st.upsert_rate(PRODUCT_XX, "v2025", "加油包", "clinic_a", "门急诊加油包A-不含器质",
+        st.upsert_rate(PRODUCT_XX, "clinic_a", "门急诊加油包A-不含器质",
                        {}, 81, 85, None, "元/年", "x", "加油包费率表")
-        st.upsert_product(PRODUCT_XX, "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）", "v2025",
-                          "coverage", "rules", {"dummy": 1}, "x")
+        st.upsert_product(PRODUCT_XX, "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）", PRODUCT_XX,
+                          "v2025", "coverage", "rules", {"dummy": 1}, "x")
 
 
 class PremiumStoreTest(_Base):
@@ -84,7 +84,7 @@ class PremiumCalcTest(_Base):
 
     def test_unknown_product(self):
         res = calculate_premium(self.store, {"product": "未知产品", "age": 30, "items": [{"item_key": "plan"}]})
-        self.assertIn("暂无保费计算", res["content"])
+        self.assertIn("不存在", res["content"])
 
     def test_missing_items(self):
         res = calculate_premium(self.store, {"product": PRODUCT_XX, "age": 30, "items": []})
