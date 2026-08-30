@@ -90,6 +90,11 @@ def _validate_compaction_prune(p):
             "chars_removed": _req(p, "chars_removed", int)}
 
 
+def _validate_request_context(p):
+    return {"model": _req(p, "model", str), "context_window": _req(p, "context_window", int),
+            "prompt_tokens": p.get("prompt_tokens"), "completion_tokens": p.get("completion_tokens")}
+
+
 def _validate_usage(p):
     out = {"model": _req(p, "model", str), "prompt_tokens": _req(p, "prompt_tokens", int),
            "completion_tokens": _req(p, "completion_tokens", int), "cost_estimate": p.get("cost_estimate")}
@@ -114,6 +119,7 @@ _EVENT_TYPES.update({
     "tool_call": _validate_tool_call,
     "tool_result": _validate_tool_result,
     "compaction_prune": _validate_compaction_prune,
+    "request_context": _validate_request_context,
     "approval_request": _validate_approval_request,
     "approval_decision": _validate_approval_decision,
     "usage": _validate_usage,

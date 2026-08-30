@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
-from app.utils.text import prune_tool_content
+from app.utils.text import estimate_tokens, prune_tool_content
 
 logger = logging.getLogger("insurance.agent")
 
@@ -149,6 +149,18 @@ class AgentLoop:
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
         # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
         conversation: list[dict] = (list(history) if history else []) + [{"role": "user", "content": text}]
+        # 阶段 B:窗口上限。若 system+history+当前 超出 context_window×0.8,丢弃最旧历史,保留当前。
+        win = int(getattr(self.cfg, "context_window", 0) or 0)
+        if win > 0:
+            _budget = max(0, int(win * 0.8) - estimate_tokens(self.system))
+            while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
+                conversation.pop(0)
+            yield self._emit("request_context", {
+                "model": getattr(self.cfg, "deepseek_model", ""),
+                "context_window": win,
+                "prompt_tokens": estimate_tokens(self.system) + self._estimate_conversation(conversation),
+                "completion_tokens": 0,
+            })
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
         max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
@@ -261,6 +273,9 @@ class AgentLoop:
                 yield use_ev
                 yield end_ev
             logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason)
+
+    def _estimate_conversation(self, conversation: list[dict]) -> int:
+        return sum(estimate_tokens(str(m.get("content") or "")) for m in conversation)
 
     def _run_tool(self, name: str, args: Any) -> tuple[str, Any]:
         """按名字查表执行工具;返回 (喂给 LLM 的 content, 业务层用的 reference)。"""

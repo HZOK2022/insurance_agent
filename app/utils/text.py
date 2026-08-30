@@ -14,6 +14,14 @@ def code_point_len(text: str) -> int:
     return len(text)
 
 
+def estimate_tokens(text: str) -> int:
+    """粗糙 token 估算(CJK≈1 token/字符,其它≈1/4)。仅用于窗口上限的启发式。"""
+    cjk = sum(1 for ch in text
+              if '\u4e00' <= ch <= '\u9fff' or '\u3000' <= ch <= '\u303f' or '\uff00' <= ch <= '\uffef')
+    other = len(text) - cjk
+    return max(1, cjk + (other + 3) // 4)
+
+
 def prune_tool_content(content: str, threshold_chars: int, head_chars: int,
                        tail_chars: int) -> str | None:
     """超 threshold 就保 head+tail、砍中间、插标记;不超或无法有效剪则返回 None。"""

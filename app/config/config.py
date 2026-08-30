@@ -59,6 +59,7 @@ class Config:
     rerank_max_length: int = 512
     # 上限(完整结果预算)
     max_steps_per_turn: int = 20
+    context_window: int = 128000
     max_retrieve_per_turn: int = 5   # 单轮最多检索次数;超过后强制基于现有资料诚实回答,防反复无效检索
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
@@ -102,6 +103,7 @@ _ENV = {
     "reranking_external_timeout": "RERANKING_EXTERNAL_TIMEOUT",
     "rerank_max_length": "RERANKING_MAX_LENGTH",
     "max_steps_per_turn": "MAX_STEPS_PER_TURN",
+    "context_window": "CONTEXT_WINDOW",
     "max_retrieve_per_turn": "MAX_RETRIEVE_PER_TURN",
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
@@ -120,7 +122,7 @@ _ENV = {
 
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
-                  "max_steps_per_turn", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
+                  "max_steps_per_turn", "context_window", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")
 _NONNEG_INTS = ("chunk_overlap",)

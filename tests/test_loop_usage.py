@@ -239,5 +239,44 @@ class ToolTruncationTest(_Base):
         self.assertIsNotNone(ret)
         self.assertEqual(ret["chunks"], chunks)   # reference 完整
 
+
+
+class WindowBoundTest(_Base):
+    """阶段 B:history 超 window 预算时丢最旧、留当前;并落 request_context 事件。"""
+    def _capture(self, cfg, history):
+        seen = []
+        class CapLLM:
+            def chat_stream(self, messages, json_mode=False, tools=None):
+                seen.append(messages)
+                yield {"kind": "text", "delta": "答", "block_index": 0}
+                yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+        loop = self.make_loop(CapLLM(), cfg=cfg)
+        evs = list(loop.turn("s1", "现在?", history=history))
+        return seen, evs
+
+    def test_long_history_trimmed_and_request_context_emitted(self):
+        cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake", context_window=400)
+        history = [
+            {"role": "user", "content": "问题" + "字" * 200},
+            {"role": "assistant", "content": "答" + "话" * 200},
+            {"role": "user", "content": "追问" + "词" * 200},
+        ]
+        seen, evs = self._capture(cfg, history)
+        rc = next((e["payload"] for e in evs if e["type"] == "request_context"), None)
+        self.assertIsNotNone(rc)
+        self.assertEqual(rc["context_window"], 400)
+        self.assertEqual(rc["model"], "fake")
+        self.assertGreater(rc["prompt_tokens"], 0)
+        msgs = seen[0]
+        self.assertEqual(msgs[-1], {"role": "user", "content": "现在?"})   # 当前问题在最后
+        self.assertFalse(any("问题" + "字" * 200 in (m.get("content") or "") for m in msgs))   # 最旧历史被丢
+
+    def test_large_window_keeps_all_history(self):
+        cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake", context_window=100000)
+        history = [{"role": "user", "content": "问题" + "字" * 20}, {"role": "assistant", "content": "答" + "话" * 20}]
+        seen, _ = self._capture(cfg, history)
+        msgs = seen[0]
+        self.assertTrue(any(m.get("content") == "问题" + "字" * 20 for m in msgs))   # 历史全保留
+
 if __name__ == "__main__":
     unittest.main()
