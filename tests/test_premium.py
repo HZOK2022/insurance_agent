@@ -7,6 +7,9 @@ import unittest
 from app.businesses.premium import (
     PremiumStore, calculate_premium, load_xx2025_xlsx, PRODUCT_XX,
 )
+from app.businesses.premium_ax import PRODUCT_AX, load_ax2025_xlsx
+
+AX_XLSX = "C:/Users/mi/Desktop/个人/files/安盛天平卓越馨选(A款)/卓越馨选费率（2025版）（互联网专属）费率表--新保.xlsx"
 
 XX_XLSX = "C:/Users/mi/Desktop/个人/files/尊享e生2025/尊享e生·中高端医疗保险PLUS（2025版）年缴费率表.xlsx"
 
@@ -102,4 +105,47 @@ class XlsxLoaderTest(_Base):
         self.assertEqual(cnt, 276)
         r = st.get_rate(PRODUCT_XX, "plan", {"deductible": "0元", "plan_variant": "计划一"}, 30)
         self.assertEqual(r["premium"], 2312.0)
+        st.close()
+
+class AxCalcTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.store = PremiumStore(os.path.join(self.dir, "ax.db"))
+        self.store.upsert_product(PRODUCT_AX, "安盛天平卓越馨选（A款）（互联网专属）医疗保险", PRODUCT_AX,
+                                  "v2025", "cov", "rules", {"mandatory": ["hospital"]}, "x")
+        self.store.upsert_rate(PRODUCT_AX, "hospital", "一般住院+重疾住院(免赔0元)",
+                               {"deductible": "0元", "tier": "普A", "social": "有社保"}, 30, 30, 660.0, "元/年", "x", "住院医疗-免赔0元")
+        self.store.upsert_rate(PRODUCT_AX, "outpatient", "门急诊(免赔0元,保额1万)",
+                               {"deductible": "0元", "coverage": "1万", "social": "有社保"}, 30, 30, 1132.0, "元/年", "x", "门急诊医疗-免赔0元")
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_ax_calc_lookup(self):
+        res = calculate_premium(self.store, {"product": PRODUCT_AX, "age": 30, "items": [
+            {"item_key": "hospital", "dims": {"deductible": "0元", "tier": "普A", "social": "有社保"}},
+            {"item_key": "outpatient", "dims": {"deductible": "0元", "coverage": "1万", "social": "有社保"}}]})
+        self.assertIn("660.00", res["content"])
+        self.assertIn("1,132.00", res["content"])
+        self.assertIn("1,792.00", res["content"])
+        self.assertEqual(len(res["reference"]), 2)
+
+    def test_ax_calc_by_name(self):
+        # product 参数传名称也能解析(安盛天平...)
+        res = calculate_premium(self.store, {"product": "安盛天平卓越馨选（A款）（互联网专属）医疗保险", "age": 30,
+                                             "items": [{"item_key": "hospital", "dims": {"deductible": "0元", "tier": "普A", "social": "有社保"}}]})
+        self.assertIn("660.00", res["content"])
+
+
+class AxXlsxLoaderTest(unittest.TestCase):
+    def test_load_ax_xlsx_6240(self):
+        if not os.path.exists(AX_XLSX):
+            self.skipTest("ax xlsx 不在本机")
+        st = PremiumStore(os.path.join(tempfile.mkdtemp(), "a.db"))
+        n = load_ax2025_xlsx(st, AX_XLSX)
+        self.assertEqual(n, 6240)
+        cnt = st.conn.execute("SELECT COUNT(*) FROM premium_rates").fetchone()[0]
+        self.assertEqual(cnt, 6240)
+        r = st.get_rate(PRODUCT_AX, "hospital", {"deductible": "0元", "tier": "普A", "social": "有社保"}, 30)
+        self.assertEqual(r["premium"], 660.0)
         st.close()

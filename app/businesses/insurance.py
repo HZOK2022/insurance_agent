@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from app.retrieval.search_tool import search_knowledge
+from app.businesses import premium_ax  # noqa: F401  # 注册安盛天平 计算器(经 @register)
 
 SEARCH_TOOL = {"type": "function", "function": {
     "name": "search_knowledge",

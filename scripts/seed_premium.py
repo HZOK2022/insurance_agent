@@ -19,12 +19,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--xlsx", required=True, help="尊享e生2025 费率表 .xlsx 路径")
     ap.add_argument("--db", default=None, help="目标 sqlite;默认取 cfg.premium_db_path")
+    ap.add_argument("--ax-xlsx", default=None, help="安盛天平 费率表 .xlsx 路径(可一并入库)")
     a = ap.parse_args()
 
     cfg = load()
     db = a.db or getattr(cfg, "premium_db_path", "data/premium.db")
     store = PremiumStore(db)
     n = load_xx2025_xlsx(store, a.xlsx)
+    if a.ax_xlsx:
+        from app.businesses.premium_ax import load_ax2025_xlsx
+        n += load_ax2025_xlsx(store, a.ax_xlsx)
     cnt = store.conn.execute("SELECT COUNT(*) FROM premium_rates").fetchone()[0]
     prod = store.conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
     print(f"[seed_premium] loaded {n} rate rows;premium_rates={cnt}, products={prod} → {db}")
