@@ -1,7 +1,7 @@
-﻿from fastapi import APIRouter
+from fastapi import APIRouter
 
 from app.api.schemas.event import EventModel
-from app.api.schemas.session import SessionCreate, SessionSummary
+from app.api.schemas.session import SessionCreate, SessionRename, SessionSummary
 from app.api.services import container, session_service
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -19,3 +19,12 @@ def list_sessions():
 @router.get("/{sid}/events", response_model=list[EventModel])
 def session_events(sid: str):
     return session_service.list_events(container.get_store(), sid)
+
+@router.delete("/{sid}", status_code=204)
+def delete_session(sid: str):
+    session_service.delete_session(container.get_store(), sid)
+    return None
+
+@router.patch("/{sid}", response_model=SessionSummary)
+def rename_session(sid: str, body: SessionRename):
+    return session_service.rename_session(container.get_store(), sid, body.title)

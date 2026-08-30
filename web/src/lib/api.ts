@@ -14,6 +14,8 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export const listSessions = () => json<Session[]>('/api/sessions')
 export const createSession = (user_id: string) => json<Session>('/api/sessions', { method: 'POST', body: JSON.stringify({ user_id }) })
 export const listEvents = (sid: string) => json<PEvent[]>('/api/sessions/' + sid + '/events')
+export const deleteSession = async (sid: string): Promise<void> => { const r = await fetch(BASE + '/api/sessions/' + sid, { method: 'DELETE' }); if (!r.ok) throw new Error('del ' + sid + ' -> ' + r.status) }
+export const renameSession = (sid: string, title: string) => json<Session>('/api/sessions/' + sid, { method: 'PATCH', body: JSON.stringify({ title }) })
 export const getCitation = (sid: string, cid: string) =>
   json<{ content: string; source: string; doc_id: string; version: string; section: string }>(
     '/api/sessions/' + sid + '/citation/' + encodeURIComponent(cid))

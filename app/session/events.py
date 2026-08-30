@@ -24,6 +24,7 @@ def _req(d: dict, key: str, t: type) -> Any:
 
 
 def _validate_user_message(p): return {"text": _req(p, "text", str), "client_time": p.get("client_time")}
+def _validate_narration(p): return {"text": _req(p, "text", str)}
 
 
 def _validate_retrieval(p):
@@ -58,7 +59,12 @@ def _validate_assistant_message(p):
     cites = []
     for c in p.get("citations", []):
         if isinstance(c, dict) and "chunk_id" in c:
-            cites.append({"idx": int(c["idx"]), "chunk_id": str(c["chunk_id"])})
+            # 防御:LLM 可能给 chunk_id 但不带 idx(或非数字),用顺序编号兜底,避免 int(None) 崩
+            try:
+                idx = int(c.get("idx"))
+            except (TypeError, ValueError):
+                idx = len(cites)
+            cites.append({"idx": idx, "chunk_id": str(c["chunk_id"])})
     return {"blocks": norm, "citations": cites}
 
 
@@ -94,6 +100,7 @@ def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
 
 _EVENT_TYPES.update({
     "user_message": _validate_user_message,
+    "assistant_narration": _validate_narration,
     "retrieval": _validate_retrieval,
     "assistant_message": _validate_assistant_message,
     "assistant_chunk": _validate_assistant_chunk,

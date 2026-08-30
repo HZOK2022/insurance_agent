@@ -82,7 +82,7 @@ SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的�
 
 ## 文档索引
 
-- 架构:docs/architecture-v3.md;图:docs/diagram/agent-v3.html / agent-v3.png
+- 架构:docs/architecture-v3.md;图:docs/diagram/agent-v3.html
 - SQLite:docs/sqlite-schema.md · Qdrant:docs/qdrant-schema.md · Redis:docs/redis-usage.md
 - 骨架与 dsh 参照:docs/project-skeleton.md
 - 学习教程(过程叙事,比 README 详细):docs/learning/00-overview.md

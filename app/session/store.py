@@ -43,12 +43,17 @@ class SessionStore:
         );
         CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
         CREATE TABLE IF NOT EXISTS sessions (
-          id TEXT PRIMARY KEY, title TEXT, user_id TEXT, created_at TEXT, status TEXT DEFAULT 'active'
+          id TEXT PRIMARY KEY, title TEXT, user_id TEXT, created_at TEXT, status TEXT DEFAULT 'active',
+          deleted INTEGER DEFAULT 0
         );
         """
 
     def _ensure_schema(self) -> None:
         self._conn.executescript(self._ddl())
+        # 增量迁移:既有库的 sessions 若缺 deleted 列,补上(软删除用;events 仍 append-only)
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "deleted" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN deleted INTEGER DEFAULT 0")
         self._conn.commit()
 
     def _check_schema(self) -> None:
@@ -132,12 +137,27 @@ class SessionStore:
         return cur.rowcount
 
     def list_sessions(self) -> list[dict]:
-        rows = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions ORDER BY created_at DESC").fetchall()
+        rows = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions WHERE deleted IS NULL OR deleted=0 ORDER BY created_at DESC").fetchall()
         return [dict(r_) for r_ in rows]
 
     def get_session(self, sid: str) -> dict | None:
-        row = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions WHERE id=?", (sid,)).fetchone()
+        row = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions WHERE id=? AND (deleted IS NULL OR deleted=0)", (sid,)).fetchone()
         return dict(row) if row else None
+
+    def delete_session(self, sid: str) -> bool:
+        """软删除会话(标记 deleted=1,不再出现在列表/视图;events 保留,遵守 append-only 铁律)。"""
+        cur = self._conn.execute("UPDATE sessions SET deleted=1, status='deleted' WHERE id=? AND (deleted IS NULL OR deleted=0)", (sid,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def rename_session(self, sid: str, new_title: str) -> dict | None:
+        """重命名会话;返回更新后的会话或 None。"""
+        norm = title.fallback_session_title(new_title, max_bytes=200)
+        if not norm:
+            return None
+        self._conn.execute("UPDATE sessions SET title=? WHERE id=? AND (deleted IS NULL OR deleted=0)", (norm, sid))
+        self._conn.commit()
+        return self.get_session(sid)
 
     def close(self) -> None:
         self._conn.close()

@@ -1,9 +1,8 @@
-﻿"""惰性构建并缓存服务依赖(避免每次请求重载模型)。"""
+"""惰性构建并缓存服务依赖(避免每次请求重载模型)。"""
 from functools import lru_cache
 
 from app.config import load
 from app.llm.client import LLMClient
-from app.loop.loop import AgentLoop
 from app.retrieval.embedder import Embedder
 from app.retrieval.qdrant_store import QdrantStore
 from app.session.store import SessionStore
@@ -36,5 +35,6 @@ def get_llm() -> LLMClient:
 
 
 @lru_cache(maxsize=1)
-def get_loop() -> AgentLoop:
-    return AgentLoop(get_store(), get_embedder(), get_qstore(), get_llm(), get_cfg())
+def get_insurance_bundle() -> dict:
+    from app.businesses.insurance import bundle
+    return bundle(get_embedder(), get_qstore(), get_cfg())
