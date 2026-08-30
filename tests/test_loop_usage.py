@@ -55,7 +55,7 @@ class _Base(unittest.TestCase):
     def make_loop(self, llm, cfg=None, present=None, force=None, chunks=None):
         cfg = cfg or make_cfg()
         def emit(t, p): ev = make_event(t, p); self.store.append("s1", t, p); return ev
-        def handler(args): return {"content": "[1] 条款片段", "reference": chunks if chunks is not None
+        def handler(args, start_idx=0): return {"content": "[1] 条款片段", "reference": chunks if chunks is not None
                                    else [{"chunk_id": "doc:1", "content": "x", "doc_id": "doc", "version": "v1", "section": "s", "source": "src", "score": 0.9}]}
         tools = {"search_knowledge": {"schema": {"type": "function", "function": {"name": "search_knowledge", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}, "handler": handler}}
         present = present or (lambda text, refs: ([{"t": "p", "text": text}], []))
@@ -220,7 +220,7 @@ class ToolTruncationTest(_Base):
         long_content = "A" * 12000
         chunks = [{"chunk_id": "doc:1", "content": "x", "doc_id": "doc", "version": "v1",
                   "section": "s", "source": "src", "score": 0.9}]
-        def handler(args):
+        def handler(args, start_idx=0):
             return {"content": long_content, "reference": chunks}
         tools = {"search_knowledge": {"schema": {"type": "function", "function": {"name": "search_knowledge",
                                         "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
@@ -239,6 +239,40 @@ class ToolTruncationTest(_Base):
         self.assertIsNotNone(ret)
         self.assertEqual(ret["chunks"], chunks)   # reference 完整
 
+
+
+class GlobalNumberingTest(_Base):
+    """整轮全局编号:多轮检索时,第 1 次检索内容 [1..k],第 2 次 [k+1..],避免 [idx] 引用错位。"""
+    def test_multiretreive_uses_global_idx_in_content(self):
+        seen = []
+        def handler(args, start_idx=0):
+            chunks = [{"chunk_id": f"c{start_idx+1}", "content": "x", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.9},
+                      {"chunk_id": f"c{start_idx+2}", "content": "y", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.8}]
+            content = "\n\n".join(f"[{i}] ({c['chunk_id']}) {c['content']}" for i, c in enumerate(chunks, start_idx + 1))
+            seen.append(content)
+            return {"content": content, "reference": chunks}
+        tools = {"search_knowledge": {"schema": {"type": "function", "function": {"name": "search_knowledge",
+                                        "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                                                        "required": ["query"]}}}, "handler": handler}}
+        class RetrTwiceLLM:
+            def __init__(self): self.calls = 0
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
+                self.calls += 1
+                if self.calls <= 2:
+                    yield {"kind": "text", "delta": "再查", "block_index": 0, "ttft_ms": 10}
+                    yield {"kind": "tool-call", "delta": '{"query":"q"}', "block_index": 1, "name": "search_knowledge", "call_id": f"call_{self.calls}"}
+                else:
+                    yield {"kind": "text", "delta": "答案[1][3]", "block_index": 0, "ttft_ms": 10}
+                yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+        cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake")
+        def emit(t_, p_):
+            ev = make_event(t_, p_); self.store.append("s1", t_, p_); return ev
+        loop = AgentLoop(RetrTwiceLLM(), "系统", tools, ins_present, cfg, emit=emit, force_answer=ins_force)
+        list(loop.turn("s1", "重疾"))
+        self.assertEqual(len(seen), 2)
+        self.assertIn("[1] (c1)", seen[0])   # 第 1 次检索:全局从头 [1]
+        self.assertIn("[3] (c3)", seen[1])   # 第 2 次检索:接续成 [3](而非重新 [1])
+        self.assertIn("[4] (c4)", seen[1])
 
 
 class WindowBoundTest(_Base):

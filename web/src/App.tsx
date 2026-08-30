@@ -182,11 +182,12 @@ export default function App() {
     // 按 step 重构:每步 reasoning→think 行、text→叙述/回答行、tool_call→工具卡,按事件序交错还原历史视图
     let step: { kind: "tool" | "answer" | null; reason: string; text: string; tools: any[] } = { kind: null, reason: "", text: "", tools: [] }
     evs.forEach((e) => {
-      if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text, time: e.ts })
+      if (e.type === "turn_start") { chunks = [] }
+      else if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text, time: e.ts })
       else if (e.type === "step_start") { step = { kind: null, reason: "", text: "", tools: [] } }
       else if (e.type === "assistant_chunk") { const k = e.payload?.kind; const d = e.payload?.delta || ""; if (k === "reasoning") step.reason += d; else if (k === "text") step.text += d }
       else if (e.type === "tool_call") { step.kind = "tool"; tr.push({ type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }) }
-      else if (e.type === "retrieval") { chunks = e.payload.chunks || []; step.tools.push({ query: e.payload?.query }) }
+      else if (e.type === "retrieval") { chunks = [...chunks, ...(e.payload.chunks || [])]; step.tools.push({ query: e.payload?.query }) }
       else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, sources: buildSources(cites, chunks), time: e.ts }) }
       else if (e.type === "step_end") { if (step.kind === "tool") { if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); if (step.text.trim()) msgs.push({ id: mid(), role: "text", text: step.text, time: e.ts }); for (const t of step.tools) msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true, args: { query: t.query } }, time: e.ts }) } }
       else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
@@ -242,7 +243,7 @@ export default function App() {
       await sendPrompt(sid, text, (e: PEvent) => {
         if (activeIdRef.current !== sid) abandoned = true
         if (abandoned) { if (e.type === "turn_start") setBusy(true); else if (e.type === "turn_end") { setBusy(false); } return }
-        if (e.type === "turn_start") { setBusy(true) }
+        if (e.type === "turn_start") { setBusy(true); retrievalRef.current = [] }
         else if (e.type === "assistant_chunk") {
           const kind = e.payload?.kind || "text"
           const delta = e.payload?.delta || ""
@@ -259,7 +260,7 @@ export default function App() {
         }
         else if (e.type === "tool_call") { setTrace((t) => [...t, { type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }]); closeThink(); if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, streaming: false } : x)) } setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: e.payload?.tool || "search_knowledge", ok: true, args: e.payload?.args, running: true }, time: e.ts }]) }
         else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args } } : x)) }
-        else if (e.type === "retrieval") { retrievalRef.current = e.payload?.chunks || [] }
+        else if (e.type === "retrieval") { retrievalRef.current = [...retrievalRef.current, ...(e.payload?.chunks || [])] }
         else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(cites, retrievalRef.current); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
         else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }

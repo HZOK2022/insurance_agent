@@ -176,6 +176,7 @@ class AgentLoop:
                 "completion_tokens": 0,
                 "compression_triggered": _ctx_compressed,
             })
+        _chunk_offset = 0             # 本 turn 已返回 chunk 总数 → 检索内容 [idx] 整轮全局编号(检索1 [1..k],检索2 [k+1..]),避免多轮检索引用错位
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
         max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
@@ -232,7 +233,9 @@ class AgentLoop:
                         name = tc.name or "search_knowledge"
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
-                        content, reference = self._run_tool(name, args)
+                        content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
+                        if isinstance(reference, list):
+                            _chunk_offset += len(reference)
                         # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
                         # reference(原始 chunks)不动,完整进 retrieval 事件(引用/溯源不丢)。
                         pruned, truncated = content, False
@@ -313,13 +316,13 @@ class AgentLoop:
     def _estimate_conversation(self, conversation: list[dict]) -> int:
         return sum(estimate_tokens(str(m.get("content") or "")) for m in conversation)
 
-    def _run_tool(self, name: str, args: Any) -> tuple[str, Any]:
-        """按名字查表执行工具;返回 (喂给 LLM 的 content, 业务层用的 reference)。"""
+    def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any]:
+        """按名字查表执行工具;返回 (喂给 LLM 的 content, 业务层用的 reference)。start_idx=本 turn 已返回 chunk 数,用于内容 [idx] 整轮全局编号。"""
         tool = self.tools.get(name)
         if not tool:
             return "（无此工具）", None
         try:
-            raw = tool["handler"](args)
+            raw = tool["handler"](args, start_idx)
         except Exception as e:
             logger.exception("tool %s failed", name)
             return f"工具错误: {e}", None

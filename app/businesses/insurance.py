@@ -29,10 +29,11 @@ SYSTEM = (
 )
 
 
-def _format_chunks(chunks: list[dict]) -> str:
+def _format_chunks(chunks: list[dict], start_idx: int = 0) -> str:
     if not chunks:
         return "（无检索资料）"
-    return "\n\n".join(f"[{i}] ({c['chunk_id']}) {c['content']}" for i, c in enumerate(chunks, 1))
+    # start_idx=本 turn 已返回的 chunk 数 → [idx] 整轮全局编号(检索1 [1..k],检索2 [k+1..]),避免多轮检索引用错位。
+    return "\n\n".join(f"[{i}] ({c['chunk_id']}) {c['content']}" for i, c in enumerate(chunks, start_idx + 1))
 
 
 def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
@@ -65,13 +66,13 @@ def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
                     _hybrid = BM25Index(chunks)
         return _hybrid
 
-    def handler(args: Any) -> dict:
+    def handler(args: Any, start_idx: int = 0) -> dict:
         query = (args or {}).get("query") or ""
         chunks = search_knowledge(embedder, qstore, query, top_k=cfg.top_k, top_rerank=cfg.top_k_reranker,
                                   rerank_fn=rerank_fn, hybrid=_get_hybrid(),
                                   hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0))
-        # 喂给 LLM 的 content 用格式化文本;reference 保留原始 chunks 供溯源
-        return {"content": _format_chunks(chunks), "reference": chunks}
+        # 喂给 LLM 的 content 用格式化文本(整轮全局编号);reference 保留原始 chunks 供溯源
+        return {"content": _format_chunks(chunks, start_idx), "reference": chunks}
     return {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler}}
 
 
