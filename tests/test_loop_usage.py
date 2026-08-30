@@ -278,5 +278,22 @@ class WindowBoundTest(_Base):
         msgs = seen[0]
         self.assertTrue(any(m.get("content") == "问题" + "字" * 20 for m in msgs))   # 历史全保留
 
+    def test_turn_end_request_context_counts_reply(self):
+        """回合结束的 request_context 把助手回答计入对话消息;
+        回合开始时仅含用户提问,回合结束后"对话消息"应变大 —— 这才是该卡片展示的值。"""
+        cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake", context_window=100000)
+        evs = self.run_turn(FakeAnswerLLM(), text="你好", cfg=cfg)
+        rc = [e["payload"] for e in evs if e["type"] == "request_context"]
+        self.assertGreaterEqual(len(rc), 2)                # 回合开始 + 回合结束各一条
+        first, last = rc[0], rc[-1]
+        # 回合开始:仅用户"你好"(CJK 1字/1token ⇒ 2);助手回答尚未生成,未计入。
+        self.assertEqual(first["messages_tokens"], 2)
+        # 回合结束:用户 + 助手回答"你好"(+2)都计入 ⇒ 差值至少为回答长度。
+        self.assertGreaterEqual(last["messages_tokens"] - first["messages_tokens"], 2)
+        # 回合结束快照出现在助手回答之后(前端"对话消息"取最后一个 request_context ⇒ 回答会计入)。
+        last_rc_idx = max(i for i, e in enumerate(evs) if e["type"] == "request_context")
+        asst_idx = next(i for i, e in enumerate(evs) if e["type"] == "assistant_message")
+        self.assertGreater(last_rc_idx, asst_idx)
+
 if __name__ == "__main__":
     unittest.main()

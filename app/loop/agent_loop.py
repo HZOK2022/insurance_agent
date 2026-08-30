@@ -157,11 +157,13 @@ class AgentLoop:
         conversation: list[dict] = (list(history) if history else []) + [{"role": "user", "content": text}]
         # 阶段 B:窗口上限。若 system+history+当前 超出 context_window×0.8,丢弃最旧历史,保留当前。
         win = int(getattr(self.cfg, "context_window", 0) or 0)
+        _ctx_compressed = False
         if win > 0:
             _budget = max(0, int(win * 0.8) - estimate_tokens(self.system))
             _before = len(conversation)
             while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
                 conversation.pop(0)
+            _ctx_compressed = len(conversation) < _before
             _sys_t = estimate_tokens(self.system)
             _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
             _msg_t = self._estimate_conversation(conversation)
@@ -171,7 +173,7 @@ class AgentLoop:
                 "system_tokens": _sys_t, "tools_tokens": _tools_t, "messages_tokens": _msg_t,
                 "prompt_tokens": _sys_t + _tools_t + _msg_t,
                 "completion_tokens": 0,
-                "compression_triggered": len(conversation) < _before,
+                "compression_triggered": _ctx_compressed,
             })
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
@@ -183,6 +185,7 @@ class AgentLoop:
                 n_steps += 1
                 if n_steps > max_steps:
                     blocks, cits = self.present_answer("已达回答步数上限,请补充资料后再试。", references)
+                    conversation.append({"role": "assistant", "content": "已达回答步数上限,请补充资料后再试。"})
                     yield self._emit("assistant_message", {"blocks": blocks, "citations": cits})
                     assistant_emitted = True
                     break
@@ -256,6 +259,7 @@ class AgentLoop:
 
                 answer_text = assembler.text_blocks().strip()
                 blocks, citations = self.present_answer(answer_text or "（无回答）", references)
+                conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True
                 yield self._emit("step_end", {"turn": 1, "step": n_steps})
@@ -272,16 +276,35 @@ class AgentLoop:
                 blocks, cits = self.present_answer("回答生成失败/中断,请重试。", references)
                 if not aborted:
                     yield self._emit("assistant_message", {"blocks": blocks, "citations": cits})
+                    conversation.append({"role": "assistant", "content": "回答生成失败/中断,请重试。"})
                 else:
                     self._emit("assistant_message", {"blocks": blocks, "citations": cits})
             _run_ms = int((time.time() - t0) * 1000)
             tps = (_completion_tokens / (_run_ms / 1000)) if (_completion_tokens > 0 and _run_ms > 0) else None
+            # 阶段 B:回合结束时的上下文快照 —— 完整对话(历史 + 当前用户提问 + 助手回答),
+            # 而非回合开始时仅含提问的瞬时值。前端"对话消息"据此展示,回答才会被计入上下文占用。
+            # compression_triggered 沿用回合开头的裁剪结果(窗口裁剪只发生在回合开始)。
+            rc_ev = None
+            if win > 0:
+                _sys_t2 = estimate_tokens(self.system)
+                _tools_t2 = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
+                _msg_t2 = self._estimate_conversation(conversation)
+                rc_ev = self._emit("request_context", {
+                    "model": self._effective_model,
+                    "context_window": win,
+                    "system_tokens": _sys_t2, "tools_tokens": _tools_t2, "messages_tokens": _msg_t2,
+                    "prompt_tokens": _sys_t2 + _tools_t2 + _msg_t2,
+                    "completion_tokens": _completion_tokens,
+                    "compression_triggered": _ctx_compressed,
+                })
             use_ev = self._emit("usage", {"model": self._effective_model, "prompt_tokens": _prompt_tokens,
                                           "completion_tokens": _completion_tokens, "cost_estimate": None,
                                           "ttft_ms": _ttft, "run_ms": _run_ms, "tokens_per_second": tps})
             end_ev = self._emit("turn_end", {"turn": 1, "reason": reason, "elapsed_ms": _run_ms,
                                              "ttft_ms": _ttft, "tokens_per_second": tps})
             if not aborted:
+                if rc_ev is not None:
+                    yield rc_ev
                 yield use_ev
                 yield end_ev
             logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason)
