@@ -105,6 +105,12 @@ def _validate_compaction_end(p):
             "turn": p.get("turn")}
 
 
+def _validate_request_header(p):
+    return {"reason": p.get("reason"), "model": p.get("model"),
+            "system_len": p.get("system_len"), "history_len": p.get("history_len"),
+            "window": p.get("window")}
+
+
 def _validate_request_context(p):
     return {"model": _req(p, "model", str), "context_window": _req(p, "context_window", int),
             "system_tokens": p.get("system_tokens"), "tools_tokens": p.get("tools_tokens"),
@@ -138,6 +144,7 @@ _EVENT_TYPES.update({
     "tool_result": _validate_tool_result,
     "compaction_prune": _validate_compaction_prune,
     "request_context": _validate_request_context,
+    "request_header": _validate_request_header,
     "compaction_start": _validate_compaction_start,
     "compaction_summary": _validate_compaction_summary,
     "compaction_end": _validate_compaction_end,

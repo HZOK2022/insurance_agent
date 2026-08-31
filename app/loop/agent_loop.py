@@ -171,6 +171,11 @@ class AgentLoop:
         win = int(getattr(self.cfg, "context_window", 0) or 0)
         _ctx_compressed = False
         _sys_t = _tools_t = 0   # 供回合中 context-overflow 检查复用
+        # 阶段 D:请求快照(供回放/重建"当时到底发了什么")。
+        yield self._emit("request_header", {
+            "reason": "turn", "model": self._effective_model,
+            "system_len": len(self.system), "history_len": len(history or []), "window": win,
+        })
         if win > 0:
             _sys_t = estimate_tokens(self.system)
             _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
