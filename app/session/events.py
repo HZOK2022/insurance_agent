@@ -85,6 +85,10 @@ def _validate_tool_result(p):
             "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
 def _validate_approval_request(p): return {"tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
 def _validate_approval_decision(p): return {"status": _req(p, "status", str), "decided_by": p.get("decided_by")}
+def _validate_llm_retry(p):
+    return {"attempt": p.get("attempt"), "err": p.get("err")}
+
+
 def _validate_compaction_prune(p):
     return {"seq": _req(p, "seq", int), "shadowed_token_count": p.get("shadowed_token_count"),
             "chars_removed": _req(p, "chars_removed", int)}
@@ -145,6 +149,7 @@ _EVENT_TYPES.update({
     "compaction_prune": _validate_compaction_prune,
     "request_context": _validate_request_context,
     "request_header": _validate_request_header,
+    "llm_retry": _validate_llm_retry,
     "compaction_start": _validate_compaction_start,
     "compaction_summary": _validate_compaction_summary,
     "compaction_end": _validate_compaction_end,

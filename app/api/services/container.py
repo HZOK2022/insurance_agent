@@ -34,8 +34,12 @@ def get_qstore() -> QdrantStore:
 
 @lru_cache(maxsize=1)
 def get_llm() -> LLMClient:
-    return LLMClient(get_cfg().deepseek_api_key, get_cfg().deepseek_base_url, get_cfg().deepseek_model,
-                     get_cfg().deepseek_temperature, get_cfg().deepseek_max_tokens)
+    _c = get_cfg()
+    return LLMClient(_c.deepseek_api_key, _c.deepseek_base_url, _c.deepseek_model,
+                     _c.deepseek_temperature, _c.deepseek_max_tokens,
+                     max_retries=_c.llm_retry_max_tries,
+                     retry_base_delay=_c.llm_retry_base_delay_ms / 1000.0,
+                     retry_max_delay=_c.llm_retry_max_delay_ms / 1000.0)
 
 
 @lru_cache(maxsize=1)

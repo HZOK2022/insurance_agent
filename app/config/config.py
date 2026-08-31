@@ -54,6 +54,9 @@ class Config:
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_temperature: float = 0.7
     deepseek_max_tokens: int = 32768
+    llm_retry_max_tries: int = 3           # 对瞬时错误(429/5xx/超时)最多重试次数
+    llm_retry_base_delay_ms: int = 500    # 指数退避基数(毫秒):0.5s,1s,2s...
+    llm_retry_max_delay_ms: int = 8000    # 单次最长等待(毫秒)
     # 嵌入(本地 bge-large-zh-v1.5)
     embedding_model: str = "bge-large-zh-v1.5"
     embedding_device: str = "cpu"
@@ -108,6 +111,9 @@ _ENV = {
     "deepseek_model": "DEEPSEEK_MODEL",
     "deepseek_temperature": "DEEPSEEK_TEMPERATURE",
     "deepseek_max_tokens": "DEEPSEEK_MAX_TOKENS",
+    "llm_retry_max_tries": "LLM_RETRY_MAX_TRIES",
+    "llm_retry_base_delay_ms": "LLM_RETRY_BASE_DELAY_MS",
+    "llm_retry_max_delay_ms": "LLM_RETRY_MAX_DELAY_MS",
     "embedding_model": "EMBEDDING_MODEL",
     "embedding_device": "EMBEDDING_DEVICE",
     "embedding_batch_size": "EMBEDDING_BATCH_SIZE",
@@ -151,6 +157,7 @@ _ENV = {
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
+                  "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")
 _NONNEG_INTS = ("chunk_overlap",)

@@ -122,13 +122,19 @@ class AgentLoop:
     def _effective_model(self) -> str:
         return self.model_override or getattr(self.cfg, "deepseek_model", "")
 
+    def _llm_retry_kw(self) -> dict:
+        """真实 LLMClient(有 max_retries)才传 on_retry(记 llm_retry 事件);fake LLM 不传,避免破测试。"""
+        if hasattr(self.llm, "max_retries"):
+            return {"on_retry": lambda att: self._emit("llm_retry", att)}
+        return {}
+
     def _tools_schemas(self) -> list[dict] | None:
         schemas = [t["schema"] for t in self.tools.values()]
         return schemas or None
 
     def _stream_blocks(self, msgs: list[dict]) -> Iterator[dict]:
         """流式取块:走 llm.chat_stream,产出标准化 chunk 供 BlockAssembler + 推送。"""
-        for piece in self.llm.chat_stream(msgs, json_mode=False, tools=self._tools_schemas(), model=self.model_override):
+        for piece in self.llm.chat_stream(msgs, json_mode=False, tools=self._tools_schemas(), model=self.model_override, **self._llm_retry_kw()):
             kind = piece.get("kind", "text")
             if kind == "usage":
                 yield {"type": "usage", "usage": piece.get("usage")}
@@ -430,7 +436,7 @@ class AgentLoop:
         try:
             req = build_summary_request(self.system, head)
             summary = collect_summary(self.llm.chat_stream(req, json_mode=False, tools=None,
-                                                           model=self.model_override))
+                                                           model=self.model_override, **self._llm_retry_kw()))
         except Exception as e:  # noqa: BLE001
             logger.warning("compaction summary failed sid turn, err=%s", e)
             summary = None
