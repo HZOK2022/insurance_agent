@@ -26,6 +26,7 @@ SYSTEM = (
     "- 调用后看到检索结果;资料不足可再查,但别用几乎相同的词反复查,连续检索无新增就停止。\n" +
     "- 涉及保费/年缴/费率(某年龄某方案多少钱)时:调用 calculate_premium(product/age/items,可带 family_member_count)算出确切金额再回答,别自己心算;按结果引用角标。\n"
     "- 资料足够或这是寒暄/常识时,不要再调工具,**直接输出最终回答**。\n"
+    "- **检索上限达到时收尾**:当检索次数达到上限、或已通过检索得到足够信息时,应停止继续调用工具,**基于已有资料整理最终回答**;若已达上限但仍缺部分内容,就用**已检索到的内容作答**并写明'以下为检索到的部分,完整清单以保险条款原文为准',不要声称无法回答。"
     "- 最终回答:写成要回复客户的**可读文本**(可分段;要点行用'- '开头;关键结论用**加粗**)。在引用处标 [idx](对应你检索结果里的片段编号,如 [1])。不要输出 JSON/代码块。\n"
     "- 诚实优先:只写实际检索到的。未获得完整清单必须写明'以下为检索到的部分病种,完整清单以保险条款原文为准',严禁声称'共N种/完整列表'除非确实列全;查不到就说不知道,不要编造。"
 )
@@ -36,6 +37,17 @@ def _format_chunks(chunks: list[dict], start_idx: int = 0) -> str:
         return "（无检索资料）"
     # start_idx=本 turn 已返回的 chunk 数 → [idx] 整轮全局编号(检索1 [1..k],检索2 [k+1..]),避免多轮检索引用错位。
     return "\n\n".join(f"[{i}] ({c['chunk_id']}) {c['content']}" for i, c in enumerate(chunks, start_idx + 1))
+
+
+def format_chunks_global(chunks: list[dict], idx_of) -> str:
+    """按"会话全局编号"格式化检索内容:idx_of(chunk_id)->全局 idx。
+
+    让跨轮引用稳定:同一 chunk 无论在哪一轮被检索,都用同一个全局 [idx],
+    上下文回答(当轮无检索)也能复用历史回答里的 [idx]。
+    """
+    if not chunks:
+        return "（无检索资料）"
+    return "\n\n".join(f"[{idx_of(c['chunk_id'])}] ({c['chunk_id']}) {c['content']}" for c in chunks)
 
 
 def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
@@ -126,25 +138,51 @@ def _split_answer_blocks(text: str) -> list[dict]:
     return blocks or [{"t": "p", "text": text or "（无回答）"}]
 
 
-def present_answer(answer_text: str, chunks_list: list) -> tuple[list, list]:
-    """业务层的"展现形式":把 [idx] 映射回条款原文(溯源),生成 blocks + citations。"""
-    all_chunks = [c for c in chunks_list if isinstance(c, list)]
-    flat = [c for cs in all_chunks for c in cs]
-    by_idx = {i + 1: c["chunk_id"] for i, c in enumerate(flat)}
+def present_answer(answer_text: str, chunks_list: list, idx_map: dict | None = None) -> tuple[list, list]:
+    """业务层的"展现形式":把 [idx] 映射回条款原文(溯源),生成 blocks + citations。
+
+    idx_map 提供"全局 idx -> chunk_id"(跨轮引用);不传则按当轮 chunks_list 的位置编号。
+    """
+    if idx_map is not None:
+        by_idx = idx_map
+    else:
+        all_chunks = [c for c in chunks_list if isinstance(c, list)]
+        flat = [c for cs in all_chunks for c in cs]
+        by_idx = {i + 1: c["chunk_id"] for i, c in enumerate(flat)}
     idxs = sorted({int(m) for m in re.findall(r"\[(\d+)\]", answer_text)})
-    cites, seen = [], set()
-    for idx in idxs:
-        cid = by_idx.get(idx)
-        if cid and cid not in seen:
-            cites.append({"idx": idx, "chunk_id": cid})
-            seen.add(cid)
+    # 每个 [idx] 都生成 citation(不按 chunk_id 去重):否则同一个 chunk 被多次引用时,
+    # 末位 [idx] 会被剔除,前端 inline() 只把 citIdx 里的 [idx] 渲染成可点按钮、其余直接丢弃——
+    # 造成"有的索引点不了/消失"。重复 chunk_id 只是让多个角标指向同一条款,可接受。
+    cites = [{"idx": idx, "chunk_id": by_idx[idx]} for idx in idxs if by_idx.get(idx)]
     blocks = _split_answer_blocks(answer_text)
     return blocks, cites
 
 
 def force_answer(chunks_list: list) -> tuple[list, list]:
-    """检索达上限强制结束时的业务兜底(诚实说明,不编造)。"""
-    return [{"t": "p", "text": "已检索多次,未能获得完整清单。为避免编造,完整清单请以保险条款原文为准;确切的病种名称与定义以条款原文为准。"}], []
+    """检索达上限强制结束时的业务兜底:**基于已检索到的内容作答**(可能未列全,如实说明),不编造。
+
+    若确实有检索内容,就把去重后的片段列出来给用户(附"可能未列全/以原文为准"的说明);
+    完全没有内容才用通用兜底话术。
+    """
+    texts: list[str] = []
+    seen: set[str] = set()
+    for cs in chunks_list:
+        if not isinstance(cs, list):
+            continue
+        for c in cs:
+            if not isinstance(c, dict):
+                continue
+            t = (c.get("content") or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                texts.append(t)
+    if not texts:
+        return [{"t": "p", "text": "已检索多次,未能获得足够资料。为避免编造,请以保险条款原文为准。"}], []
+    body = "\n- ".join(texts[:60])
+    if len(texts) > 60:
+        body += "\n- …(其余略,完整清单见条款原文)"
+    text = "基于已检索到的内容(可能未列全,完整清单与确切病种名称/定义请以保险条款原文为准):\n- " + body
+    return [{"t": "p", "text": text}], []
 
 
 def bundle(embedder, qstore, cfg) -> dict:

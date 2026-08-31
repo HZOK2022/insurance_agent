@@ -12,8 +12,26 @@ from dataclasses import dataclass
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _read_env_file(path: str) -> dict:
+    """重新解析 .env 文件为 {KEY: value}。每次调用都读文件,改 .env 立即反映。"""
+    out: dict[str, str] = {}
+    if not os.path.isfile(path):
+        return out
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k:
+                out[k] = v
+    return out
+
+
 def load_dotenv(path: str) -> None:
-    """极简 .env 解析(字符串值,不覆盖已存在的环境变量)。"""
+    """极简 .env 解析(字符串值,不覆盖已存在的环境变量);供测试/外部调用,load() 不再依赖它。"""
     if not os.path.isfile(path):
         return
     with open(path, encoding="utf-8") as f:
@@ -60,6 +78,9 @@ class Config:
     # 上限(完整结果预算)
     max_steps_per_turn: int = 20
     context_window: int = 128000
+    compaction_threshold_ratio: float = 0.8   # 超窗触发压缩的阈值(窗口×ratio)
+    compaction_retain_ratio: float = 0.16   # 保留尾(最近对话逐字)占比
+    compaction_max_tokens: int = 2000       # 摘要输出上限(估计 token)
     max_retrieve_per_turn: int = 5   # 单轮最多检索次数;超过后强制基于现有资料诚实回答,防反复无效检索
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
@@ -106,6 +127,9 @@ _ENV = {
     "rerank_max_length": "RERANKING_MAX_LENGTH",
     "max_steps_per_turn": "MAX_STEPS_PER_TURN",
     "context_window": "CONTEXT_WINDOW",
+    "compaction_threshold_ratio": "COMPACTION_THRESHOLD_RATIO",
+    "compaction_retain_ratio": "COMPACTION_RETAIN_RATIO",
+    "compaction_max_tokens": "COMPACTION_MAX_TOKENS",
     "max_retrieve_per_turn": "MAX_RETRIEVE_PER_TURN",
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
@@ -126,7 +150,7 @@ _ENV = {
 
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
-                  "max_steps_per_turn", "context_window", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
+                  "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")
 _NONNEG_INTS = ("chunk_overlap",)
@@ -163,13 +187,21 @@ def _validate(cfg: Config) -> None:
             raise ValueError(f"配置 {name}={getattr(cfg, name)!r} 必须 >= 0")
     if not (0 <= cfg.hybrid_bm25_weight <= 1):
         raise ValueError(f"配置 hybrid_bm25_weight={cfg.hybrid_bm25_weight!r} 必须在 [0,1]")
+    for name in ("compaction_threshold_ratio", "compaction_retain_ratio"):
+        v = getattr(cfg, name)
+        if not (0 < v <= 1):
+            raise ValueError(f"配置 {name}={v!r} 必须在 (0,1]")
 
 
 def load() -> Config:
-    load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+    """读配置:每次重新读 .env 文件(.env 是事实源,改它立即生效),真实进程环境变量优先。
+
+    不再把 .env 灌进 os.environ(会残留旧值);配置直接用最新 .env 文件 + 真实 env。
+    """
+    file_env = _read_env_file(os.path.join(_PROJECT_ROOT, ".env"))
     kw = {}
     for name, env_key in _ENV.items():
-        raw = os.environ.get(env_key)
+        raw = os.environ.get(env_key) if env_key in os.environ else file_env.get(env_key)
         if raw is None or raw == "":
             continue
         kw[name] = _coerce(name, raw)

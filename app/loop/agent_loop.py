@@ -16,6 +16,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 from app.utils.text import estimate_tokens, prune_tool_content
+from app.compaction.compactor import (
+    prune_tool_messages, select_keep_tail, build_summary_request,
+    collect_summary, truncate_summary, frame_summary,
+)
 
 logger = logging.getLogger("insurance.agent")
 
@@ -139,8 +143,12 @@ class AgentLoop:
                        "id": piece.get("call_id"), "name": piece.get("name"),
                        "argumentsDelta": piece.get("delta", ""), "ttft_ms": ttft}
 
-    def turn(self, session_id: str, text: str, history: list[dict] | None = None) -> Iterator[dict]:
+    def turn(self, session_id: str, text: str, history: list[dict] | None = None,
+             citation_pool: list | None = None, citation_idx: dict | None = None) -> Iterator[dict]:
         """turn/start → step* → turn/end(ReAct:思考→行动→观察→回答)。生成器:每写一条事件 yield 一条。"""
+        _cpool: list = list(citation_pool) if citation_pool is not None else []   # 会话级 chunk 池(全局编号)
+        _cidx: dict = dict(citation_idx) if citation_idx is not None else {}       # chunk_id -> 全局 idx
+        _has_registry = citation_idx is not None
         t0 = time.time()
         yield self._emit("turn_start", {"turn": 1})
         yield self._emit("user_message", {"text": text, "client_time": None})
@@ -154,20 +162,38 @@ class AgentLoop:
         n_steps = 0
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
         # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
-        conversation: list[dict] = (list(history) if history else []) + [{"role": "user", "content": text}]
-        # 阶段 B:窗口上限。若 system+tools+history+当前 超出 context_window×0.8,丢弃最旧历史,保留当前。
-        # 口径与 dsh 对齐:80% 触发算"全量"= system + tools + 对话(学习文档:dsh 的 totalTokens=estimateHeader(system+tools)+surfaceTokens)。
+        # history 消息带 "seq"(事件序号)供压缩回指;构造模型消息前剥掉。
+        _hist_seqs: list = [m.get("seq") for m in (history or [])]
+        conversation: list[dict] = ([{"role": m.get("role"), "content": m.get("content", "")} for m in (history or [])]
+                                    + [{"role": "user", "content": text}])
+        # 阶段 B/B-1/C:窗口上限 + 压缩(先剪枝→重测→跳过摘要→保尾压头→摘要替换)。
+        # 口径与 dsh 对齐:80% 触发算"全量"= system + tools + 对话。
         win = int(getattr(self.cfg, "context_window", 0) or 0)
         _ctx_compressed = False
+        _sys_t = _tools_t = 0   # 供回合中 context-overflow 检查复用
         if win > 0:
             _sys_t = estimate_tokens(self.system)
             _tools_t = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
-            _budget = max(0, int(win * 0.8) - _sys_t - _tools_t)
+            _thr = float(getattr(self.cfg, "compaction_threshold_ratio", 0.8) or 0.8)
+            _retain = float(getattr(self.cfg, "compaction_retain_ratio", 0.16) or 0.16)
+            _budget = max(0, int(win * _thr) - _sys_t - _tools_t)
             _before = len(conversation)
-            while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
-                conversation.pop(0)
-            _ctx_compressed = len(conversation) < _before
-            _msg_t = self._estimate_conversation(conversation)
+            _retain_budget = max(0, int(win * _retain))
+            new_conv = None; _cinfo = None
+            for _kind, _payload in self._compact_conversation(conversation, _hist_seqs, _budget, _retain_budget, win):
+                if _kind == "event":
+                    yield _payload
+                else:
+                    new_conv, _cinfo = _payload
+            if _cinfo["triggered"]:
+                _ctx_compressed = True
+                conversation = new_conv
+            else:
+                # 压缩未触发/失败(如摘要生产失败)→ 回退朴素丢头,保证窗口不超。
+                while len(conversation) > 1 and self._estimate_conversation(conversation) > _budget:
+                    conversation.pop(0)
+                _ctx_compressed = len(conversation) < _before
+            _msg_t = self._estimate_conversation(conversation)   # 实际发送给模型的上下文(含工具/检索内容),与窗口无关
             yield self._emit("request_context", {
                 "model": self._effective_model,
                 "context_window": win,
@@ -192,6 +218,33 @@ class AgentLoop:
                     assistant_emitted = True
                     break
                 yield self._emit("step_start", {"turn": 1, "step": n_steps})
+
+                # 阶段C·回合中 pressure/context-overflow:检索/推理增长可能跨过 80% 或硬窗口 → 立即压缩头部。
+                if win > 0:
+                    _thr = float(getattr(self.cfg, "compaction_threshold_ratio", 0.8) or 0.8)
+                    _retain = float(getattr(self.cfg, "compaction_retain_ratio", 0.16) or 0.16)
+                    _total = _sys_t + _tools_t + self._estimate_conversation(conversation)
+                    _limit = int(win * _thr)
+                    if _total > _limit:
+                        _reason = "context-overflow" if _total > win else "pressure"
+                        _obudget = max(0, _limit - _sys_t - _tools_t)
+                        _oconv = None; _oinfo = None
+                        for _kind, _payload in self._compact_conversation(conversation, _hist_seqs, _obudget, max(0, int(win * _retain)), win, reason=_reason):
+                            if _kind == "event":
+                                yield _payload
+                            else:
+                                _oconv, _oinfo = _payload
+                        if _oinfo["triggered"]:
+                            conversation = _oconv
+                            _ctx_compressed = True
+                        else:
+                            # 摘要失败 → 只丢"历史正文"头部,绝不拆工具对(不碰当前轮的 tool/assistant tool_calls)。
+                            while len(conversation) > 1 and (_sys_t + _tools_t + self._estimate_conversation(conversation)) > _limit:
+                                _head = conversation[0]
+                                if _head.get("role") == "tool" or _head.get("tool_calls"):
+                                    break
+                                conversation.pop(0)
+                            _ctx_compressed = True
 
                 msgs = [{"role": "system", "content": self.system}] + conversation
                 if n_retrieve >= max_retrieve:
@@ -236,6 +289,15 @@ class AgentLoop:
                         content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
+                        # 跨轮引用:检索内容用"会话全局编号"重排(同一 chunk 各轮同 idx),供上下文回答复用 [idx]。
+                        if _has_registry and isinstance(reference, list) and reference and isinstance(reference[0], dict):
+                            for _c in reference:
+                                _cid2 = _c.get("chunk_id")
+                                if _cid2 is not None and _cid2 not in _cidx:
+                                    _cpool.append(_c)
+                                    _cidx[_cid2] = len(_cpool)
+                            content = "\n\n".join(
+                                f"[{_cidx[c['chunk_id']]}] ({c['chunk_id']}) {c['content']}" for c in reference)
                         # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
                         # reference(原始 chunks)不动,完整进 retrieval 事件(引用/溯源不丢)。
                         pruned, truncated = content, False
@@ -262,7 +324,11 @@ class AgentLoop:
                     continue
 
                 answer_text = assembler.text_blocks().strip()
-                blocks, citations = self.present_answer(answer_text or "（无回答）", references)
+                if _has_registry:
+                    _idx_map = {idx: cid for cid, idx in _cidx.items()}
+                    blocks, citations = self.present_answer(answer_text or "（无回答）", references, idx_map=_idx_map)
+                else:
+                    blocks, citations = self.present_answer(answer_text or "（无回答）", references)
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True
@@ -292,7 +358,7 @@ class AgentLoop:
             if win > 0:
                 _sys_t2 = estimate_tokens(self.system)
                 _tools_t2 = estimate_tokens(json.dumps(self._tools_schemas() or [], ensure_ascii=False))
-                _msg_t2 = self._estimate_conversation(conversation)
+                _msg_t2 = self._estimate_conversation(conversation)   # 实际发送上下文(含回答/工具),与窗口无关
                 rc_ev = self._emit("request_context", {
                     "model": self._effective_model,
                     "context_window": win,
@@ -315,6 +381,70 @@ class AgentLoop:
 
     def _estimate_conversation(self, conversation: list[dict]) -> int:
         return sum(estimate_tokens(str(m.get("content") or "")) for m in conversation)
+
+    def _compact_conversation(self, conversation: list[dict], hist_seqs: list,
+                              budget: int, retain_budget: int, win: int, reason: str = "pressure"):
+        """阶段 C 压缩(生成器)。先 yield ("event", compaction_start) 让前端显示"压缩中",
+        再做阻塞的 LLM 摘要,再依次 yield compaction_summary/end;最后 yield ("result", (new_conversation, info))。
+        调用方 for 迭代:kind=="event" 就 yield 事件,kind=="result" 就收 (conversation, info)。
+        """
+        info = {"triggered": False, "shadowed_seqs": [], "chars_saved": 0, "pruned": []}
+        if self._estimate_conversation(conversation) <= budget:
+            yield ("result", (conversation, info)); return
+        est = lambda m: estimate_tokens(str(m.get("content") or ""))
+        max_chars = int(getattr(self.cfg, "max_tool_result_chars", 0) or 0)
+        head_c = int(getattr(self.cfg, "tool_result_head_chars", 0) or 0)
+        tail_c = int(getattr(self.cfg, "tool_result_tail_chars", 0) or 0)
+        pruned_list: list = []
+        if max_chars > 0:
+            conv2, pruned_list = prune_tool_messages(conversation, max_chars, head_c, tail_c)
+            for p in pruned_list:
+                _seq = hist_seqs[p["index"]] if p["index"] < len(hist_seqs) else None
+                if isinstance(_seq, int):
+                    yield ("event", self._emit("compaction_prune", {"seq": _seq,
+                                                                  "shadowed_token_count": est({"content": ""}),
+                                                                  "chars_removed": p["chars_removed"]}))
+            if self._estimate_conversation(conv2) <= budget:
+                info.update({"triggered": True, "pruned": pruned_list,
+                             "chars_saved": sum(p["chars_removed"] for p in pruned_list)})
+                yield ("result", (conv2, info)); return
+            conversation = conv2
+        k = select_keep_tail(conversation, retain_budget)
+        if k <= 0:
+            yield ("result", (conversation, info)); return
+        head = conversation[:k]
+        tail = conversation[k:]
+        head_chars = sum(len(str(m.get("content") or "")) for m in head)
+        shadowed_seqs = [s for s in (list(hist_seqs[:k]) if hist_seqs else []) if isinstance(s, int)]
+        from_seq = min(shadowed_seqs) if shadowed_seqs else None
+        to_seq = max(shadowed_seqs) if shadowed_seqs else None
+        # 先发 compaction_start(前端显示"压缩中"),再做阻塞的摘要调用
+        yield ("event", self._emit("compaction_start", {"from_seq": from_seq, "to_seq": to_seq,
+                                                         "reason": reason, "turn": 1}))
+        summary = None
+        try:
+            req = build_summary_request(self.system, head)
+            summary = collect_summary(self.llm.chat_stream(req, json_mode=False, tools=None,
+                                                           model=self.model_override))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("compaction summary failed sid turn, err=%s", e)
+            summary = None
+        max_tok = int(getattr(self.cfg, "compaction_max_tokens", 0) or 0)
+        if summary:
+            summary = truncate_summary(summary, max_tok)
+        head_tokens = self._estimate_conversation(head)
+        if not summary or estimate_tokens(summary) >= head_tokens:
+            yield ("event", self._emit("compaction_end", {"reason": reason, "chars_saved": 0, "turn": 1}))
+            yield ("result", (conversation, info)); return
+        framed = frame_summary(summary)
+        chars_saved = max(0, head_chars - len(summary))
+        yield ("event", self._emit("compaction_summary", {"summary": summary, "shadowed_seqs": shadowed_seqs,
+                                                          "shadowed_token_count": head_tokens}))
+        yield ("event", self._emit("compaction_end", {"reason": reason, "chars_saved": chars_saved, "turn": 1}))
+        new_conv = [{"role": "system", "content": framed}] + tail
+        info.update({"triggered": True, "shadowed_seqs": shadowed_seqs, "chars_saved": chars_saved,
+                     "pruned": pruned_list})
+        yield ("result", (new_conv, info))
 
     def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any]:
         """按名字查表执行工具;返回 (喂给 LLM 的 content, 业务层用的 reference)。start_idx=本 turn 已返回 chunk 数,用于内容 [idx] 整轮全局编号。"""

@@ -288,6 +288,10 @@ class WindowBoundTest(_Base):
         evs = list(loop.turn("s1", "现在?", history=history))
         return seen, evs
 
+    def _convo(self, seen, text):
+        # 压缩触发时会先有一次"摘要请求"(末条=压缩指令);真正的对话请求末条=当前提问。
+        return next(m for m in seen if m and m[-1].get("content") == text)
+
     def test_long_history_trimmed_and_request_context_emitted(self):
         cfg = types.SimpleNamespace(max_steps_per_turn=6, max_retrieve_per_turn=5, deepseek_model="fake", context_window=400)
         history = [
@@ -301,7 +305,7 @@ class WindowBoundTest(_Base):
         self.assertEqual(rc["context_window"], 400)
         self.assertEqual(rc["model"], "fake")
         self.assertGreater(rc["prompt_tokens"], 0)
-        msgs = seen[0]
+        msgs = self._convo(seen, "现在?")   # 压缩时会先有一次摘要调用,取真正的对话请求
         self.assertEqual(msgs[-1], {"role": "user", "content": "现在?"})   # 当前问题在最后
         self.assertFalse(any("问题" + "字" * 200 in (m.get("content") or "") for m in msgs))   # 最旧历史被丢
 

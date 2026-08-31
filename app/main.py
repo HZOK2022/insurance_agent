@@ -4,12 +4,13 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import citation, health, prompt, sessions
+from app.api.routers import citation, config, health, prompt, sessions
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="insurance-agent", version="0.1")
     app.include_router(health.router)
+    app.include_router(config.router)
     app.include_router(sessions.router)
     app.include_router(prompt.router)
     app.include_router(citation.router)

@@ -41,3 +41,6 @@ Thumbs.db
 .idea/
 .vscode/
 _tmp/
+
+# ===== 工具工作区元数据 =====
+.workbuddy/

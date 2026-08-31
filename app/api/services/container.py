@@ -8,8 +8,12 @@ from app.retrieval.qdrant_store import QdrantStore
 from app.session.store import SessionStore
 
 
-@lru_cache(maxsize=1)
 def get_cfg():
+    """每次调用都从 .env 重新读取配置(不缓存):.env 是配置事实源,改它应立即生效。
+
+    重单例(store/embedder/qstore/llm)各自 @lru_cache,只在首次构建时读一次 cfg;
+    而这里的 cfg 是"动态值"供每轮上下文窗口/压缩阈值用,必须反映最新 .env。
+    """
     return load()
 
 

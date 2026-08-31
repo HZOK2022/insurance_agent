@@ -114,6 +114,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .cite:active { transform: translateY(1px); }
 .cite:focus-visible { outline: 2px solid var(--dsw-primary); outline-offset: 1px; }
 .cite.active { background: var(--dsw-primary); border-color: var(--dsw-primary); color: #fff; box-shadow: 0 1px 3px rgba(59,130,246,.3); }
+.cite-plain { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px; margin: 0 3px; padding: 0 5px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1; color: var(--dsw-text-3); background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l2); border-radius: 6px; vertical-align: middle; }
 .input-wrap { padding: 12px 24px 16px; }
 .composer { max-width: 840px; margin: 0 auto; border: 1px solid var(--dsw-border-l2); border-radius: 12px; background: var(--dsw-bg); box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .composer-top { padding: 10px 12px; }
@@ -154,6 +155,13 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .ctx-dot.msg { background: #4f8ef7; }
 .ctx-val { margin-left: auto; color: var(--dsw-text); font-variant-numeric: tabular-nums; }
 .ctx-remind { margin-top: 8px; padding: 6px 10px; background: #fff7ec; border: 1px solid #f3d9a4; color: #8a6b2f; border-radius: 8px; font-size: 12px; }
+.ctx-banner { margin: 8px 0 0; padding: 8px 14px; background: #fff7ec; border: 1px solid #f3d9a4; color: #8a6b2f; border-radius: 8px; font-size: 13px; }
+.ctx-banner.compacting { background: #eef4ff; border-color: #c8d9ff; color: #4a6fd4; }
+.ctx-note { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 14px 0; color: #aab2c0; font-size: 13px; user-select: none; }
+.ctx-note-line { white-space: nowrap; overflow: hidden; color: #cfd6e2; letter-spacing: 2px; }
+.ctx-note-text { white-space: nowrap; }
+.ctx-note-line { flex: 1; height: 1px; background: #e3e8f0; }
+.ctx-note-text { white-space: nowrap; letter-spacing: .5px; }
 .stats-line { text-align: center; padding: 8px 0 2px; font-size: 11.5px; color: var(--dsw-text-2); border-top: 1px solid var(--dsw-border-l1); margin-top: 6px; }
 .trace-view { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .trace-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; margin-bottom: 6px; font-size: 13px; border: 1px solid var(--dsw-border-l1); }
