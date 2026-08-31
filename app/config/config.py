@@ -75,6 +75,7 @@ class Config:
     # 存储(与其它项目不冲突:collection/db 各自独立)
     sqlite_path: str = "data/agent.db"
     premium_db_path: str = "data/premium.db"
+    knowledge_db_path: str = "data/knowledge.db"
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "insurance_knowledge"
     redis_url: str = "redis://:123456@101.132.61.48:6379/2"
@@ -117,6 +118,7 @@ _ENV = {
     "internal_token": "INTERNAL_TOKEN",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
+    "knowledge_db_path": "KNOWLEDGE_DB_PATH",
     "qdrant_url": "QDRANT_URL",
     "qdrant_collection": "QDRANT_COLLECTION",
     "redis_url": "REDIS_URL",

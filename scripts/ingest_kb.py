@@ -14,6 +14,7 @@ from app.config import load
 from app.retrieval.chunker import chunk_documents
 from app.retrieval.embedder import Embedder
 from app.retrieval.qdrant_store import QdrantStore
+from app.retrieval.knowledge_store import KnowledgeStore
 
 _EXTS = (".txt", ".md", ".pdf")
 
@@ -50,11 +51,14 @@ def main():
     cfg = load()
     print(f"[cfg] collection={cfg.qdrant_collection} embedding={cfg.embedding_model} chunk={cfg.chunk_size}/{cfg.chunk_overlap}")
 
-    # 先删(若 --clear),再建 store —— store 的 _ensure 会在缺集合时重建
+    # 事实源(SQLite chunks):canon,供重建 Qdrant / 版本化;Qdrant = 派生向量索引
+    kstore = KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+    # 先删(若 --clear) —— Qdrant 集合 + SQLite 事实源都清,重建
     if a.clear:
         from qdrant_client import QdrantClient
         QdrantClient(url=cfg.qdrant_url).delete_collection(cfg.qdrant_collection)
-        print("[clear] 已删除集合:", cfg.qdrant_collection)
+        kstore.conn.execute("DELETE FROM chunks"); kstore.conn.commit()
+        print("[clear] 已删除集合 + SQLite chunks 事实源")
     store = QdrantStore(cfg.qdrant_url, cfg.qdrant_collection, cfg.embedding_dim)
 
     files = []
@@ -74,6 +78,9 @@ def main():
     chunks = chunk_documents(docs, cfg.chunk_size, cfg.chunk_overlap)
     print(f"[files] {len(files)} -> [chunks] {len(chunks)}")
 
+    # 先把 chunks 落 SQLite 事实源(唯一真相);再嵌入进 Qdrant(派生索引)
+    kstore.upsert_chunks(chunks)
+    print(f"[fact] chunks -> knowledge.db({kstore.count()})")
     embedder = Embedder(cfg.embedding_model, cfg.embedding_device, cfg.embedding_batch_size)
     B = 64
     i = 0
