@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, submitApproval, type Session, type PEvent, type Citation } from "./lib/api"
+import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -101,7 +101,7 @@ function Details({ open, activeSource, onClose }: { open: boolean; activeSource:
     </div>
   </div>)
 }
-function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: any[]; activeTab: "chat" | "trace"; setActiveTab: (t: "chat" | "trace") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number }) {
+function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: any[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void }) {
   const win = cfgWindow || ctxUsage?.window || 0   // cfgWindow(实时 /api/config)优先,避免历史 request_context 固化的旧窗口盖过新配置
   const ctxPct = ctxUsage && win > 0 ? Math.min(100, Math.round((ctxUsage.used / win) * 100)) : 0
   const [modelMenu, setModelMenu] = useState(false)
@@ -127,10 +127,12 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs">
       <div className={"tab" + (activeTab === "chat" ? " active" : "")} onClick={() => setActiveTab("chat")}>对话</div>
       <div className={"tab" + (activeTab === "trace" ? " active" : "")} onClick={() => setActiveTab("trace")}>轨迹</div>
+      <div className={"tab" + (activeTab === "audit" ? " active" : "")} onClick={() => setActiveTab("audit")}>审计</div>
     </div></div>
     {activeTab === "chat"
       ? <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{(() => { const rows: ReactNode[] = []; let i = 0; while (i < messages.length) { const m = messages[i]; if (m.role === "user" || m.role === "answer" || m.role === "note") { rows.push(<div key={m.id} className={"message " + (m.role === "answer" ? "assistant" : m.role)} data-time-hover-root>{renderRow(m)}</div>); i += 1; continue } const grp: Msg[] = []; let j = i; while (j < messages.length && (messages[j].role === "think" || messages[j].role === "text" || messages[j].role === "tool")) { grp.push(messages[j]); j += 1 } const hasAnswer = j < messages.length && messages[j].role === "answer"; const ansRun = hasAnswer ? messages[j].runMs : undefined; const label = hasAnswer ? ("任务耗时 " + fmtElapsed(ansRun)) : "任务进行中…"; rows.push(<div key={"g" + i} className="message assistant" data-time-hover-root><div className="ans-wrap"><details className="process-group" open={!hasAnswer}><summary className="process-summary"><span className="process-label">{label}</span></summary><div className="process-body">{grp.map((g) => (<div key={g.id} className="message assistant" data-time-hover-root>{renderRow(g)}</div>))}</div></details></div></div>); i = j } return rows })()}</div>
-      : <div className="trace-view">
+      : activeTab === "trace"
+      ? <div className="trace-view">
           {trace.length === 0 && <div className="hint">本轮暂无轨迹</div>}
           {trace.map((t, i) => (
             <div key={i} className={"trace-row " + t.type}>
@@ -139,7 +141,8 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
               <span className="trace-detail">{t.type === "tool_call" ? (t.tool + " " + JSON.stringify(t.args || {})) : t.type === "turn_end" ? ("完成 · 耗时 " + fmtD(t.elapsed_ms)) : t.type === "compaction_start" ? "上下文压缩开始" : t.type === "compaction_summary" ? "已生成历史摘要" : t.type === "compaction_end" ? ("上下文已压缩 · 省 " + (t.chars_saved ?? 0) + " 字符") : formatClock(t.ts)}</span>
             </div>
           ))}
-        </div>}
+        </div>
+      : <AuditView sessionId={sessionId} audit={audit} onRefresh={onRefreshAudit} />}
     <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-wrap"><div className="model-select" onClick={() => setModelMenu((m) => !m)} title="选择模型"><span className="model-dot"></span><span className="model-name">{model}</span><I><path d="M6 9l6 6 6-6"/></I></div>{modelMenu && (<><span className="ctx-backdrop" onClick={() => setModelMenu(false)} /><div className="model-menu">{["deepseek-v4-flash", "deepseek-v4-pro"].map((m) => (<div key={m} className={"model-item" + (m === model ? " active" : "")} onClick={() => { setModel(m); setModelMenu(false) }}><span>{m}</span>{m === model ? <span className="model-check">✓</span> : null}</div>))}</div></>)}</div><button className="ctx-toggle" title="上下文用量" onClick={() => setCtxPop((p) => !p)}><svg className="ctx-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="#edf1f7" strokeWidth="4"/><circle cx="18" cy="18" r="15.5" fill="none" stroke="#5686fe" strokeWidth="4" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 15.5)} strokeDashoffset={String(2 * Math.PI * 15.5 * (1 - ctxPct / 100))} transform="rotate(-90 18 18)"/><text x="18" y="21" textAnchor="middle" fontSize="8" fill="#0f1115">{ctxPct}%</text></svg></button>{ctxPop && (<><span className="ctx-backdrop" onClick={() => setCtxPop(false)} /><div className="ctx-pop"><div className="ctx-usage"><div className="ctx-head"><span>上下文已用 <b>{ctxPct}%</b></span><span className="ctx-total">{fmtCtx(ctxUsage?.used ?? 0)} / {fmtCtx(win)}</span></div><div className="ctx-bar"><div className="ctx-fill" style={{ width: ctxPct + "%" }} /></div><div className="ctx-rows"><div className="ctx-row"><span className="ctx-dot sys" />系统提示词<span className="ctx-val">{fmtCtx(ctxUsage?.system)}</span></div><div className="ctx-row"><span className="ctx-dot tool" />工具<span className="ctx-val">{fmtCtx(ctxUsage?.tools)}</span></div><div className="ctx-row"><span className="ctx-dot msg" />对话消息<span className="ctx-val">{fmtCtx(ctxUsage?.messages)}</span></div></div></div></div></>)}<button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
     <div className="footer-stats"><span>引用:点击回答中的角标,右侧展开对应溯源片段</span></div>
   </div>)
@@ -153,7 +156,10 @@ export default function App() {
   const [busy, setBusy] = useState(false)
     const [trace, setTrace] = useState<any[]>([])
   const [loadErr, setLoadErr] = useState("")
-  const [activeTab, setActiveTab] = useState<"chat" | "trace">("chat")
+  const [activeTab, setActiveTab] = useState<"chat" | "trace" | "audit">("chat")
+  const [audit, setAudit] = useState<{ items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null>(null)
+  const loadAudit = async () => { if (!activeId) { setAudit(null); return }; try { const [a, m, o] = await Promise.all([getAudit(activeId), getSessionMetrics(activeId), getObservability()]); setAudit({ items: a.items, sessionMetrics: m, overall: o }) } catch { setAudit({ items: [], sessionMetrics: null, overall: null }) } }
+  useEffect(() => { if (activeTab === "audit") loadAudit() }, [activeTab, activeId]) // eslint-disable-line
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -318,7 +324,7 @@ export default function App() {
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
@@ -326,6 +332,35 @@ export default function App() {
     <ApproveCard req={pendingApproval} argsText={approvalArgsText} reason={approvalReason} err={approvalErr} busy={approvalBusy} setArgsText={setApprovalArgsText} setReason={setApprovalReason} onAct={actApproval} />
   </div>)
 }
+function fmtTok(n?: number): string { if (n == null) return "—"; if (n >= 1000) { const v = n / 1000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "K" } return String(n) }
+function fmtCost(c?: number | null): string { if (c == null) return "—"; return "$" + Number(c).toFixed(4) }
+function AuditView({ sessionId, audit, onRefresh }: { sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefresh: () => void }) {
+  const t = audit?.overall?.totals
+  const sm = audit?.sessionMetrics
+  const download = async (fmt: string) => { if (!sessionId) return; try { const r = await fetch("/api/audit/" + encodeURIComponent(sessionId) + "/export?fmt=" + fmt); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = sessionId + "." + fmt; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url) } catch { } }
+  const cell = (label: string, v: string) => (<div className="audit-cell"><span className="audit-cell-label">{label}</span><span className="audit-cell-val">{v}</span></div>)
+  return (
+    <div className="audit-view">
+      <div className="audit-head"><span className="audit-title">审计 / 可观测</span><div className="audit-actions"><button className="audit-btn" onClick={onRefresh}>刷新</button><button className="audit-btn" onClick={() => download("jsonl")}>导出 JSONL</button><button className="audit-btn" onClick={() => download("json")}>JSON</button><button className="audit-btn" onClick={() => download("csv")}>CSV</button></div></div>
+      <div className="audit-cards">
+        <div className="audit-card"><div className="audit-card-head">全局</div><div className="audit-card-grid">{cell("会话", fmtTok(t?.sessions))}{cell("轮次", fmtTok(t?.turns))}{cell("token", fmtTok(t?.total_tokens))}{cell("成本", fmtCost(t?.cost))}{cell("错误", fmtTok(t?.errors))}{cell("重试", fmtTok(t?.retries))}{cell("审批", fmtTok(t?.approvals))}{cell("平均TTFT", t?.avg_ttft_ms != null ? (fmtDur(t.avg_ttft_ms)) : "—")}{cell("平均吞吐", t?.avg_tps != null ? (String(t.avg_tps) + " tok/s") : "—")}</div></div>
+        <div className="audit-card"><div className="audit-card-head">本会话</div><div className="audit-card-grid">{cell("轮次", fmtTok(sm?.turns))}{cell("token", fmtTok(sm?.total_tokens))}{cell("成本", fmtCost(sm?.cost))}{cell("错误", fmtTok(sm?.errors))}{cell("重试", fmtTok(sm?.retries))}{cell("审批", fmtTok(sm?.approvals))}{cell("平均TTFT", sm?.avg_ttft_ms != null ? fmtDur(sm.avg_ttft_ms) : "—")}{cell("平均吞吐", sm?.avg_tps != null ? (String(sm.avg_tps) + " tok/s") : "—")}</div></div>
+      </div>
+      <div className="audit-list">
+        {(!audit || (audit.items.length === 0 && !audit.sessionMetrics)) && <div className="hint">当前会话暂无审计数据(先跑一轮问答再来看)</div>}
+        {(audit?.items || []).map((it, i) => (
+          <div key={i} className="audit-row">
+            <div className="audit-q"><span className="audit-idx">{i + 1}</span><span className="audit-question">{it.question || "(无问题)"}</span><span className="audit-badges">{it.error ? <span className="badge badge-err">错误</span> : null}{it.approvals > 0 ? <span className="badge badge-ap">审批×{it.approvals}</span> : null}{it.retries > 0 ? <span className="badge badge-rt">重试×{it.retries}</span> : null}</span></div>
+            <div className="audit-meta">{it.model ? it.model + " · " : ""}{it.elapsed_ms != null ? ("耗时 " + fmtDur(it.elapsed_ms)) + " · " : ""}{"token " + ((it.prompt_tokens || 0) + (it.completion_tokens || 0)) + " · "}{"成本 " + fmtCost(it.cost)}</div>
+            <div className="audit-a">{(it.answer || []).map((b: any) => b.t === "ul" ? (b.items || []).join("；") : (b.text || "")).join(" ") || "—"}</div>
+            <div className="audit-meta2">{"检索×" + (it.retrievals || 0) + " · 引用×" + (it.citations?.length || 0) + " · " + (it.ts ? formatClock(it.ts) : "")}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ApproveCard({ req, argsText, reason, err, busy, setArgsText, setReason, onAct }: {
   req: { sid: string; request_id: string; tool: string; args: any; reason: string; status?: string } | null
   argsText: string; reason: string; err: string; busy: boolean

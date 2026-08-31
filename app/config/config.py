@@ -94,6 +94,9 @@ class Config:
     # 审批
     write_tools_approval: str = "manual"   # 写工具:manual=需人工审批,auto=自动放行(仅开发)
     approval_exempt_tools: tuple[str, ...] = ()
+    # 成本计量(阶段6 ⑥):LLM 单价,美元/百万 token;0 = 未配置(成本不计)
+    llm_price_input_per_1m: float = 0.0
+    llm_price_output_per_1m: float = 0.0
     # 鉴权(起步)
     internal_token: str = ""
     # 存储(与其它项目不冲突:collection/db 各自独立)
@@ -146,6 +149,8 @@ _ENV = {
     "write_tools_approval": "WRITE_TOOLS_APPROVAL",
     "approval_exempt_tools": "APPROVAL_EXEMPT_TOOLS",
     "internal_token": "INTERNAL_TOKEN",
+    "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",
+    "llm_price_output_per_1m": "LLM_PRICE_OUTPUT_PER_1M",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",

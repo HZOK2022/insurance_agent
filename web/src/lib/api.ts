@@ -26,6 +26,14 @@ export interface ApprovalDecisionIn { request_id: string; status: ApprovalStatus
 export const submitApproval = (sid: string, d: ApprovalDecisionIn) =>
   json<{ ok: boolean; request_id: string; status: string }>('/api/sessions/' + sid + '/approval', { method: 'POST', body: JSON.stringify(d) })
 
+// 阶段6:审计查询视图 + 可观测(读 events,只读)
+export interface AuditItem { session_id: string; title: string; user_id: string; ts: string; question: string; answer: any[]; citations: any[]; model: string | null; prompt_tokens: number; completion_tokens: number; cost: number | null; elapsed_ms: number | null; reason: string | null; retrievals: number; approvals: number; retries: number; error: boolean }
+export interface Metrics { turns: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost: number | null; errors: number; retries: number; approvals: number; avg_ttft_ms: number; avg_tps: number }
+export const getAudit = (sid: string) => json<{ count: number; items: AuditItem[] }>('/api/audit?session_id=' + encodeURIComponent(sid))
+export const getSessionMetrics = (sid: string) => json<Metrics>('/api/observability/' + encodeURIComponent(sid))
+export const getObservability = () => json<{ totals: Metrics & { sessions: number }; per_session: any[] }>('/api/observability')
+
+
 // POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
 export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string): Promise<void> {
   return fetch(BASE + '/api/sessions/' + sid + '/prompt', {

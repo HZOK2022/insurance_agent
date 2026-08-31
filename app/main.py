@@ -4,7 +4,7 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import approval, citation, config, health, prompt, sessions
+from app.api.routers import approval, audit, citation, config, health, prompt, sessions
 
 
 def create_app() -> FastAPI:
@@ -14,6 +14,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(prompt.router)
     app.include_router(approval.router)
+    app.include_router(audit.router)
     app.include_router(citation.router)
     dist = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
     if os.path.isdir(dist):

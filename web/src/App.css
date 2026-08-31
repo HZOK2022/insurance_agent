@@ -225,3 +225,30 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .ap-danger { background: rgba(214,69,69,.14); border-color: rgba(214,69,69,.4); color: #ff7a7a; }
 .ap-danger:hover:not(:disabled) { background: rgba(214,69,69,.26); }
 .ap-ghost { background: transparent; }
+/* 阶段6:审计 / 可观测视图 */
+.audit-view { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.audit-head { display: flex; align-items: center; justify-content: space-between; }
+.audit-title { font-size: 14px; font-weight: 600; color: var(--dsw-text-1, #f2f4f8); }
+.audit-actions { display: flex; gap: 8px; }
+.audit-btn { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--dsw-border, #3a3d45); background: var(--dsw-bg-2, #12141a); color: var(--dsw-text-1, #f2f4f8); font-size: 12px; cursor: pointer; }
+.audit-btn:hover { border-color: rgba(106,184,255,.4); background: rgba(106,184,255,.1); }
+.audit-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.audit-card { background: var(--dsw-bg-2, #12141a); border: 1px solid var(--dsw-border, #2e313a); border-radius: 10px; padding: 12px 14px; }
+.audit-card-head { font-size: 12px; color: var(--dsw-text-3, #9aa1ad); margin-bottom: 10px; }
+.audit-card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; }
+.audit-cell { display: flex; flex-direction: column; gap: 2px; }
+.audit-cell-label { font-size: 11px; color: var(--dsw-text-3, #9aa1ad); }
+.audit-cell-val { font-size: 13px; color: var(--dsw-text-1, #f2f4f8); font-variant-numeric: tabular-nums; }
+.audit-list { display: flex; flex-direction: column; gap: 8px; }
+.audit-row { background: var(--dsw-bg-2, #12141a); border: 1px solid var(--dsw-border, #2e313a); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.audit-q { display: flex; align-items: center; gap: 8px; }
+.audit-idx { width: 18px; height: 18px; border-radius: 5px; background: rgba(106,184,255,.14); color: #8fc2ff; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.audit-question { font-size: 13px; color: var(--dsw-text-1, #f2f4f8); font-weight: 500; }
+.audit-badges { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+.badge { font-size: 10.5px; padding: 2px 7px; border-radius: 5px; }
+.badge-err { background: rgba(214,69,69,.16); color: #ff7c7c; }
+.badge-ap { background: rgba(106,184,255,.14); color: #8fc2ff; }
+.badge-rt { background: rgba(232,166,54,.16); color: #eec27a; }
+.audit-meta { font-size: 11.5px; color: var(--dsw-text-3, #9aa1ad); }
+.audit-a { font-size: 12.5px; color: var(--dsw-text-2, #cfd6e2); line-height: 1.55; }
+.audit-meta2 { font-size: 11px; color: var(--dsw-text-3, #76808f); }
