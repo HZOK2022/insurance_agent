@@ -21,6 +21,10 @@ export const getConfig = () => json<ApiConfig>('/api/config')
 export const getCitation = (sid: string, cid: string) =>
   json<{ content: string; source: string; doc_id: string; version: string; section: string }>(
     '/api/sessions/' + sid + '/citation/' + encodeURIComponent(cid))
+export type ApprovalStatus = 'approve' | 'reject' | 'defer'
+export interface ApprovalDecisionIn { request_id: string; status: ApprovalStatus; edited_args?: any | null; reason?: string; decided_by?: string }
+export const submitApproval = (sid: string, d: ApprovalDecisionIn) =>
+  json<{ ok: boolean; request_id: string; status: string }>('/api/sessions/' + sid + '/approval', { method: 'POST', body: JSON.stringify(d) })
 
 // POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
 export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string): Promise<void> {

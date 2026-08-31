@@ -103,7 +103,7 @@ class AgentLoop:
                  present_answer: Callable[[str, list], tuple[list, list]], cfg,
                  emit: Callable[[str, dict], dict] | None = None,
                  force_answer: Callable[[list], tuple[list, list]] | None = None,
-                 model: str | None = None):
+                 model: str | None = None, approval=None):
         # llm: .chat_stream(messages, json_mode, tools) -> iter chunks
         # system: 业务 prompt
         # tools: {name: {"schema": openai 工具 schema, "handler": fn(args)->{"content":str,"reference":any}}}
@@ -117,6 +117,7 @@ class AgentLoop:
         self._emit = emit or (lambda t, p: p)
         self.force_answer = force_answer   # 检索达上限强制结束时的业务兜底(如保险的"诚实说明")
         self.model_override = model   # 模型可配置:前端选 deepseek-v4-flash / deepseek-v4-pro
+        self.approval = approval      # 写审批中心(None=不门控,兼容旧调用/测试)
 
     @property
     def _effective_model(self) -> str:
@@ -297,7 +298,20 @@ class AgentLoop:
                         name = tc.name or "search_knowledge"
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
-                        content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
+                        # 阶段5:写工具审批门控(读工具放行;写工具需人工批准,可改参数/拒绝/挂起)
+                        _gated = (self.tools.get(name) or {}).get("write") and self.approval is not None \
+                                 and getattr(self.cfg, "write_tools_approval", "manual") != "auto"
+                        if _gated:
+                            _rid, _areq = self.approval.new_request(name, args, f"写入型工具 {name} 需人工审批")
+                            yield self._emit("approval_request", _areq)
+                            _ad = self.approval.wait(_rid)
+                            if _ad and _ad.get("status") == "approve":
+                                args = _ad.get("edited_args") or args   # 用改后的参数执行
+                                content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
+                            else:
+                                content, reference = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None)
+                        else:
+                            content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
                         # 跨轮引用:检索内容用"会话全局编号"重排(同一 chunk 各轮同 idx),供上下文回答复用 [idx]。

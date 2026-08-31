@@ -25,7 +25,9 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     history = build_history(store, session_id)
     # 会话级 chunk 注册表(全局编号):上下文回答(当轮无检索)也能解析 [idx] 到历史 chunk。
     citation_pool, citation_idx = build_chunk_registry(store, session_id)
+    from app.api.services import container as _container   # 局部导入,避免与 container 模块循环引用
     loop = AgentLoop(llm, bundle["system"], bundle["tools"], bundle["present_answer"],
-                     _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model)
+                     _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model,
+                     approval=_container.get_approval())
     for ev in loop.turn(session_id, text, history=history, citation_pool=citation_pool, citation_idx=citation_idx):
         yield ev

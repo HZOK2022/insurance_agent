@@ -92,7 +92,7 @@ class Config:
     tool_result_tail_chars: int = 1000
     daily_token_budget_per_user: int = 200000
     # 审批
-    write_tools_approval: str = "auto"
+    write_tools_approval: str = "manual"   # 写工具:manual=需人工审批,auto=自动放行(仅开发)
     approval_exempt_tools: tuple[str, ...] = ()
     # 鉴权(起步)
     internal_token: str = ""

@@ -206,3 +206,22 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .process-body .message.assistant { max-width: 100%; min-width: 0; }
 .copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--dsw-text-3); cursor: pointer; transition: color .12s, background .12s; flex-shrink: 0; }
 .copy-btn:hover { color: var(--dsw-primary); background: var(--dsw-primary-soft); }
+/* 阶段5:写工具审批卡(blocking 弹层,盖在上方居中) */
+.approval-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.32); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.approval-card { width: min(520px, calc(100vw - 48px)); background: var(--dsw-bg-1, #1b1d22); border: 1px solid var(--dsw-border, #3a3d45); border-radius: 12px; padding: 16px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 10px; }
+.approval-head { font-size: 14px; font-weight: 600; color: var(--dsw-text-1, #f2f4f8); display: flex; align-items: center; gap: 8px; }
+.approval-tool { font-family: monospace; font-size: 13px; color: var(--dsw-accent, #6ab8ff); background: rgba(106,184,255,.12); padding: 2px 8px; border-radius: 6px; }
+.approval-hint { font-size: 12.5px; color: var(--dsw-text-3, #9aa1ad); }
+.approval-label { font-size: 12px; color: var(--dsw-text-3, #9aa1ad); margin-top: 2px; }
+.approval-args { width: 100%; min-height: 120px; background: var(--dsw-bg-2, #12141a); border: 1px solid var(--dsw-border, #3a3d45); border-radius: 8px; color: var(--dsw-text-1, #f2f4f8); font-family: monospace; font-size: 12.5px; line-height: 1.5; padding: 8px 10px; resize: vertical; }
+.approval-reason-in { width: 100%; background: var(--dsw-bg-2, #12141a); border: 1px solid var(--dsw-border, #3a3d45); border-radius: 8px; color: var(--dsw-text-1, #f2f4f8); font-size: 13px; padding: 7px 10px; }
+.approval-err { font-size: 12px; color: #ff6b6b; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.ap-btn { flex: 1; min-width: 96px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-border, #3a3d45); background: var(--dsw-bg-2, #12141a); color: var(--dsw-text-1, #f2f4f8); font-size: 13px; cursor: pointer; transition: background .12s, border-color .12s, opacity .12s; }
+.ap-btn:hover:not(:disabled) { background: rgba(106,184,255,.12); border-color: rgba(106,184,255,.4); }
+.ap-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ap-primary { background: rgba(44,148,89,.16); border-color: rgba(44,148,89,.4); color: #57c68a; }
+.ap-primary:hover:not(:disabled) { background: rgba(44,148,89,.28); }
+.ap-danger { background: rgba(214,69,69,.14); border-color: rgba(214,69,69,.4); color: #ff7a7a; }
+.ap-danger:hover:not(:disabled) { background: rgba(214,69,69,.26); }
+.ap-ghost { background: transparent; }

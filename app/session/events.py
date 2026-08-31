@@ -83,8 +83,8 @@ def _validate_tool_call(p): return {"tool": _req(p, "tool", str), "args": p.get(
 def _validate_tool_result(p):
     return {"tool": _req(p, "tool", str), "ok": bool(p.get("ok", False)),
             "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
-def _validate_approval_request(p): return {"tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
-def _validate_approval_decision(p): return {"status": _req(p, "status", str), "decided_by": p.get("decided_by")}
+def _validate_approval_request(p): return {"request_id": p.get("request_id"), "tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
+def _validate_approval_decision(p): return {"request_id": p.get("request_id"), "status": _req(p, "status", str), "edited_args": p.get("edited_args"), "reason": p.get("reason"), "decided_by": p.get("decided_by")}
 def _validate_llm_retry(p):
     return {"attempt": p.get("attempt"), "err": p.get("err")}
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, type Session, type PEvent, type Citation } from "./lib/api"
+import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, submitApproval, type Session, type PEvent, type Citation } from "./lib/api"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -162,6 +162,12 @@ export default function App() {
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
   const [cfgWindow, setCfgWindow] = useState(0)   // 后端当前配置的 context_window(前端"窗口"分母,取自 /api/config,不依赖可能过期的历史 request_context)
   const [model, setModel] = useState("deepseek-v4-flash")
+  // 阶段5:写工具审批卡(approval_request 到达时置入;loop 阻塞等决定,故同一时刻最多一条 pending)
+  const [pendingApproval, setPendingApproval] = useState<{ sid: string; request_id: string; tool: string; args: any; reason: string; status?: string } | null>(null)
+  const [approvalArgsText, setApprovalArgsText] = useState("")
+  const [approvalReason, setApprovalReason] = useState("")
+  const [approvalBusy, setApprovalBusy] = useState(false)
+  const [approvalErr, setApprovalErr] = useState("")
   const frameRef = useRef<HTMLDivElement>(null)
   const [vp, setVp] = useState(1280)
   const idRef = useRef(0)
@@ -291,6 +297,7 @@ export default function App() {
         else if (e.type === "compaction_start") { setTrace((t) => [...t, { type: "compaction_start", ts: e.ts }]); if (!compactionNoteId) { const id = mid(); compactionNoteId = id; setMessages((m) => [...m, { id, role: "note", text: "上下文窗口压缩中", time: e.ts }]) } }
         else if (e.type === "compaction_summary") { setTrace((t) => [...t, { type: "compaction_summary", ts: e.ts }]); }
         else if (e.type === "compaction_end") { setTrace((t) => [...t, { type: "compaction_end", ts: e.ts, chars_saved: e.payload?.chars_saved }]); if (compactionNoteId) { const id = compactionNoteId; compactionNoteId = null; setMessages((m) => m.filter((x) => x.id !== id)) } }
+        else if (e.type === "approval_request") { const ap = e.payload || {}; setPendingApproval({ sid, ...ap, status: "pending" }); setApprovalArgsText(JSON.stringify(ap.args ?? {}, null, 2)); setApprovalReason("") }
         else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
         else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...p, ts: e.ts }]); setBusy(false) }
@@ -298,6 +305,16 @@ export default function App() {
     } catch { } finally { setBusy(false); try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
   }
   const toggleSource = (msgId: string, idx: number) => { setActiveCite({ msgId, idx }); setDetailsOpen(true) }
+  // 阶段5:提交审批决定(批准/改后批准/拒绝/稍后)。改后批准=status approve + edited_args;拒绝必填原因。
+  const actApproval = async (status: "approve" | "reject" | "defer", edited: boolean) => {
+    if (!pendingApproval || approvalBusy) return
+    let edited_args: any = null
+    if (status === "approve" && edited) { try { edited_args = JSON.parse(approvalArgsText) } catch { setApprovalErr("参数 JSON 不合法,请修正后再提交"); return } }
+    if (status === "reject" && !approvalReason.trim()) { setApprovalErr("拒绝需填写原因"); return }
+    setApprovalBusy(true); setApprovalErr("")
+    try { await submitApproval(pendingApproval.sid, { request_id: pendingApproval.request_id, status, edited_args, reason: approvalReason.trim() }) } catch { }
+    finally { setApprovalBusy(false); setPendingApproval(null) }
+  }
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} /></div>
@@ -306,5 +323,34 @@ export default function App() {
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
     {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
+    <ApproveCard req={pendingApproval} argsText={approvalArgsText} reason={approvalReason} err={approvalErr} busy={approvalBusy} setArgsText={setApprovalArgsText} setReason={setApprovalReason} onAct={actApproval} />
   </div>)
 }
+function ApproveCard({ req, argsText, reason, err, busy, setArgsText, setReason, onAct }: {
+  req: { sid: string; request_id: string; tool: string; args: any; reason: string; status?: string } | null
+  argsText: string; reason: string; err: string; busy: boolean
+  setArgsText: (v: string) => void; setReason: (v: string) => void
+  onAct: (status: "approve" | "reject" | "defer", edited: boolean) => void
+}) {
+  if (!req) return null
+  return (
+    <div className="approval-backdrop">
+      <div className="approval-card">
+        <div className="approval-head">写操作审批 <span className="approval-tool">{req.tool}</span></div>
+        <div className="approval-hint">{req.reason || ("写入型工具 " + req.tool + " 需人工审批")}</div>
+        <div className="approval-label">参数(JSON,可直接编辑)</div>
+        <textarea className="approval-args" value={argsText} onChange={(e) => setArgsText(e.target.value)} spellCheck={false} />
+        <div className="approval-label">原因(拒绝时必填)</div>
+        <input className="approval-reason-in" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="拒绝原因 / 备注" />
+        {err && <div className="approval-err">{err}</div>}
+        <div className="approval-actions">
+          <button className="ap-btn ap-primary" disabled={busy} onClick={() => onAct("approve", false)}>批准</button>
+          <button className="ap-btn" disabled={busy} onClick={() => onAct("approve", true)}>改后批准</button>
+          <button className="ap-btn ap-danger" disabled={busy} onClick={() => onAct("reject", false)}>拒绝</button>
+          <button className="ap-btn ap-ghost" disabled={busy} onClick={() => onAct("defer", false)}>稍后</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+

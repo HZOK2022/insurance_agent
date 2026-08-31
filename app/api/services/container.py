@@ -6,6 +6,7 @@ from app.llm.client import LLMClient
 from app.retrieval.embedder import Embedder
 from app.retrieval.qdrant_store import QdrantStore
 from app.session.store import SessionStore
+from app.guardrails.approval import ApprovalCenter
 
 
 def get_cfg():
@@ -40,6 +41,11 @@ def get_llm() -> LLMClient:
                      max_retries=_c.llm_retry_max_tries,
                      retry_base_delay=_c.llm_retry_base_delay_ms / 1000.0,
                      retry_max_delay=_c.llm_retry_max_delay_ms / 1000.0)
+
+
+@lru_cache(maxsize=1)
+def get_approval() -> ApprovalCenter:
+    return ApprovalCenter()
 
 
 @lru_cache(maxsize=1)
