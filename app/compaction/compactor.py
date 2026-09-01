@@ -127,18 +127,32 @@ def select_keep_tail(conversation, retain_budget, est=estimate_tokens):
 
 
 def build_summary_request(system, head):
-    """构造"让 LLM 压缩头部"的请求:system + 被压缩的头部消息 + 压缩指令(最后一条 user)。"""
+    """构造"让 LLM 压缩头部"的请求:system + 被压缩的头部消息 + 压缩指令(最后一条 user)。
+
+    需保证消息序列合法(OpenAI 协议):tool 消息必须跟在带 tool_calls 的 assistant 之后。
+    压缩切分可能把 assistant(tool_calls)与 tool 结果拆到不同侧 → 会构造出孤立 tool 消息,DeepSeek 直接 400。
+    这里保留 assistant 的 tool_calls、丢弃孤立/无效 tool 消息,保证合法。"""
     msgs = [{"role": "system", "content": system}]
+    tool_window = False   # 最近一条 assistant 是否带 tool_calls(其后的 tool 消息才合法)
     for m in head:
         role = m.get("role") or "user"
         content = str(m.get("content") or "")
-        if not content:
-            continue
-        msg = {"role": role, "content": content}
         if role == "tool":
-            msg["tool_call_id"] = m.get("tool_call_id") or ""
-            if m.get("name"):
-                msg["name"] = m["name"]
+            if tool_window and m.get("tool_call_id"):
+                msg = {"role": "tool", "content": content or ""}
+                msg["tool_call_id"] = m["tool_call_id"]
+                if m.get("name"):
+                    msg["name"] = m["name"]
+                msgs.append(msg)
+            continue                      # 孤立/无效 tool 消息丢弃
+        if not content and not (role == "assistant" and m.get("tool_calls")):
+            continue
+        msg = {"role": role, "content": content or ""}
+        if role == "assistant" and m.get("tool_calls"):
+            msg["tool_calls"] = m["tool_calls"]
+            tool_window = True
+        else:
+            tool_window = False
         msgs.append(msg)
     msgs.append({"role": "user", "content": COMPACTION_INSTRUCTION})
     return msgs

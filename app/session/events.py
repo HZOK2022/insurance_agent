@@ -35,7 +35,8 @@ def _validate_retrieval(p):
         for k in ("chunk_id", "doc_id", "version", "section", "source", "content"):
             if not isinstance(c.get(k), str):
                 raise ValueError(f"chunk 缺字符串字段 {k}")
-        if not isinstance(c.get("score"), (int, float)):
+        sc = c.get("score")
+        if sc is not None and not isinstance(sc, (int, float)):
             raise ValueError("chunk score 非数字")
     return {"query": _req(p, "query", str), "chunks": chunks}
 

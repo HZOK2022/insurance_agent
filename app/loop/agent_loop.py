@@ -344,7 +344,7 @@ class AgentLoop:
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
                         if isinstance(reference, list) and reference and isinstance(reference[0], dict):
-                            yield self._emit("retrieval", {"query": (args or {}).get("query"), "chunks": reference})
+                            yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
                     yield self._emit("step_end", {"turn": 1, "step": n_steps})
                     continue
 

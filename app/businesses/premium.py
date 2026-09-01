@@ -253,7 +253,7 @@ def build_premium_tool(store):
             "family_member_count": {"type": "integer", "description": "家庭单成员数;2人95折,≥3人9折"},
         }, "required": ["product", "age", "items"]}}}
 
-    def handler(args):
+    def handler(args, start_idx=0):
         return calculate_premium(store, args or {})
 
     return {"schema": schema, "handler": handler}
