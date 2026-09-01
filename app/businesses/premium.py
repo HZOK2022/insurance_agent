@@ -240,14 +240,14 @@ def calculate_premium(store, args):
 def build_premium_tool(store):
     schema = {"type": "function", "function": {
         "name": "calculate_premium",
-        "description": "按产品/投保年龄/所选方案计算年缴保费(查表确定性计算)。product 传产品 key 或名称(如 尊享e生2025 / 安盛天平卓越馨选2025);items 可多选(必选计划+若干加油包),critical 按每5万保额×coverage/50000,family_member_count≥2 享家庭单折扣。返回可读账单+可溯源引用",
+        "description": "按产品/投保年龄/方案计算年缴保费(查表确定性)。items=[{item_key,dims?,coverage?}]。item_key/dims:尊享e生2025→必选 plan:{deductible:'0元|1.5万|3万',plan_variant:'计划一|计划二'};加油包 family_deductible/clinic_a/clinic_b/drug:{},critical:{gender:'男|女'}且 coverage=保额(每5万保额);安盛天平卓越馨选2025→住院 hospital:{deductible:'0元|5000元|10000元|15000元|20000元',tier:'普A|普B|普C|特A|特B|特C',social:'有社保|无社保'},门急诊 outpatient:{deductible:'0元|200元|500元|1300元',coverage:'1万|1.5万|2万|3.5万',social:'有社保|无社保'},重疾津贴 majordaily:{version:'普通版|特需版',plan:'A|B|C'},重疾保险金 majorsum:{version:'普通版|特需版'},博鳌 boao:{type:'特药械|院外特定药品|特定医疗器械',social:'有社保|无社保|有/无社保'}。product 传 key 或名称(如 尊享e生2025 / 安盛天平卓越馨选2025);family_member_count≥2 享家庭单折扣。返回可读账单+可溯源引用。对比两方案/两口径(如 有/无社保)请调本工具分别算再比。",
         "parameters": {"type": "object", "properties": {
             "product": {"type": "string", "description": "产品 key 或名称"},
             "age": {"type": "integer", "description": "投保年龄(周岁)"},
             "items": {"type": "array", "description": "要计算的方案/包,可多选",
                       "items": {"type": "object", "properties": {
                           "item_key": {"type": "string"},
-                          "dims": {"type": "object", "description": "plan 用 {deductible,plan_variant};critical 用 {gender};其余留空"},
+                          "dims": {"type": "object", "description": "按 description 中该 item_key 的 dims 构造(详见 description)"},
                           "coverage": {"type": "number", "description": "保额(元),仅 critical 需传"},
                       }, "required": ["item_key"]}},
             "family_member_count": {"type": "integer", "description": "家庭单成员数;2人95折,≥3人9折"},
