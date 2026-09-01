@@ -98,7 +98,10 @@ class Config:
     llm_price_input_per_1m: float = 0.0
     llm_price_output_per_1m: float = 0.0
     # 鉴权(起步)
-    internal_token: str = ""
+    internal_token: str = ""   # 服务内 token(未强制)
+    api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
+    api_rate_limit: int = 60   # 每客户端窗口内最大请求数(限流)
+    api_rate_window_seconds: int = 60  # 限流窗口(秒)
     # 存储(与其它项目不冲突:collection/db 各自独立)
     sqlite_path: str = "data/agent.db"
     premium_db_path: str = "data/premium.db"
@@ -149,6 +152,9 @@ _ENV = {
     "write_tools_approval": "WRITE_TOOLS_APPROVAL",
     "approval_exempt_tools": "APPROVAL_EXEMPT_TOOLS",
     "internal_token": "INTERNAL_TOKEN",
+    "api_token": "API_TOKEN",
+    "api_rate_limit": "API_RATE_LIMIT",
+    "api_rate_window_seconds": "API_RATE_WINDOW_SECONDS",
     "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",
     "llm_price_output_per_1m": "LLM_PRICE_OUTPUT_PER_1M",
     "sqlite_path": "SQLITE_PATH",
@@ -163,6 +169,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
+                  "api_rate_limit", "api_rate_window_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")
 _NONNEG_INTS = ("chunk_overlap",)

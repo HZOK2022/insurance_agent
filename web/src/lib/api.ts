@@ -4,9 +4,15 @@ export interface Citation { idx: number; chunk_id: string }
 export interface Source { chunk_id: string; title: string; content: string }
 
 const BASE = '' // 同源;Vite 已代理 /api
+// 接口鉴权:Bearer token(运营配置到 localStorage 'api_token';空则未启用鉴权)
+const authHeaders = (): Record<string, string> => {
+  const t = (typeof localStorage !== 'undefined' && localStorage.getItem('api_token')) || ''
+  return t ? { Authorization: 'Bearer ' + t } : {}
+}
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json' }, ...init })
+  const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...authHeaders() }, ...init })
+  if (r.status === 401) throw new Error(path + ' -> 401 未授权')
   if (!r.ok) throw new Error(path + ' -> ' + r.status)
   return r.json() as Promise<T>
 }
@@ -37,7 +43,7 @@ export const getObservability = () => json<{ totals: Metrics & { sessions: numbe
 // POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
 export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string): Promise<void> {
   return fetch(BASE + '/api/sessions/' + sid + '/prompt', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(model ? { text, model } : { text }),
   }).then(async (r) => {
     if (!r.body) return
