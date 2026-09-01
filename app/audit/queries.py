@@ -14,6 +14,7 @@ import csv
 import io
 import json
 
+from app.guardrails.redact import redact_obj
 from app.session.store import SessionStore
 
 
@@ -89,8 +90,13 @@ def _export_rows(store: SessionStore, session_id: str) -> tuple[dict, list[dict]
 
 
 def export_session(store: SessionStore, session_id: str, fmt: str = "jsonl") -> str:
-    """导出某会话的完整事件流(审计留证)。fmt: jsonl | json | csv。"""
+    """导出某会话的完整事件流(审计留证)。fmt: jsonl | json | csv。
+
+    ⚠ 合规:导出前对每个事件 payload 做 PII 脱敏(redact_obj),防止审计报表外泄客户敏感信息。
+    """
     sess, rows = _export_rows(store, session_id)
+    sess = redact_obj(sess)                                   # session 元数据(如 title 可能含手机号)
+    rows = [redact_obj(r) for r in rows]                      # 整行(含 title + payload)脱敏
     if fmt == "json":
         return json.dumps({"session": sess, "events": rows}, ensure_ascii=False, indent=2)
     if fmt == "csv":

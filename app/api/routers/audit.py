@@ -7,6 +7,7 @@ from fastapi.responses import Response
 
 from app.api.services import container
 from app.audit import queries as audit
+from app.guardrails.redact import redact_obj
 from app.observability import metrics as obs
 
 router = APIRouter(prefix="/api", tags=["audit"])
@@ -24,6 +25,8 @@ def audit_list(session_id: str | None = None, user_id: str | None = None,
     lim = max(1, min(limit, 500))
     items = audit.history_qa(container.get_store(), session_id=session_id, user_id=user_id,
                              since=since, until=until, limit=lim)
+    # 合规:查询视图对展示字段做 PII 脱敏(只读副本;事实源原样)
+    items = [redact_obj(it) for it in items]
     return {"count": len(items), "items": items}
 
 

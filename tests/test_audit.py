@@ -141,5 +141,28 @@ class ObservabilityTest(unittest.TestCase):
         self.assertEqual(severity_of(None, ok=False), "error")
 
 
+class PIIRedactTest(unittest.TestCase):
+    def test_redact_pii_masks_patterns(self):
+        from app.guardrails.redact import redact_pii
+        t = redact_pii("电话13800138000 证件110101199001011234 卡6222021234567890123 邮箱a@b.com")
+        self.assertNotIn("13800138000", t)
+        self.assertNotIn("110101199001011234", t)
+        self.assertNotIn("6222021234567890123", t)
+        self.assertNotIn("a@b.com", t)
+        self.assertIn("手机号***", t)
+        self.assertIn("证件号***", t)
+
+    def test_export_session_redacts_payload(self):
+        db = tempfile.mktemp(suffix=".db")
+        store = SessionStore(db)
+        sid = store.create_session("u1")["id"]
+        store.append(sid, "user_message", {"text": "我的电话13800138000", "client_time": None})
+        out = export_session(store, sid, "jsonl")
+        self.assertNotIn("13800138000", out)
+        self.assertIn("手机号***", out)
+        store.close()
+        os.remove(db)
+
+
 if __name__ == "__main__":
     unittest.main()
