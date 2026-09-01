@@ -8,6 +8,7 @@ class SessionSummary(BaseModel):
     title: str = "新会话"
     user_id: str = ""
     created_at: str
+    last_ts: str | None = None
 
 class SessionRename(BaseModel):
     title: str = Field(..., min_length=1, max_length=120, description="新会话标题")

@@ -9,6 +9,19 @@ const DETAILS_MAX = 520, DETAILS_DEFAULT = 360, CENTER_MIN = 640
 
 function I({ children }: { children: ReactNode }) { return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{children}</svg> }
 function clamp(v: number, min: number, max: number) { return Math.min(max, Math.max(min, Math.round(v))) }
+// 相对时间:<1分钟→刚刚, 然后 分钟/小时/天
+function timeAgo(iso?: string): string {
+  if (!iso) return ""
+  const d = new Date(iso).getTime()
+  if (Number.isNaN(d)) return ""
+  const diff = Date.now() - d
+  if (diff < 60000) return "刚刚"
+  const min = Math.floor(diff / 60000)
+  if (min < 60) return min + "分钟前"
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return hr + "小时前"
+  return Math.floor(hr / 24) + "天前"
+}
 function solve(vp: number, side: number, det: number, narrow: boolean) { let s = side === 0 ? SIDEBAR_COLLAPSED : side; let d = det; while (vp - s - d < CENTER_MIN) { if (d > 0) { d = Math.max(0, d - 20) } else if (!narrow && s > SIDEBAR_COLLAPSED) { s = SIDEBAR_COLLAPSED } else { break } } return { sidebar: s, center: Math.max(0, vp - s - d), details: d } }
 function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void }) { const start = useRef(0); return (<div className="col-handle" style={{ left: pos - 3 }} onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); start.current = e.clientX }} onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) onDrag(e.clientX - start.current) }} onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }} />) }
 
@@ -84,7 +97,7 @@ function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, load
   return (<aside className="sidebar">
     <div className="sb-top"><div className="brand"><div className="logo-icon">力</div><span className="brand-name">保险助手</span><span className="brand-badge">AGENT</span></div><div className="sb-avatar">U</div></div>
     <button className="new-session" onClick={onNew}><I><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></I><span>新会话</span></button>
-    <div className="tree">{sessions.length === 0 && <div className="tree-empty">{loadErr || "暂无会话"}</div>}{sessions.map((s2) => (editing === s2.id ? (<div key={s2.id} className="tree-item active" onKeyDown={(e) => { if (e.key === "Enter" && editVal.trim()) { onRename(s2.id, editVal.trim()); setEditing(null) } if (e.key === "Escape") setEditing(null) }}><input className="tree-edit" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} onBlur={() => setEditing(null)} /></div>) : (<div key={s2.id} className={"tree-item" + (s2.id === activeId ? " active" : "")} onClick={() => onSelect(s2.id)} onDoubleClick={() => { setEditing(s2.id); setEditVal(s2.title) }} title="单击切换 · 双击重命名"><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s2.title}</span><button className="tree-more" title="更多操作" aria-label="更多操作" onClick={(e) => { e.stopPropagation(); setMenu(menu === s2.id ? null : s2.id) }}><I><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></I></button>{menu === s2.id && (<><span className="ctx-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(null) }} /><div className="ctx-menu"><button className="ctx-item" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditing(s2.id); setEditVal(s2.title) }}><I><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></I><span>重命名</span></button><button className="ctx-item danger" onClick={(e) => { e.stopPropagation(); setMenu(null); if (window.confirm("确定删除该会话及其内容?")) onDelete(s2.id) }}><I><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></I><span className="danger-text">删除任务</span></button></div></>)}</div>)))}</div>
+    <div className="tree">{sessions.length === 0 && <div className="tree-empty">{loadErr || "暂无会话"}</div>}{sessions.map((s2) => (editing === s2.id ? (<div key={s2.id} className="tree-item active" onKeyDown={(e) => { if (e.key === "Enter" && editVal.trim()) { onRename(s2.id, editVal.trim()); setEditing(null) } if (e.key === "Escape") setEditing(null) }}><input className="tree-edit" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} onBlur={() => setEditing(null)} /></div>) : (<div key={s2.id} className={"tree-item" + (s2.id === activeId ? " active" : "")} onClick={() => onSelect(s2.id)} onDoubleClick={() => { setEditing(s2.id); setEditVal(s2.title) }} title="单击切换 · 双击重命名"><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s2.title}</span><span className="tree-time">{s2.last_ts ? timeAgo(s2.last_ts) : ""}</span><button className="tree-more" title="更多操作" aria-label="更多操作" onClick={(e) => { e.stopPropagation(); setMenu(menu === s2.id ? null : s2.id) }}><I><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></I></button>{menu === s2.id && (<><span className="ctx-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(null) }} /><div className="ctx-menu"><button className="ctx-item" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditing(s2.id); setEditVal(s2.title) }}><I><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></I><span>重命名</span></button><button className="ctx-item danger" onClick={(e) => { e.stopPropagation(); setMenu(null); if (window.confirm("确定删除该会话及其内容?")) onDelete(s2.id) }}><I><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></I><span className="danger-text">删除任务</span></button></div></>)}</div>)))}</div>
     <div className="sb-bottom"><div className="settings-btn"><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></div></div>
   </aside>)
 }
@@ -259,8 +272,8 @@ export default function App() {
     const sid = activeId as string
     setInput(""); setBusy(true)
     setMessages((m) => [...m, { id: mid(), role: "user", text, time: new Date().toISOString() }])
-    // 发送即把当前会话乐观移到列表最前(其活跃时间此刻已产生,无需等回答结束)
-    setSessions((s) => { const act = s.find((x) => x.id === sid); return act ? [act, ...s.filter((x) => x.id !== sid)] : s })
+    // 发送即把当前会话乐观置顶,并把 last_ts 置为当前(时间也即时更新,无需等回答结束)
+    setSessions((s) => { const act = s.find((x) => x.id === sid); if (!act) return s; const now = new Date().toISOString(); return [{ ...act, last_ts: now }, ...s.filter((x) => x.id !== sid)] })
     // 行模型:openThink=当前"思考"行;openText=当前流式的 text 行(叙述或最终回答);answerId=最终回答行
     let openThink: string | null = null
     let openText: string | null = null

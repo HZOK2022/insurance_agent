@@ -142,7 +142,8 @@ class SessionStore:
         seq 单调递增,用它做"最近活跃"排序比时间戳解析更稳;无事件的会话排在建库时间之后。
         """
         rows = self._conn.execute(
-            """SELECT s.id, s.title, s.user_id, s.created_at
+            """SELECT s.id, s.title, s.user_id, s.created_at,
+                      (SELECT e.ts FROM events e WHERE e.session_id=s.id ORDER BY e.seq DESC LIMIT 1) AS last_ts
                FROM sessions s
                WHERE (s.deleted IS NULL OR s.deleted=0)
                ORDER BY COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.session_id=s.id), 0) DESC,

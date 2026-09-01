@@ -54,6 +54,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .tree-item:hover .tree-more, .tree-item.active .tree-more { opacity: 1; }
 .tree-more:hover { background: rgba(0,0,0,.08); color: var(--dsw-text); }
 .tree-more .icon { width: 14px; height: 14px; }
+.tree-time { margin-left: auto; font-size: 11px; color: var(--dsw-text-2, rgba(0,0,0,.45)); white-space: nowrap; flex-shrink: 0; }
 .ctx-backdrop { position: fixed; inset: 0; z-index: 40; }
 .ctx-menu { position: absolute; right: 8px; top: calc(100% - 4px); z-index: 50; min-width: 132px; background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l1); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 4px; }
 .ctx-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: transparent; color: var(--dsw-text); font-size: 13px; padding: 8px 10px; border-radius: 5px; cursor: pointer; text-align: left; }
