@@ -34,10 +34,23 @@ class KnowledgeStore:
           doc_type   TEXT,
           source     TEXT,
           title      TEXT,
+          product_category TEXT,
           content    TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id, version);
         """)
+        # 增量迁移:既有库若缺 product_category 列,补上(保险类别,用于区分医疗险/重疾险/意外险)
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(chunks)").fetchall()}
+        if "product_category" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN product_category TEXT")
+        self.conn.commit()
+        # 回填/重归类:按 doc_id(产品名)判定 product_category(类别规则集中在 categories.py)。
+        # 幂等:每次 init 都对 DISTINCT doc_id 重算,规则变更后下次打开本表即生效。
+        from app.retrieval.categories import classify_product_category
+        for row in self.conn.execute("SELECT DISTINCT doc_id FROM chunks").fetchall():
+            did = row["doc_id"] or ""
+            cat = classify_product_category(did)
+            self.conn.execute("UPDATE chunks SET product_category=? WHERE doc_id=? AND product_category IS NOT ?", (cat, did, cat))
         self.conn.commit()
 
     def upsert_chunks(self, chunks: list[dict]) -> int:
@@ -49,14 +62,15 @@ class KnowledgeStore:
                 continue
             m = c.get("meta") or {}
             self.conn.execute(
-                """INSERT INTO chunks(chunk_id, doc_id, version, section, doc_type, source, title, content)
-                   VALUES(?,?,?,?,?,?,?,?)
+                """INSERT INTO chunks(chunk_id, doc_id, version, section, doc_type, source, title, product_category, content)
+                   VALUES(?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(chunk_id) DO UPDATE SET
                      doc_id=excluded.doc_id, version=excluded.version, section=excluded.section,
                      doc_type=excluded.doc_type, source=excluded.source, title=excluded.title,
-                     content=excluded.content""",
+                     product_category=excluded.product_category, content=excluded.content""",
                 (cid, m.get("doc_id", ""), m.get("version", ""), m.get("section", ""),
-                 m.get("doc_type", ""), m.get("source", ""), m.get("title", ""), c.get("content", "")))
+                 m.get("doc_type", ""), m.get("source", ""), m.get("title", ""),
+                 m.get("product_category", ""), c.get("content", "")))
             n += 1
         self.conn.commit()
         return n

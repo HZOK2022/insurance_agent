@@ -203,7 +203,7 @@ export default function App() {
           seen.add(idx)
           const ch = chunks[idx - 1]
           if (!ch) continue
-          out.push({ idx, chunk_id: ch.chunk_id, title: (ch.doc_id || "") + " " + (ch.version || "") + " · " + (ch.section || ""), content: ch.content || "(未找到原文)" })
+          out.push({ idx, chunk_id: ch.chunk_id, title: (ch.product_category ? ch.product_category + " · " : "") + (ch.doc_id || "") + " " + (ch.version || "") + " · " + (ch.section || ""), content: ch.content || "(未找到原文)" })
         }
       }
     }

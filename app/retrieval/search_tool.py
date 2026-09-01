@@ -8,7 +8,9 @@ def to_chunk(hit: dict, score) -> dict:
     m = hit.get("meta", {})
     return {"chunk_id": hit["chunk_id"], "score": score, "doc_id": m.get("doc_id", ""),
             "version": m.get("version", ""), "section": m.get("section", ""),
-            "source": m.get("source", ""), "content": hit.get("content", "")}
+            "source": m.get("source", ""), "doc_type": m.get("doc_type", ""),
+            "title": m.get("title", ""), "product_category": m.get("product_category", ""),
+            "content": hit.get("content", "")}
 
 
 def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: int = 3,

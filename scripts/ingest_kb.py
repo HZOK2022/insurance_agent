@@ -15,6 +15,7 @@ from app.retrieval.chunker import chunk_documents
 from app.retrieval.embedder import Embedder
 from app.retrieval.qdrant_store import QdrantStore
 from app.retrieval.knowledge_store import KnowledgeStore
+from app.retrieval.categories import classify_product_category
 
 _EXTS = (".txt", ".md", ".pdf")
 
@@ -31,14 +32,17 @@ def read_text(path: str):
     return None
 
 
-def build_docs(path: str):
+def build_docs(path: str, category: str = ""):
     text = read_text(path)
     if not text:
         return []
     base = os.path.splitext(os.path.basename(path))[0]
+    # 保险类别:优先显式 --category,否则按 doc_id 关键词判定(医疗险/重疾险/意外险/…)
+    cat = category or classify_product_category(base, base)
     return [{"text": text,
              "meta": {"chunk_id": base, "doc_id": base, "version": "v1", "section": "",
-                      "doc_type": "policy_document", "source": path, "title": base}}]
+                      "doc_type": "policy_document", "source": path, "title": base,
+                      "product_category": cat}}]
 
 
 def main():
@@ -46,6 +50,7 @@ def main():
     ap.add_argument("--path", required=True)
     ap.add_argument("--clear", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="仅前 N 个文件(测试用)")
+    ap.add_argument("--category", default="", help="保险类别(医疗险/重疾险/意外险/…);缺省按 doc_id 关键词判定")
     a = ap.parse_args()
 
     cfg = load()
@@ -74,7 +79,7 @@ def main():
 
     docs = []
     for f in files:
-        docs += build_docs(f)
+        docs += build_docs(f, a.category)
     chunks = chunk_documents(docs, cfg.chunk_size, cfg.chunk_overlap)
     print(f"[files] {len(files)} -> [chunks] {len(chunks)}")
 
