@@ -350,7 +350,21 @@ class AgentLoop:
 
                 answer_text = assembler.text_blocks().strip()
                 if _has_registry:
-                    _idx_map = {idx: cid for cid, idx in _cidx.items()}
+                    # D43:本轮有检索 → 引用只准用本轮检出的块(按其全局 idx 解析),防止模型复用历史轮次索引导致 idx↔事实错配;
+                    # 当轮无检索(上下文回答)→ 才允许跨轮复用全局编号(references 为空时).
+                    _turn_used = set()
+                    for _r in references:
+                        if not isinstance(_r, list):
+                            continue
+                        for _c in _r:
+                            if isinstance(_c, dict):
+                                _ri = _cidx.get(_c.get("chunk_id"))
+                                if _ri is not None:
+                                    _turn_used.add(_ri)
+                    if _turn_used:
+                        _idx_map = {idx: cid for cid, idx in _cidx.items() if idx in _turn_used}
+                    else:
+                        _idx_map = {idx: cid for cid, idx in _cidx.items()}
                     blocks, citations = self.present_answer(answer_text or "（无回答）", references, idx_map=_idx_map)
                 else:
                     blocks, citations = self.present_answer(answer_text or "（无回答）", references)
