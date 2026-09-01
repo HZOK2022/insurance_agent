@@ -1,6 +1,7 @@
 """agent 运行层:用"核心 AgentLoop + 保险业务层"跑一个回合,产销事件序列(供 SSE 推流)。"""
 from typing import Iterator
 
+from app.guardrails.injection import detect_injection, GUARD_CAUTION, mask_system_leak, looks_like_system_leak
 from app.loop.agent_loop import AgentLoop
 from app.session.context import build_history, build_chunk_registry
 from app.session.events import make_event
@@ -26,8 +27,20 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     # 会话级 chunk 注册表(全局编号):上下文回答(当轮无检索)也能解析 [idx] 到历史 chunk。
     citation_pool, citation_idx = build_chunk_registry(store, session_id)
     from app.api.services import container as _container   # 局部导入,避免与 container 模块循环引用
-    loop = AgentLoop(llm, bundle["system"], bundle["tools"], bundle["present_answer"],
+    sys_msg = bundle["system"]
+    # ① 输入注入护栏:命中疑似注入/越权指令 → 追加安全提示到 system + 记 guard_triggered(审计)
+    if detect_injection(text):
+        sys_msg = sys_msg + "\n" + GUARD_CAUTION
+        emit("guard_triggered", {"kind": "injection", "detail": "检测到疑似提示注入/越权指令,已追加安全提示"})
+    loop = AgentLoop(llm, sys_msg, bundle["tools"], bundle["present_answer"],
                      _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model,
                      approval=_container.get_approval())
+    # ① 输出护栏:回答若泄漏系统签名片段 → 掩码 + 记 guard_triggered(审计)
     for ev in loop.turn(session_id, text, history=history, citation_pool=citation_pool, citation_idx=citation_idx):
+        if ev["type"] == "assistant_message":
+            blocks = (ev["payload"] or {}).get("blocks") or []
+            if looks_like_system_leak(str(blocks), bundle["system"]):
+                new_blocks, _m = mask_system_leak(blocks, bundle["system"])
+                ev["payload"]["blocks"] = new_blocks
+                emit("guard_triggered", {"kind": "system_leak", "detail": "输出疑似泄漏系统提示,已掩码"})
         yield ev

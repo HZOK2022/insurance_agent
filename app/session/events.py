@@ -136,6 +136,10 @@ def _validate_turn(p):
         if k in p and p[k] is not None:
             out[k] = p[k]
     return out
+def _validate_guard_triggered(p):
+    return {"kind": p.get("kind"), "detail": p.get("detail")}
+
+
 def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
 
 _EVENT_TYPES.update({
@@ -160,6 +164,7 @@ _EVENT_TYPES.update({
     "turn_end": _validate_turn,
     "step_start": _validate_step,
     "step_end": _validate_step,
+    "guard_triggered": _validate_guard_triggered,
 })
 
 
