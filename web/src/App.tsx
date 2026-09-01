@@ -259,6 +259,8 @@ export default function App() {
     const sid = activeId as string
     setInput(""); setBusy(true)
     setMessages((m) => [...m, { id: mid(), role: "user", text, time: new Date().toISOString() }])
+    // 发送即把当前会话乐观移到列表最前(其活跃时间此刻已产生,无需等回答结束)
+    setSessions((s) => { const act = s.find((x) => x.id === sid); return act ? [act, ...s.filter((x) => x.id !== sid)] : s })
     // 行模型:openThink=当前"思考"行;openText=当前流式的 text 行(叙述或最终回答);answerId=最终回答行
     let openThink: string | null = null
     let openText: string | null = null
@@ -282,6 +284,7 @@ export default function App() {
         if (activeIdRef.current !== sid) abandoned = true
         if (abandoned) { if (e.type === "turn_start") setBusy(true); else if (e.type === "turn_end") { setBusy(false); } return }
         if (e.type === "turn_start") { setBusy(true) /* retrievalRef 跨轮累积,不重置 */ }
+        else if (e.type === "user_message") { listSessions().then(setSessions).catch(() => {}) }
         else if (e.type === "assistant_chunk") {
           const kind = e.payload?.kind || "text"
           const delta = e.payload?.delta || ""
@@ -306,7 +309,7 @@ export default function App() {
         else if (e.type === "approval_request") { const ap = e.payload || {}; setPendingApproval({ sid, ...ap, status: "pending" }); setApprovalArgsText(JSON.stringify(ap.args ?? {}, null, 2)); setApprovalReason("") }
         else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
-        else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...p, ts: e.ts }]); setBusy(false) }
+        else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setTrace((t) => [...t, { type: "turn_end", ...p, ts: e.ts }]); setBusy(false); listSessions().then(setSessions).catch(() => {}) }
       }, model)
     } catch { } finally { setBusy(false); try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
   }
