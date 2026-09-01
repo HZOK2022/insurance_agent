@@ -1,7 +1,8 @@
 """摄取知识文件到 Qdrant(insurance_knowledge)。
 
 用法: python scripts/ingest_kb.py --path <文件|目录> [--clear] [--limit N]
-支持 .txt/.md(直接文本)与 .pdf(pdfplumber 抽文本)。
+支持 .txt/.md(直接文本)、.pdf(pdfplumber 抽文本)、
+.docx(python-docx 抽段落+表格)、.xlsx(openpyxl 抽工作表行列)。
 """
 from __future__ import annotations
 import argparse
@@ -17,7 +18,16 @@ from app.retrieval.qdrant_store import QdrantStore
 from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.categories import classify_product_category
 
-_EXTS = (".txt", ".md", ".pdf")
+_EXTS = (".txt", ".md", ".pdf", ".docx", ".xlsx")
+
+# 扩展名 -> 入库 doc_type,便于下游按类型过滤/检索
+_DOC_TYPE = {
+    ".txt": "text",
+    ".md": "markdown",
+    ".pdf": "policy_pdf",
+    ".docx": "policy_docx",
+    ".xlsx": "rate_table",
+}
 
 
 def read_text(path: str):
@@ -29,7 +39,42 @@ def read_text(path: str):
         import pdfplumber
         with pdfplumber.open(path) as pdf:
             return "\n".join((p.extract_text() or "") for p in pdf.pages)
+    if ext == ".docx":
+        return _read_docx(path)
+    if ext == ".xlsx":
+        return _read_xlsx(path)
     return None
+
+
+def _read_docx(path: str):
+    """python-docx:正文段落 + 表格(逐行用 | 拼接)。"""
+    from docx import Document
+    doc = Document(path)
+    parts = []
+    for p in doc.paragraphs:
+        if p.text.strip():
+            parts.append(p.text)
+    for ti, table in enumerate(doc.tables, 1):
+        parts.append(f"[表格{ti}]")
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+def _read_xlsx(path: str):
+    """openpyxl:逐工作表,表头行 + 数据行(逐行用 | 拼接)。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    parts = []
+    for ws in wb.worksheets:
+        parts.append(f"[{ws.title}]")
+        for row in ws.iter_rows(values_only=True):
+            cells = ["" if v is None else str(v) for v in row]
+            if any(c.strip() for c in cells):
+                parts.append(" | ".join(cells))
+    wb.close()
+    return "\n".join(parts)
 
 
 def build_docs(path: str, category: str = ""):
@@ -37,12 +82,13 @@ def build_docs(path: str, category: str = ""):
     if not text:
         return []
     base = os.path.splitext(os.path.basename(path))[0]
+    ext = os.path.splitext(path)[1].lower()
     # 保险类别:优先显式 --category,否则按 doc_id 关键词判定(医疗险/重疾险/意外险/…)
     cat = category or classify_product_category(base, base)
     return [{"text": text,
              "meta": {"chunk_id": base, "doc_id": base, "version": "v1", "section": "",
-                      "doc_type": "policy_document", "source": path, "title": base,
-                      "product_category": cat}}]
+                      "doc_type": _DOC_TYPE.get(ext, "policy_document"), "source": path,
+                      "title": base, "product_category": cat}}]
 
 
 def main():
