@@ -137,7 +137,16 @@ class SessionStore:
         return cur.rowcount
 
     def list_sessions(self) -> list[dict]:
-        rows = self._conn.execute("SELECT id,title,user_id,created_at FROM sessions WHERE deleted IS NULL OR deleted=0 ORDER BY created_at DESC").fetchall()
+        """列出未删除会话,按**最新活动**(最近一次事件 seq,含最新回答/用户提问)降序。
+
+        seq 单调递增,用它做"最近活跃"排序比时间戳解析更稳;无事件的会话排在建库时间之后。
+        """
+        rows = self._conn.execute(
+            """SELECT s.id, s.title, s.user_id, s.created_at
+               FROM sessions s
+               WHERE (s.deleted IS NULL OR s.deleted=0)
+               ORDER BY COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.session_id=s.id), 0) DESC,
+                        s.created_at DESC""").fetchall()
         return [dict(r_) for r_ in rows]
 
     def get_session(self, sid: str) -> dict | None:

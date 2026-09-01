@@ -54,6 +54,22 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["seq"], 2)
 
+    def test_list_sessions_orders_by_latest_activity(self):
+        a = self.s.create_session("u1")["id"]
+        b = self.s.create_session("u1")["id"]
+        c = self.s.create_session("u1")["id"]
+        # 给 c 加事件 -> c 应冒到最前
+        self.s.append(c, "user_message", {"text": "hi", "client_time": None})
+        order1 = [x["id"] for x in self.s.list_sessions()]
+        self.assertEqual(order1[0], c)
+        # 再给 a 加更晚的事件 -> a 冒到最前;b(无事件)排最后
+        self.s.append(a, "user_message", {"text": "later", "client_time": None})
+        order2 = [x["id"] for x in self.s.list_sessions()]
+        self.assertEqual(order2[0], a)
+        self.assertEqual(order2[1], c)
+        self.assertEqual(order2[-1], b)
+
+
     def test_load_unknown_type_rejected(self):
         self.s.append("s1", "user_message", {"text": "a", "client_time": None})
         # 直接注入一个未注册类型的事件(模拟损坏/未来版本的日志)
