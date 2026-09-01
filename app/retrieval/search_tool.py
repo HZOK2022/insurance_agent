@@ -1,7 +1,12 @@
 """search_knowledge 工具:嵌入查询 → (稠密检索 [+ 混合融合]) → 重排 → RetrievalChunk[]。"""
 from __future__ import annotations
 
+import logging
+
+from app.guardrails.rag import quarantine_suspicious
 from app.retrieval.hybrid import fuse_and_pick
+
+logger = logging.getLogger(__name__)
 
 
 def to_chunk(hit: dict, score) -> dict:
@@ -59,4 +64,8 @@ def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: i
         same = [c for c in chunks if c.get("product_category") == category]
         rest = [c for c in chunks if c.get("product_category") != category]
         chunks = same + rest
+    # RAG 投毒防护:隔离疑似"指令式"chunk,不让恶意指令进模型上下文(确定性拦截)
+    chunks, _susp = quarantine_suspicious(chunks)
+    if _susp:
+        logger.warning("rag_quarantined %d chunk(s) (content=指令式,疑似投毒)", len(_susp))
     return chunks
