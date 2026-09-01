@@ -14,16 +14,20 @@ def to_chunk(hit: dict, score) -> dict:
 
 
 def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: int = 3,
-                     rerank_fn=None, hybrid=None, hybrid_weight: float = 0.0) -> list[dict]:
+                     rerank_fn=None, hybrid=None, hybrid_weight: float = 0.0,
+                     category: str | None = None) -> list[dict]:
     """检索:默认纯稠密;hybrid + hybrid_weight>0 时与 BM25 融合(recall 更大),再重排。
 
     hybrid: BM25Index(含 chunks_by_id);hybrid_weight: 0=纯稠密,1=纯 BM25。
+    category: 可选保险类别(医疗险/重疾险/意外险/…)。软偏置:检索后把同类别块稳定提到前面,
+    但不排除其它类别(top_k 不变,类别匹配优先,跨类别仍保留在低优先级)。
+    用于用户明确指定险种时圈定检索范围。
     """
     qvec = embedder.embed([query])
     if not qvec:
         return []
     use_hybrid = hybrid is not None and hybrid_weight > 0
-    pool = top_k * 2 if use_hybrid else top_k          # 混合时扩大稠密候选池,避免融合后被截断丢回调
+    pool = top_k * 2 if (use_hybrid or category) else top_k          # 混合时扩大稠密候选池,避免融合后被截断丢回调
     dense_hits = store.search(qvec[0], pool)
     if use_hybrid:
         dense_map = {h["chunk_id"]: float(h["score"]) for h in dense_hits}
@@ -49,4 +53,10 @@ def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: i
             hits = [hits[int(i["index"])] for i in sorted(res, key=lambda x: x.get("relevance_score", 0), reverse=True)
                     if int(i["index"]) < len(hits)]
             hits = hits[:top_rerank]
-    return [to_chunk(h, h.get("score")) for h in hits]
+    chunks = [to_chunk(h, h.get("score")) for h in hits]
+    if category:
+        # 软偏置:同类别块稳定提到前面,不排除其它类别(top_k 不变)
+        same = [c for c in chunks if c.get("product_category") == category]
+        rest = [c for c in chunks if c.get("product_category") != category]
+        chunks = same + rest
+    return chunks

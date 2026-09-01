@@ -16,15 +16,17 @@ from app.businesses import premium_ax  # noqa: F401  # 注册安盛天平 计算
 SEARCH_TOOL = {"type": "function", "function": {
     "name": "search_knowledge",
     "description": "检索保险知识库(产品条款/重大疾病病种/责任免除/免赔额/理赔等),返回相关条款片段。",
-    "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "检索关键词或问题"}},
+    "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "检索关键词或问题"},
+                          "category": {"type": "string", "description": "保险类别(医疗险/重疾险/意外险/寿险/其他)。当用户明确指定险种时填,便于把检索圈定到该类别(软偏置,不排除其它)。"}},
                    "required": ["query"]}}}
 
 SYSTEM = (
     "你是保险销售知识助手。可调用 search_knowledge 工具检索知识库回答问题。\n"
     "规则:\n"
     "- 需要知识库资料时,调用 search_knowledge,并**先写一句叙述**(查到了什么、还缺什么、下一步要查什么),再调用工具。\n"
-    "- 调用后看到检索结果;资料不足可再查,但别用几乎相同的词反复查,连续检索无新增就停止。\n" +
+    "- 调用后看到检索结果;资料不足可再查,但别用几乎相同的词反复查,连续检索无新增就停止。\n"
     "- 涉及保费/年缴/费率(某年龄某方案多少钱)时:调用 calculate_premium(product/age/items,可带 family_member_count)算出确切金额再回答,别自己心算;按结果引用角标。\n"
+    "- 用户明确指定险种(医疗险/重疾险/意外险/…):检索把该险种写进 query,并在调用 search_knowledge 时传 category(如 category='医疗险')以圈定范围;比较型(如 医疗险 vs 重疾险)则两类都检索再比。产品名问题直接按名字检索,不必猜类别。\n"
     "- 资料足够或这是寒暄/常识时,不要再调工具,**直接输出最终回答**。\n"
     "- **检索上限达到时收尾**:当检索次数达到上限、或已通过检索得到足够信息时,应停止继续调用工具,**基于已有资料整理最终回答**;若已达上限但仍缺部分内容,就用**已检索到的内容作答**并写明'以下为检索到的部分,完整清单以保险条款原文为准',不要声称无法回答。"
     "- 最终回答:写成要回复客户的**可读文本**(可分段;要点行用'- '开头;关键结论用**加粗**)。在引用处标 [idx](对应你检索结果里的片段编号,如 [1])。不要输出 JSON/代码块。\n"
@@ -84,7 +86,8 @@ def build_tools(embedder, qstore, cfg) -> dict[str, dict]:
         query = (args or {}).get("query") or ""
         chunks = search_knowledge(embedder, qstore, query, top_k=cfg.top_k, top_rerank=cfg.top_k_reranker,
                                   rerank_fn=rerank_fn, hybrid=_get_hybrid(),
-                                  hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0))
+                                  hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0),
+                                  category=(args or {}).get("category"))
         # 喂给 LLM 的 content 用格式化文本(整轮全局编号);reference 保留原始 chunks 供溯源
         return {"content": _format_chunks(chunks, start_idx), "reference": chunks}
     tools = {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler}}
