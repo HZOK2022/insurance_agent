@@ -307,11 +307,11 @@ class AgentLoop:
                             _ad = self.approval.wait(_rid)
                             if _ad and _ad.get("status") == "approve":
                                 args = _ad.get("edited_args") or args   # 用改后的参数执行
-                                content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
+                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset)
                             else:
-                                content, reference = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None)
+                                content, reference, _tok, _terr = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None, False, "approval_denied")
                         else:
-                            content, reference = self._run_tool(name, args, start_idx=_chunk_offset)
+                            content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
                         # 跨轮引用:检索内容用"会话全局编号"重排(同一 chunk 各轮同 idx),供上下文回答复用 [idx]。
@@ -335,9 +335,9 @@ class AgentLoop:
                                     int(getattr(self.cfg, "tool_result_tail_chars", 0) or 0))
                                 if _p is not None:
                                     pruned, truncated = _p, True
-                        yield self._emit("tool_result", {"tool": name, "ok": reference is not None or bool(content),
+                        yield self._emit("tool_result", {"tool": name, "ok": _tok,
                                                          "result_truncated": truncated,
-                                                         "error": None if (reference is not None or content) else "no_hits"})
+                                                         "error": _terr})
                         conversation.append({"role": "tool", "tool_call_id": tc.id or f"call_{i}",
                                              "name": name, "content": pruned})
                         references.append(reference)
@@ -471,17 +471,22 @@ class AgentLoop:
                      "pruned": pruned_list})
         yield ("result", (new_conv, info))
 
-    def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any]:
-        """按名字查表执行工具;返回 (喂给 LLM 的 content, 业务层用的 reference)。start_idx=本 turn 已返回 chunk 数,用于内容 [idx] 整轮全局编号。"""
+    def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any, bool, str | None]:
+        """按名字查表执行工具;返回 (喂给 LLM 的 content, reference, ok, error_code)。
+
+        ok=False 表示工具未成功执行(未知/抛异常),error_code 区分 unknown_tool/tool_error。
+        照 dsh:失败是"一等错误结果"(isError + error.code),喂给模型/用户的 content 为脱敏可读
+        文案,完整异常只进日志/logging,不泄漏内部细节。start_idx=本 turn 已返回 chunk 数,用于 [idx] 整轮编号。
+        """
         tool = self.tools.get(name)
         if not tool:
-            return "（无此工具）", None
+            return "（无此工具）", None, False, "unknown_tool"
         try:
             raw = tool["handler"](args, start_idx)
         except Exception as e:
             logger.exception("tool %s failed", name)
-            return f"工具错误: {e}", None
+            return f"工具「{name}」调用失败,未取得结果,请基于已有资料回答。", None, False, "tool_error"
         if isinstance(raw, dict) and ("content" in raw or "reference" in raw):
-            return str(raw.get("content") or ""), raw.get("reference")
-        return str(raw), raw
+            return str(raw.get("content") or ""), raw.get("reference"), True, None
+        return str(raw), raw, True, None
 

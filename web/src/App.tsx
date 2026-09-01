@@ -14,7 +14,7 @@ function ColHandle({ pos, onDrag }: { pos: number; onDrag: (dx: number) => void 
 
 interface Block { t?: string; text?: string; items?: string[] }
 // 行模型:每条消息是一个"节点"——user | think(该步推理,交错在工具之间) | tool(工具卡) | answer(最终回答)
-interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer" | "note"; text?: string; reasoning?: string; blocks?: Block[]; citations?: Citation[]; sources?: Source[]; tool?: { name: string; ok: boolean; args?: any; running?: boolean }; time?: string; streaming?: boolean; runMs?: number; ttftMs?: number; tps?: number }
+interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer" | "note"; text?: string; reasoning?: string; blocks?: Block[]; citations?: Citation[]; sources?: Source[]; tool?: { name: string; ok: boolean; args?: any; running?: boolean; error?: string }; time?: string; streaming?: boolean; runMs?: number; ttftMs?: number; tps?: number }
 // 照 dsh formatLatencySeconds/formatTokensPerSecond:<10s 一位小数,>=10s 取整;tps >=10 取整
 function fmtDur(ms?: number): string { if (ms == null) return ""; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
 function fmtTps(v?: number): string { if (v == null) return ""; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
@@ -114,7 +114,7 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
   const renderRow = (m: Msg) => {
     if (m.role === "user") return (<div className="ans-wrap"><div className="message-text">{m.text}</div><div className="msg-chrome user">{formatClock(m.time)}<CopyBtn text={m.text || ""} /></div></div>)
     if (m.role === "text") return (<div className="ans-wrap"><div className="message-text">{m.text}</div></div>)
-    if (m.role === "tool") return (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span>{m.tool?.args ? <span className="tool-args">{JSON.stringify(m.tool.args)}</span> : ""}<span className={"tool-status" + (m.tool?.running ? " running" : "")}>{m.tool?.running ? "调用中…" : "✓ 完成"}</span></div>)
+    if (m.role === "tool") return (<div className="tool-card" style={{ marginLeft: 0 }}><span className="tool-name">{m.tool?.name}</span>{m.tool?.args ? <span className="tool-args">{JSON.stringify(m.tool.args)}</span> : ""}<span className={"tool-status" + (m.tool?.running ? " running" : "") + (m.tool && !m.tool.running && m.tool.ok === false ? " failed" : "")}>{m.tool?.running ? "调用中…" : m.tool?.ok === false ? (m.tool?.error === "approval_denied" ? "未批准" : "失败") : "✓ 完成"}</span></div>)
     if (m.role === "think") {
       const summary = m.reasoning ? (m.streaming ? m.reasoning.split("\n").pop() : m.reasoning.split("\n")[0]) : "正在思考…"
       return (<div className="ans-wrap"><details className="think-row"><summary><span className="think-label">Think</span><span className="think-summary">{summary}</span>{m.streaming && <span className="stream-caret" />}</summary><div className="think-body">{m.reasoning}</div></details></div>)
@@ -297,7 +297,7 @@ export default function App() {
           }
         }
         else if (e.type === "tool_call") { setTrace((t) => [...t, { type: "tool_call", tool: e.payload?.tool, args: e.payload?.args, ts: e.ts }]); closeThink(); if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, streaming: false } : x)) } setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: e.payload?.tool || "search_knowledge", ok: true, args: e.payload?.args, running: true }, time: e.ts }]) }
-        else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args } } : x)) }
+        else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args, error: e.payload?.error || null } } : x)) }
         else if (e.type === "retrieval") { retrievalRef.current = mergeChunks(retrievalRef.current, e.payload?.chunks) }
         else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(e.payload?.blocks, retrievalRef.current); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
         else if (e.type === "compaction_start") { setTrace((t) => [...t, { type: "compaction_start", ts: e.ts }]); if (!compactionNoteId) { const id = mid(); compactionNoteId = id; setMessages((m) => [...m, { id, role: "note", text: "上下文窗口压缩中", time: e.ts }]) } }

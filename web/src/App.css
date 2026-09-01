@@ -108,7 +108,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 @keyframes caretBlink { 50% { opacity: 0; } }
 .msg-chrome.user { text-align: right; }
 .tool-card { max-width: fit-content; margin: 0 0 16px 0; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-sidebar-fill); padding: 8px 12px; font-size: 13px; color: var(--dsw-text-2); display: flex; align-items: center; gap: 10px; }
-.tool-name { color: var(--dsw-text); font-weight: 500; } .tool-status { color: var(--dsw-green); }
+.tool-name { color: var(--dsw-text); font-weight: 500; } .tool-status { color: var(--dsw-green); } .tool-status.failed { color: #ff6b6b; } .tool-card.failed-border { border-color: rgba(255,107,107,.35); }
 .cite { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px; margin: 0 3px; padding: 0 5px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; color: var(--dsw-primary); background: var(--dsw-primary-soft); border: 1px solid rgba(86,134,254,.30); border-radius: 6px; cursor: pointer; vertical-align: middle; transition: background .12s, border-color .12s, box-shadow .12s, transform .1s; }
 .cite:hover { background: #d7e5ff; border-color: var(--dsw-primary); box-shadow: 0 1px 2px rgba(86,134,254,.22); }
 .cite:active { transform: translateY(1px); }
