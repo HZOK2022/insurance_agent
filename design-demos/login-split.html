@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 保险销售知识助手</title>
+<style>
+:root{
+  --primary:#5686FE; --primary-hover:#4176E6; --primary-soft:#E4EDFD;
+  --bg:#FFFFFF; --text:#0F1115; --text-2:#7F8287; --text-3:#A2A4A6;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:var(--font);color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
+.split{display:flex;min-height:100vh}
+.aside{width:42%;background:linear-gradient(150deg,#5686FE 0%,#4176E6 58%,#3a6ad6 100%);color:#fff;padding:48px 44px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
+.aside::after{content:'';position:absolute;right:-90px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.10)}
+.aside::before{content:'';position:absolute;left:-70px;bottom:-70px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.07)}
+.brand{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
+.logo{width:44px;height:44px;border-radius:13px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);display:grid;place-items:center;font-weight:700;font-size:20px;backdrop-filter:blur(4px)}
+.name{font-size:18px;font-weight:600}
+.value{position:relative;z-index:1;display:flex;flex-direction:column;gap:18px}
+.v-item{display:flex;gap:13px;align-items:flex-start}
+.v-ico{width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,.16);display:grid;place-items:center;flex-shrink:0;margin-top:1px}
+.v-t{font-size:15px;font-weight:600;line-height:1.4}
+.v-d{font-size:13px;color:rgba(255,255,255,.78);margin-top:3px;line-height:1.5}
+.aside-foot{position:relative;z-index:1;font-size:12px;color:rgba(255,255,255,.7)}
+.main{flex:1;display:flex;align-items:center;justify-content:center;padding:32px}
+.form{width:min(360px,100%)}
+h1{font-size:22px;font-weight:600;margin:0 0 6px}
+.sub{font-size:13.5px;color:var(--text-2);margin:0 0 28px}
+.field{margin-bottom:14px}
+.label{display:block;font-size:12.5px;color:var(--text-2);margin-bottom:6px;font-weight:500}
+.input{width:100%;height:44px;border:1px solid rgba(0,0,0,.12);border-radius:10px;padding:0 13px;font:inherit;font-size:14px;color:var(--text);background:#fff;outline:none;transition:border-color .15s,box-shadow .15s}
+.input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.pw{position:relative}
+.pw .input{padding-right:44px}
+.eye{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:none;background:transparent;color:var(--text-3);cursor:pointer;display:grid;place-items:center;border-radius:6px}
+.eye:hover{color:var(--text-2);background:rgba(0,0,0,.04)}
+.row{display:flex;align-items:center;justify-content:space-between;margin:6px 0 22px}
+.remember{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text-2);cursor:pointer;user-select:none}
+.remember input{width:15px;height:15px;accent-color:var(--primary);cursor:pointer}
+.link{font-size:13px;color:var(--primary);text-decoration:none}
+.link:hover{text-decoration:underline;color:var(--primary-hover)}
+.btn{width:100%;height:46px;border:none;border-radius:11px;background:var(--primary);color:#fff;font:inherit;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s,transform .08s}
+.btn:hover{background:var(--primary-hover)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.7;cursor:default}
+.foot{margin-top:20px;text-align:center;font-size:11.5px;color:var(--text-3)}
+@media (max-width:760px){.aside{display:none}.main{padding:24px}}
+</style>
+</head>
+<body>
+<div class="split">
+  <aside class="aside">
+    <div class="brand">
+      <div class="logo">保</div>
+      <div class="name">保险销售知识助手</div>
+    </div>
+    <div class="value">
+      <div class="v-item">
+        <div class="v-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div><div class="v-t">条款 · 费率 · 话术，一问即答</div><div class="v-d">沉淀产品知识库，销售开口就有依据</div></div>
+      </div>
+      <div class="v-item">
+        <div class="v-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div><div class="v-t">引用可追溯，回答有依据</div><div class="v-d">每条结论绑定条款原文，放心对客户讲</div></div>
+      </div>
+      <div class="v-item">
+        <div class="v-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div><div class="v-t">内部知识库，安全合规</div><div class="v-d">仅授权人员可访问，数据不出域</div></div>
+      </div>
+    </div>
+    <div class="aside-foot">保险销售客服知识助手 · 内部工作台</div>
+  </aside>
+  <main class="main">
+    <form class="form" id="f" autocomplete="off">
+      <h1>登录</h1>
+      <p class="sub">使用内部账号进入工作台</p>
+      <div class="field">
+        <label class="label" for="u">账号</label>
+        <input class="input" id="u" placeholder="请输入账号" autocomplete="username">
+      </div>
+      <div class="field">
+        <label class="label" for="p">密码</label>
+        <div class="pw">
+          <input class="input" id="p" type="password" placeholder="请输入密码" autocomplete="current-password">
+          <button type="button" class="eye" id="eye" aria-label="显示密码">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="row">
+        <label class="remember"><input type="checkbox" checked> 记住我</label>
+        <a class="link" href="#">忘记密码？</a>
+      </div>
+      <button class="btn" id="submit" type="submit">登录</button>
+      <div class="foot">仅限授权内部人员使用 · v0.0.1</div>
+    </form>
+  </main>
+</div>
+<script>
+const eye=document.getElementById('eye'),p=document.getElementById('p');
+eye.addEventListener('click',()=>{p.type=p.type==='password'?'text':'password';});
+const f=document.getElementById('f'),btn=document.getElementById('submit');
+f.addEventListener('submit',e=>{e.preventDefault();btn.disabled=true;btn.textContent='登录中…';setTimeout(()=>{btn.disabled=false;btn.textContent='登录';},1200);});
+</script>
+</body>
+</html>

@@ -46,6 +46,23 @@ class SessionStore:
           id TEXT PRIMARY KEY, title TEXT, user_id TEXT, created_at TEXT, status TEXT DEFAULT 'active',
           deleted INTEGER DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          salt TEXT NOT NULL,
+          display_name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          disabled INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+          token TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          FOREIGN KEY (username) REFERENCES users(username)
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens_username ON auth_tokens(username);
         """
 
     def _ensure_schema(self) -> None:
@@ -168,6 +185,43 @@ class SessionStore:
         self._conn.execute("UPDATE sessions SET title=? WHERE id=? AND (deleted IS NULL OR deleted=0)", (norm, sid))
         self._conn.commit()
         return self.get_session(sid)
+
+    # ---- auth: users + auth_tokens(单写者,与 events/sessions 同库同连接) ----
+    def count_users(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+        return int(row["c"] or 0)
+
+    def create_user(self, username: str, password_hash: str, salt: str, display_name: str = "") -> dict:
+        uid = uuid.uuid4().hex[:12]
+        now = events.utcnow()
+        self._conn.execute(
+            "INSERT INTO users (id,username,password_hash,salt,display_name,created_at) VALUES (?,?,?,?,?,?)",
+            (uid, username, password_hash, salt, display_name or username, now))
+        self._conn.commit()
+        return {"id": uid, "username": username, "display_name": display_name or username, "created_at": now}
+
+    def get_user(self, username: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT id,username,password_hash,salt,display_name,disabled FROM users WHERE username=?",
+            (username,)).fetchone()
+        return dict(row) if row else None
+
+    def add_token(self, token: str, username: str, created_at: str, expires_at: str) -> None:
+        self._conn.execute(
+            "INSERT INTO auth_tokens (token,username,created_at,expires_at) VALUES (?,?,?,?)",
+            (token, username, created_at, expires_at))
+        self._conn.commit()
+
+    def get_token(self, token: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT token,username,created_at,expires_at FROM auth_tokens WHERE token=?",
+            (token,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_token(self, token: str) -> int:
+        cur = self._conn.execute("DELETE FROM auth_tokens WHERE token=?", (token,))
+        self._conn.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         self._conn.close()

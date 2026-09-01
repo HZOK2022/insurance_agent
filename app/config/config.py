@@ -100,6 +100,8 @@ class Config:
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
+    login_user: str = "admin"          # 多用户鉴权:users 表为空时播种的管理员账号;空=不播种
+    login_password: str = "change-me"  # 播种管理员用的口令;正式环境请改 .env(LOGIN_PASSWORD)
     api_rate_limit: int = 60   # 每客户端窗口内最大请求数(限流)
     api_rate_window_seconds: int = 60  # 限流窗口(秒)
     # 存储(与其它项目不冲突:collection/db 各自独立)
@@ -153,6 +155,8 @@ _ENV = {
     "approval_exempt_tools": "APPROVAL_EXEMPT_TOOLS",
     "internal_token": "INTERNAL_TOKEN",
     "api_token": "API_TOKEN",
+    "login_user": "LOGIN_USER",
+    "login_password": "LOGIN_PASSWORD",
     "api_rate_limit": "API_RATE_LIMIT",
     "api_rate_window_seconds": "API_RATE_WINDOW_SECONDS",
     "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",

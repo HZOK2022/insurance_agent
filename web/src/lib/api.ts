@@ -4,10 +4,33 @@ export interface Citation { idx: number; chunk_id: string }
 export interface Source { chunk_id: string; title: string; content: string }
 
 const BASE = '' // 同源;Vite 已代理 /api
-// 接口鉴权:Bearer token(运营配置到 localStorage 'api_token';空则未启用鉴权)
+import { getToken } from './auth'
+// 接口鉴权:Bearer token(localStorage 或 sessionStorage 的 'api_token';空则未启用鉴权)
 const authHeaders = (): Record<string, string> => {
-  const t = (typeof localStorage !== 'undefined' && localStorage.getItem('api_token')) || ''
+  const t = getToken()
   return t ? { Authorization: 'Bearer ' + t } : {}
+}
+
+// ---- 鉴权:登录 / 登出 ----
+export interface LoginBody { username: string; password: string; remember: boolean }
+export interface LoginResp { token: string; expires_at: string; username: string; display_name: string }
+export async function login(body: LoginBody): Promise<LoginResp> {
+  const r = await fetch(BASE + '/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (r.status === 401) throw new Error('账号或密码错误')
+  if (!r.ok) throw new Error('/api/login -> ' + r.status)
+  return r.json() as Promise<LoginResp>
+}
+export async function logout(): Promise<void> {
+  const r = await fetch(BASE + '/api/logout', { method: 'POST', headers: authHeaders() })
+  if (!r.ok && r.status !== 401) throw new Error('/api/logout -> ' + r.status)
+}
+export interface MeResp { username: string; display_name: string }
+export async function getMe(): Promise<MeResp> {
+  return json<MeResp>('/api/me')
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {

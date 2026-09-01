@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
+import { listSessions, createSession, listEvents, deleteSession, renameSession, sendPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
+import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -49,28 +50,30 @@ function formatClock(iso?: string): string {
 }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 
-function inline(seg: string, key: number, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
+function inline(seg: string, ns: string, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
   const out: ReactNode[] = []
   const re = /(\*\*[^*]+\*\*|\[\d+\])/g
   let last = 0, m: RegExpExecArray | null
+  let k = 0
   while ((m = re.exec(seg))) {
     const tok = m[0]
     if (tok.startsWith("[")) {
       const idx = parseInt(tok.slice(1, -1), 10)
-      out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
-      if (citIdx.has(idx)) out.push(<button key={key + "-b" + idx} className={"cite" + (idx === activeIdx ? " active" : "")} onClick={() => onCite(idx)}>[{idx}]</button>)
-      else out.push(<span key={key + "-n" + idx} className="cite-plain">[{idx}]</span>)
+      out.push(<span key={ns + "-t" + k}>{seg.slice(last, m.index)}</span>)
+      if (citIdx.has(idx)) out.push(<button key={ns + "-b" + idx} className={"cite" + (idx === activeIdx ? " active" : "")} onClick={() => onCite(idx)}>[{idx}]</button>)
+      else out.push(<span key={ns + "-n" + idx} className="cite-plain">[{idx}]</span>)
     } else {
-      out.push(<span key={key + "-t" + m.index}>{seg.slice(last, m.index)}</span>)
-      out.push(<strong key={key + "-b" + m.index}>{tok.slice(2, -2)}</strong>)
+      out.push(<span key={ns + "-t" + k}>{seg.slice(last, m.index)}</span>)
+      out.push(<strong key={ns + "-s" + k}>{tok.slice(2, -2)}</strong>)
     }
     last = m.index + tok.length
+    k += 1
   }
-  out.push(<span key={key + "-end"}>{seg.slice(last)}</span>)
+  out.push(<span key={ns + "-e"}>{seg.slice(last)}</span>)
   return out
 }
 
-function renderAnswer(blocks: Block[] | undefined, sources: Source[] | undefined, onCite: (idx: number) => void, activeIdx: number | null): ReactNode {
+function renderAnswer(blocks: Block[] | undefined, sources: Source[] | undefined, onCite: (idx: number) => void, activeIdx: number | null, ns: string): ReactNode {
   const list: Block[] = blocks || []
   const citIdx = new Set((sources || []).map((s) => s.idx))
   const out: ReactNode[] = []
@@ -78,9 +81,10 @@ function renderAnswer(blocks: Block[] | undefined, sources: Source[] | undefined
   list.forEach((b) => {
     key += 1
     const t = b.t || "p"
-    if (t === "ul" || t === "ol") { const items = b.items || []; out.push(t === "ol" ? (<ol key={"o" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite, activeIdx)}</li>))}</ol>) : (<ul key={"u" + key}>{items.map((it, i) => (<li key={i}>{inline(it, key * 100 + i, citIdx, onCite, activeIdx)}</li>))}</ul>)) }
-    else if (t === "h") { out.push(<div key={"h" + key} className="ans-heading">{inline(b.text || "", key * 100, citIdx, onCite, activeIdx)}</div>) }
-    else { out.push(<p key={"p" + key}>{inline(b.text || "", key * 100, citIdx, onCite, activeIdx)}</p>) }
+    const bns = ns + "-b" + key
+    if (t === "ul" || t === "ol") { const items = b.items || []; out.push(t === "ol" ? (<ol key={bns + "-o"}>{items.map((it, i) => (<li key={i}>{inline(it, bns + "-i" + i, citIdx, onCite, activeIdx)}</li>))}</ol>) : (<ul key={bns + "-u"}>{items.map((it, i) => (<li key={i}>{inline(it, bns + "-i" + i, citIdx, onCite, activeIdx)}</li>))}</ul>)) }
+    else if (t === "h") { out.push(<div key={bns + "-h"} className="ans-heading">{inline(b.text || "", bns, citIdx, onCite, activeIdx)}</div>) }
+    else { out.push(<p key={bns + "-p"}>{inline(b.text || "", bns, citIdx, onCite, activeIdx)}</p>) }
   })
   return <>{out}</>
 }
@@ -90,15 +94,67 @@ function CopyBtn({ text }: { text: string }) {
   return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
-function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string }) {
+function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const user = getUser()
+  const name = user?.display_name || user?.username || "未登录"
+  const initial = (user?.display_name || user?.username || "U").slice(0, 1)
+  return (
+    <div className={"usermenu" + (collapsed ? " collapsed" : "")}>
+      <button className="um-trigger" onClick={() => setOpen((o) => !o)} title={name} aria-label="用户菜单" aria-expanded={open}>
+        <span className="um-avatar">{initial}</span>
+        {!collapsed && <span className="um-name">{name}</span>}
+        {!collapsed && <I><path d="M6 9l6 6 6-6" /></I>}
+      </button>
+      {open && (<>
+        <span className="ctx-backdrop" onClick={() => setOpen(false)} />
+        <div className="um-pop" role="menu">
+          <div className="um-pop-head">
+            <span className="um-pop-avatar">{initial}</span>
+            <div className="um-pop-meta">
+              <div className="um-pop-name">{name}</div>
+              {user?.username && user.username !== name && <div className="um-pop-sub">{user.username}</div>}
+            </div>
+          </div>
+          <div className="um-list">
+            <button className="um-item" onClick={() => { setOpen(false) /* TODO: 设置页(后期扩展) */ }}><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></button>
+            <button className="um-item" onClick={() => { setOpen(false) /* TODO: 记忆页(后期扩展) */ }}><I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I><span>记忆</span></button>
+            <button className="um-item danger" onClick={() => { setOpen(false); if (window.confirm("确定退出登录?")) logout() }}><I><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></I><span>退出登录</span></button>
+          </div>
+        </div>
+      </>)}
+    </div>
+  )
+}
+
+function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr, collapsed, onToggleCollapse }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string; collapsed: boolean; onToggleCollapse: () => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [editVal, setEditVal] = useState("")
   const [menu, setMenu] = useState<string | null>(null)
+  const [q, setQ] = useState("")
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [focusSearch, setFocusSearch] = useState(false)
+  useEffect(() => { if (!collapsed && focusSearch) { searchRef.current?.focus(); setFocusSearch(false) } }, [collapsed, focusSearch])
+  const qv = q.trim().toLowerCase()
+  const filtered = qv ? sessions.filter((s) => (s.title || "").toLowerCase().includes(qv)) : sessions
+  if (collapsed) {
+    return (<aside className="sidebar collapsed">
+      <div className="sb-rail-top">
+        <button className="rail-btn" onClick={onToggleCollapse} title="展开侧边栏" aria-label="展开侧边栏"><I><polyline points="11 17 16 12 11 7"/></I></button>
+        <button className="rail-btn" onClick={onNew} title="新会话" aria-label="新会话"><I><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></I></button>
+        <button className="rail-btn" onClick={() => { setFocusSearch(true); onToggleCollapse() }} title="搜索会话" aria-label="搜索会话"><I><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></I></button>
+      </div>
+    </aside>)
+  }
   return (<aside className="sidebar">
-    <div className="sb-top"><div className="brand"><div className="logo-icon">力</div><span className="brand-name">保险助手</span><span className="brand-badge">AGENT</span></div><div className="sb-avatar">U</div></div>
+    <div className="sb-top">
+      <button className="sb-collapse" onClick={onToggleCollapse} title="收起侧边栏" aria-label="收起侧边栏"><I><polyline points="13 17 8 12 13 7"/></I></button>
+      <div className="brand"><div className="logo-icon">力</div><span className="brand-name">保险助手</span><span className="brand-badge">AGENT</span></div>
+    </div>
+    <div className="sb-search"><I><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></I><input ref={searchRef} className="sb-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></div>
     <button className="new-session" onClick={onNew}><I><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></I><span>新会话</span></button>
-    <div className="tree">{sessions.length === 0 && <div className="tree-empty">{loadErr || "暂无会话"}</div>}{sessions.map((s2) => (editing === s2.id ? (<div key={s2.id} className="tree-item active" onKeyDown={(e) => { if (e.key === "Enter" && editVal.trim()) { onRename(s2.id, editVal.trim()); setEditing(null) } if (e.key === "Escape") setEditing(null) }}><input className="tree-edit" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} onBlur={() => setEditing(null)} /></div>) : (<div key={s2.id} className={"tree-item" + (s2.id === activeId ? " active" : "")} onClick={() => onSelect(s2.id)} onDoubleClick={() => { setEditing(s2.id); setEditVal(s2.title) }} title="单击切换 · 双击重命名"><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s2.title}</span><span className="tree-time">{s2.last_ts ? timeAgo(s2.last_ts) : ""}</span><button className="tree-more" title="更多操作" aria-label="更多操作" onClick={(e) => { e.stopPropagation(); setMenu(menu === s2.id ? null : s2.id) }}><I><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></I></button>{menu === s2.id && (<><span className="ctx-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(null) }} /><div className="ctx-menu"><button className="ctx-item" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditing(s2.id); setEditVal(s2.title) }}><I><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></I><span>重命名</span></button><button className="ctx-item danger" onClick={(e) => { e.stopPropagation(); setMenu(null); if (window.confirm("确定删除该会话及其内容?")) onDelete(s2.id) }}><I><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></I><span className="danger-text">删除任务</span></button></div></>)}</div>)))}</div>
-    <div className="sb-bottom"><div className="settings-btn"><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></div></div>
+    <div className="tree">{filtered.length === 0 && <div className="tree-empty">{loadErr || (qv ? "无匹配会话" : "暂无会话")}</div>}{filtered.map((s2) => (editing === s2.id ? (<div key={s2.id} className="tree-item active" onKeyDown={(e) => { if (e.key === "Enter" && editVal.trim()) { onRename(s2.id, editVal.trim()); setEditing(null) } if (e.key === "Escape") setEditing(null) }}><input className="tree-edit" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} onBlur={() => setEditing(null)} /></div>) : (<div key={s2.id} className={"tree-item" + (s2.id === activeId ? " active" : "")} onClick={() => onSelect(s2.id)} onDoubleClick={() => { setEditing(s2.id); setEditVal(s2.title) }} title="单击切换 · 双击重命名"><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s2.title}</span><span className="tree-time">{s2.last_ts ? timeAgo(s2.last_ts) : ""}</span><button className="tree-more" title="更多操作" aria-label="更多操作" onClick={(e) => { e.stopPropagation(); setMenu(menu === s2.id ? null : s2.id) }}><I><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></I></button>{menu === s2.id && (<><span className="ctx-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(null) }} /><div className="ctx-menu"><button className="ctx-item" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditing(s2.id); setEditVal(s2.title) }}><I><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></I><span>重命名</span></button><button className="ctx-item danger" onClick={(e) => { e.stopPropagation(); setMenu(null); if (window.confirm("确定删除该会话及其内容?")) onDelete(s2.id) }}><I><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></I><span className="danger-text">删除任务</span></button></div></>)}</div>)))}</div>
+    <div className="sb-bottom"><UserMenu /></div>
   </aside>)
 }
 
@@ -134,7 +190,7 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
     }
     if (m.role === "note") return (<div className="ctx-note"><span className="ctx-note-line">——————————</span><span className="ctx-note-text">{m.text}</span><span className="ctx-note-line">——————————</span></div>)
     // answer
-    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.sources, (idx) => onCite(m.id, idx), activeCite?.msgId === m.id ? activeCite.idx : null)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}</div></div>)
+    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.sources, (idx) => onCite(m.id, idx), activeCite?.msgId === m.id ? activeCite.idx : null, m.id)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}</div></div>)
   }
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs">
@@ -174,6 +230,7 @@ export default function App() {
   const loadAudit = async () => { if (!activeId) { setAudit(null); return }; try { const [a, m, o] = await Promise.all([getAudit(activeId), getSessionMetrics(activeId), getObservability()]); setAudit({ items: a.items, sessionMetrics: m, overall: o }) } catch { setAudit({ items: [], sessionMetrics: null, overall: null }) } }
   useEffect(() => { if (activeTab === "audit") loadAudit() }, [activeTab, activeId]) // eslint-disable-line
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
+  const [sideCollapsed, setSideCollapsed] = useState(false)
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
@@ -196,7 +253,7 @@ export default function App() {
 
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
-  const cols = solve(vp, narrow ? 0 : sideW, detailsOpen ? detW : 0, narrow)
+  const cols = solve(vp, narrow ? 0 : (sideCollapsed ? 0 : sideW), detailsOpen ? detW : 0, narrow)
   // 激活的引用只属于"被点击的那条回答":按其自身的 sources 解析溯源,不在其它轮编号上高亮。
   const activeMsg = messages.find((m) => m.id === activeCite?.msgId)
   const activeSource = activeMsg?.sources?.find((s) => s.idx === activeCite?.idx) || null
@@ -261,6 +318,12 @@ export default function App() {
     }
     load()
     return () => { alive = false; if (timer) window.clearTimeout(timer) }
+  }, []) // eslint-disable-line
+  // 登录态恢复:持有有效 token 但未走 Login 流程(如刷新页面/返回用户)时,补齐用户信息供用户菜单展示
+  useEffect(() => {
+    if (isAuthed() && !getUser()) {
+      getMe().then((u) => setUser({ username: u.username, display_name: u.display_name })).catch(() => {})
+    }
   }, []) // eslint-disable-line
   useEffect(() => { getConfig().then((c) => setCfgWindow(c.context_window)).catch(() => {}) }, []) // eslint-disable-line  # 挂载时取后端当前配置的上下文窗口
   const newSession = async () => { try { const s = await createSession("u1"); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
@@ -339,7 +402,7 @@ export default function App() {
   }
 
   return (<div className="frame" ref={frameRef}>
-    <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} /></div>
+    <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} collapsed={sideCollapsed} onToggleCollapse={() => setSideCollapsed((c) => !c)} /></div>
     <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
