@@ -379,7 +379,7 @@ class AgentLoop:
             raise
         except Exception as e:
             reason = "error"
-            logger.exception("turn failed sid=%s err=%s", session_id, e)
+            logger.exception("turn failed sid=%s err=%s", session_id, e, extra={"session_id": session_id, "trace_id": session_id})
         finally:
             if not assistant_emitted:
                 blocks, cits = self.present_answer("回答生成失败/中断,请重试。", references)
@@ -416,7 +416,7 @@ class AgentLoop:
                     yield rc_ev
                 yield use_ev
                 yield end_ev
-            logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason)
+            logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason, extra={"session_id": session_id, "trace_id": session_id})
 
     def _estimate_conversation(self, conversation: list[dict]) -> int:
         return sum(estimate_tokens(str(m.get("content") or "")) for m in conversation)

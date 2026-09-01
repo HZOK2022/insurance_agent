@@ -5,9 +5,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import approval, audit, citation, config, health, login, prompt, sessions
+from app.api.routers import approval, audit, citation, config, health, login, metrics, prompt, sessions
 from app.api.services import container, auth_service
 from app.api.ratelimit import RateLimiter
+from app.util.logging import setup_logging
 
 _rate = RateLimiter()
 
@@ -57,6 +58,7 @@ async def _auth_and_ratelimit(request: Request, call_next):
 
 
 def create_app() -> FastAPI:
+    setup_logging(getattr(container.get_cfg(), "log_level", "INFO"), getattr(container.get_cfg(), "log_dir", "data/logs"))
     app = FastAPI(title="insurance-agent", version="0.1")
     app.include_router(health.router)
     app.include_router(config.router)
@@ -66,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router)
     app.include_router(citation.router)
     app.include_router(login.router)
+    app.include_router(metrics.router)
     app.middleware("http")(_auth_and_ratelimit)
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
     auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)

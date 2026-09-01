@@ -97,6 +97,9 @@ class Config:
     # 成本计量(阶段6 ⑥):LLM 单价,美元/百万 token;0 = 未配置(成本不计)
     llm_price_input_per_1m: float = 0.0
     llm_price_output_per_1m: float = 0.0
+    # 日志/可观测
+    log_level: str = "INFO"
+    log_dir: str = "data/logs"
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
