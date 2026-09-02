@@ -1,4 +1,5 @@
 """App 入口:仅初始化 FastAPI、注册路由、托管前端 dist。不写任何接口。"""
+import logging
 import os
 
 from fastapi import FastAPI, Request
@@ -72,6 +73,22 @@ def create_app() -> FastAPI:
     app.middleware("http")(_auth_and_ratelimit)
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
     auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)
+    # 启动对账:补齐进程崩溃/断电遗留的悬挂 turn(补 turn_end reason=interrupted;失败不阻断启动)
+    try:
+        _fixed = container.get_store().reconcile_dangling_turns()
+        if _fixed:
+            logging.getLogger(__name__).warning("reconcile_dangling_turns: 补写 %d 个悬挂 turn 的终结事件", _fixed)
+    except Exception:
+        logging.getLogger(__name__).exception("reconcile_dangling_turns 失败(不阻断启动)")
+    # 启动依赖体检:启动即构造 Qdrant(容错,失败已内部 logger.error;首次提问不再为连不上等重试),
+    # 并对本地 SQLite 逐项探测打日志;绝不阻断启动。
+    try:
+        _cfg = container.get_cfg()
+        _qstore = container.get_qstore()
+        from app.startup_deps import report_startup_dependencies
+        report_startup_dependencies(_cfg, _qstore)
+    except Exception:
+        logging.getLogger(__name__).exception("startup deps 体检失败(不阻断启动)")
     dist = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
     if os.path.isdir(dist):
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")

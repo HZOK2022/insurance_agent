@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 from app.utils.text import estimate_tokens, prune_tool_content
+from app.retrieval.errors import RetrievalUnavailable
 from app.compaction.compactor import (
     prune_tool_messages, select_keep_tail, build_summary_request,
     collect_summary, truncate_summary, frame_summary,
@@ -167,6 +168,7 @@ class AgentLoop:
         aborted = False
         reason = "completed"
         n_steps = 0
+        _step_t0: float | None = None   # 当前 step 起点,供 step_end 计算每步耗时
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
         # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
         # history 消息带 "seq"(事件序号)供压缩回指;构造模型消息前剥掉。
@@ -230,6 +232,7 @@ class AgentLoop:
                     assistant_emitted = True
                     break
                 yield self._emit("step_start", {"turn": 1, "step": n_steps})
+                _step_t0 = time.time()
 
                 # 阶段C·回合中 pressure/context-overflow:检索/推理增长可能跨过 80% 或硬窗口 → 立即压缩头部。
                 if win > 0:
@@ -283,7 +286,7 @@ class AgentLoop:
                                          else self.present_answer("已检索多次,未能获得完整资料,请以原文为准。", references))
                     yield self._emit("assistant_message", {"blocks": blocks, "citations": citations})
                     assistant_emitted = True
-                    yield self._emit("step_end", {"turn": 1, "step": n_steps})
+                    yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
                     break
                 if tool_calls:
                     n_retrieve += 1
@@ -345,7 +348,7 @@ class AgentLoop:
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
                         if isinstance(reference, list) and reference and isinstance(reference[0], dict):
                             yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
-                    yield self._emit("step_end", {"turn": 1, "step": n_steps})
+                    yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
                     continue
 
                 answer_text = assembler.text_blocks().strip()
@@ -371,7 +374,7 @@ class AgentLoop:
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True
-                yield self._emit("step_end", {"turn": 1, "step": n_steps})
+                yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
                 break
         except GeneratorExit:
             aborted = True
@@ -488,7 +491,7 @@ class AgentLoop:
     def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any, bool, str | None]:
         """按名字查表执行工具;返回 (喂给 LLM 的 content, reference, ok, error_code)。
 
-        ok=False 表示工具未成功执行(未知/抛异常),error_code 区分 unknown_tool/tool_error。
+        ok=False 表示工具未成功执行(未知/抛异常),error_code 区分 unknown_tool/tool_error/retrieval_unavailable。
         照 dsh:失败是"一等错误结果"(isError + error.code),喂给模型/用户的 content 为脱敏可读
         文案,完整异常只进日志/logging,不泄漏内部细节。start_idx=本 turn 已返回 chunk 数,用于 [idx] 整轮编号。
         """
@@ -497,6 +500,13 @@ class AgentLoop:
             return "（无此工具）", None, False, "unknown_tool"
         try:
             raw = tool["handler"](args, start_idx)
+        except RetrievalUnavailable:
+            # 检索基础设施(向量库)不可用 → 注入零检索结果,LLM 依 SYSTEM 诚实拒答(严禁杜撰)
+            logger.error("检索服务不可用 tool=%s(重试后仍失败)→ 记 retrieval_unavailable", name)
+            return ("【检索服务不可用】当前无法访问知识库数据。请如实告知用户:"
+                    "抱歉,当前知识库数据暂不可用,我无法给出有数据支撑的回答,为避免不准确信息,请稍后重试或转人工坐席;"
+                    "严禁编造任何条款内容、数字或责任范围。",
+                    None, False, "retrieval_unavailable")
         except Exception as e:
             logger.exception("tool %s failed", name)
             return f"工具「{name}」调用失败,未取得结果,请基于已有资料回答。", None, False, "tool_error"

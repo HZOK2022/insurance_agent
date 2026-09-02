@@ -93,6 +93,15 @@ class LoopMetricsTest(_Base):
         self.assertTrue(all(e["payload"].get("delta") for e in chunks))
         self.assertTrue(all(e["payload"].get("kind") in ("text", "reasoning") for e in chunks))
 
+    def test_step_end_carries_elapsed_ms(self):
+        evs = self.run_turn(FakeRetrieveLLM(), text="100种重大疾病")
+        step_ends = [e["payload"] for e in evs if e["type"] == "step_end"]
+        self.assertEqual(len(step_ends), 2)   # 检索一步 + 回答一步
+        for se in step_ends:
+            self.assertIn("elapsed_ms", se)
+            self.assertIsInstance(se["elapsed_ms"], int)
+            self.assertGreaterEqual(se["elapsed_ms"], 0)
+
 
 class LoopTerminalTest(_Base):
     def test_trailing_llm_error_still_records_turn_end_error(self):

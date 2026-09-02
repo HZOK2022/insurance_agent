@@ -30,7 +30,11 @@ def get_embedder() -> Embedder:
 
 @lru_cache(maxsize=1)
 def get_qstore() -> QdrantStore:
-    return QdrantStore(get_cfg().qdrant_url, get_cfg().qdrant_collection, get_cfg().embedding_dim)
+    _c = get_cfg()
+    return QdrantStore(_c.qdrant_url, _c.qdrant_collection, _c.embedding_dim,
+                       retry_max_tries=_c.qdrant_retry_max_tries,
+                       retry_base_delay_ms=_c.qdrant_retry_base_delay_ms,
+                       retry_max_delay_ms=_c.qdrant_retry_max_delay_ms)
 
 
 @lru_cache(maxsize=1)

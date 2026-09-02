@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from app.guardrails.rag import quarantine_suspicious
+from app.retrieval.errors import RetrievalUnavailable
 from app.retrieval.hybrid import fuse_and_pick
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,12 @@ def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: i
         return []
     use_hybrid = hybrid is not None and hybrid_weight > 0
     pool = top_k * 2 if (use_hybrid or category) else top_k          # 混合时扩大稠密候选池,避免融合后被截断丢回调
-    dense_hits = store.search(qvec[0], pool)
+    try:
+        dense_hits = store.search(qvec[0], pool)
+    except RetrievalUnavailable:
+        # 向量库(稠密)不可用:不做 SQLite 关键词兜底作答(产品决策:残缺而自信的清单比诚实受限更危险)。
+        # 注入零检索结果 → 抛 RetrievalUnavailable → _run_tool 记 retrieval_unavailable,LLM 依 SYSTEM 诚实拒答。
+        raise
     if use_hybrid:
         dense_map = {h["chunk_id"]: float(h["score"]) for h in dense_hits}
         dense_by_id = {h["chunk_id"]: h for h in dense_hits}

@@ -16,6 +16,14 @@ def create_session(body: SessionCreate):
 def list_sessions():
     return session_service.list_sessions(container.get_store())
 
+@router.post("/prune-empty")
+def prune_empty_sessions(keep: str = ""):
+    """清理"从没发过消息"的会话(切走即弃)。keep=当前激活会话 id,豁免不删。
+
+    有效性 = 发过消息:会话无任何 user_message 事件即视为占位,切走即硬删。
+    """
+    return {"pruned": session_service.prune_empty_sessions(container.get_store(), keep)}
+
 @router.get("/{sid}/events", response_model=list[EventModel])
 def session_events(sid: str):
     return session_service.list_events(container.get_store(), sid)

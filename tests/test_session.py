@@ -1,4 +1,4 @@
-import os, tempfile, unittest
+import os, tempfile, time, unittest
 from app.session import events, store
 
 
@@ -68,6 +68,90 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(order2[0], a)
         self.assertEqual(order2[1], c)
         self.assertEqual(order2[-1], b)
+
+    def test_new_empty_session_sorts_first(self):
+        """新建的会话(还没发消息)必须排在列表第一位,而不是被压到最后。
+
+        旧实现 COALESCE(MAX(seq),0) 会把无事件会话排到末尾,与"新建即在第一位"相悖。
+        """
+        a = self.s.create_session("u1")["id"]
+        self.s.append(a, "user_message", {"text": "旧会话", "client_time": None})
+        time.sleep(0.01)  # 跨过毫秒边界,保证 created_at 严格晚于上一条事件 ts
+        b = self.s.create_session("u1")["id"]  # 刚新建,还没发消息
+        order = [x["id"] for x in self.s.list_sessions()]
+        self.assertEqual(order[0], b, f"新建会话应置顶,实际顺序={order}")
+
+    def test_prune_removes_never_messaged_session(self):
+        """没发过消息的会话被硬删;发过消息的保留。"""
+        empty = self.s.create_session("u1")["id"]
+        used = self.s.create_session("u1")["id"]
+        self.s.append(used, "user_message", {"text": "hi", "client_time": None})
+        self.assertEqual(self.s.prune_empty_sessions(keep_id=""), 1)
+        ids = [x["id"] for x in self.s.list_sessions()]
+        self.assertNotIn(empty, ids)
+        self.assertIn(used, ids)
+
+    def test_prune_keeps_active_session(self):
+        """keep_id 豁免:正在看的新会话不会被自己清掉。"""
+        active = self.s.create_session("u1")["id"]
+        other = self.s.create_session("u1")["id"]
+        self.s.prune_empty_sessions(keep_id=active)
+        ids = [x["id"] for x in self.s.list_sessions()]
+        self.assertIn(active, ids)
+        self.assertNotIn(other, ids)
+
+    def test_repeated_new_session_keeps_only_one(self):
+        """连点多次"新建":只保留最新那一个空会话(前端 newSession 的 keep 语义)。"""
+        first = self.s.create_session("u1")["id"]
+        second = self.s.create_session("u1")["id"]
+        self.s.prune_empty_sessions(keep_id=second)
+        ids = [x["id"] for x in self.s.list_sessions()]
+        self.assertEqual(ids, [second])
+        self.assertNotIn(first, ids)
+
+    def test_prune_does_not_touch_events(self):
+        """硬删只删 sessions 行,不触碰事件历史(append-only 铁律)。"""
+        used = self.s.create_session("u1")["id"]
+        self.s.append(used, "user_message", {"text": "hi", "client_time": None})
+        self.s.prune_empty_sessions(keep_id="")
+        self.assertEqual(len(self.s.read(used)), 1)
+
+    def test_reconcile_dangling_turns_closes_unfinished_turn(self):
+        sid = self.s.create_session("u1")["id"]
+        self.s.append(sid, "turn_start", {"turn": 1})
+        self.s.append(sid, "user_message", {"text": "重疾险", "client_time": None})
+        self.s.append(sid, "step_start", {"turn": 1, "step": 1})
+        self.s.append(sid, "assistant_chunk", {"kind": "reasoning", "delta": "思考中", "block_index": 0})
+        # 模拟进程崩溃:无 step_end / assistant_message / turn_end
+        fixed = self.s.reconcile_dangling_turns()
+        self.assertEqual(fixed, 1)
+        evs = self.s.read(sid)
+        types = [e["type"] for e in evs]
+        self.assertIn("assistant_message", types)
+        self.assertIn("turn_end", types)
+        te = next(e for e in evs if e["type"] == "turn_end")
+        self.assertEqual(te["payload"]["reason"], "interrupted")
+
+    def test_reconcile_skips_completed_turn(self):
+        sid = self.s.create_session("u1")["id"]
+        self.s.append(sid, "turn_start", {"turn": 1})
+        self.s.append(sid, "user_message", {"text": "hi", "client_time": None})
+        self.s.append(sid, "assistant_message", {"blocks": [{"t": "p", "text": "答"}], "citations": []})
+        self.s.append(sid, "turn_end", {"turn": 1, "reason": "completed"})
+        fixed = self.s.reconcile_dangling_turns()
+        self.assertEqual(fixed, 0)
+        self.assertEqual(len([e for e in self.s.read(sid) if e["type"] == "assistant_message"]), 1)
+
+    def test_reconcile_keeps_existing_answer(self):
+        sid = self.s.create_session("u1")["id"]
+        self.s.append(sid, "turn_start", {"turn": 1})
+        self.s.append(sid, "assistant_message", {"blocks": [{"t": "p", "text": "已答"}], "citations": []})
+        # 有回答但缺 turn_end(进程在写 turn_end 前死)
+        fixed = self.s.reconcile_dangling_turns()
+        self.assertEqual(fixed, 1)
+        types = [e["type"] for e in self.s.read(sid)]
+        self.assertEqual(types.count("assistant_message"), 1)  # 不重复补回答
+        self.assertEqual(types.count("turn_end"), 1)
 
 
     def test_load_unknown_type_rejected(self):

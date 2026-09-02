@@ -20,5 +20,10 @@ def delete_session(store: SessionStore, session_id: str) -> bool:
     """软删除会话(从列表/视图移除;events 保留,遵守 append-only)。"""
     return store.delete_session(session_id)
 
+def prune_empty_sessions(store: SessionStore, keep_id: str = "") -> int:
+    """清理从未发过消息的会话(切走即弃);keep_id 豁免;返回删除条数。"""
+    return store.prune_empty_sessions(keep_id)
+
+
 def rename_session(store: SessionStore, session_id: str, title: str) -> dict | None:
     return store.rename_session(session_id, title)

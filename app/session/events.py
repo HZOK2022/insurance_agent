@@ -142,6 +142,11 @@ def _validate_guard_triggered(p):
 
 
 def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
+def _validate_step_end(p):
+    out = {"turn": p.get("turn"), "step": p.get("step")}
+    if p.get("elapsed_ms") is not None:
+        out["elapsed_ms"] = int(p["elapsed_ms"])
+    return out
 
 _EVENT_TYPES.update({
     "user_message": _validate_user_message,
@@ -164,7 +169,7 @@ _EVENT_TYPES.update({
     "turn_start": _validate_turn,
     "turn_end": _validate_turn,
     "step_start": _validate_step,
-    "step_end": _validate_step,
+    "step_end": _validate_step_end,
     "guard_triggered": _validate_guard_triggered,
 })
 

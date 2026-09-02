@@ -45,6 +45,9 @@ export const createSession = (user_id: string) => json<Session>('/api/sessions',
 export const listEvents = (sid: string) => json<PEvent[]>('/api/sessions/' + sid + '/events')
 export const deleteSession = async (sid: string): Promise<void> => { const r = await fetch(BASE + '/api/sessions/' + sid, { method: 'DELETE' }); if (!r.ok) throw new Error('del ' + sid + ' -> ' + r.status) }
 export const renameSession = (sid: string, title: string) => json<Session>('/api/sessions/' + sid, { method: 'PATCH', body: JSON.stringify({ title }) })
+// 清理"从没发过消息"的会话(切走即弃);keep=当前激活会话 id,豁免不删
+export const pruneEmptySessions = (keep: string = '') =>
+  json<{ pruned: number }>('/api/sessions/prune-empty?keep=' + encodeURIComponent(keep), { method: 'POST' })
 export interface ApiConfig { context_window: number; model: string; compaction_threshold_ratio: number; compaction_retain_ratio: number; compaction_max_tokens: number; max_tool_result_chars: number }
 export const getConfig = () => json<ApiConfig>('/api/config')
 export const getCitation = (sid: string, cid: string) =>

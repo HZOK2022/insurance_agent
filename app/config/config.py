@@ -113,6 +113,10 @@ class Config:
     knowledge_db_path: str = "data/knowledge.db"
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "insurance_knowledge"
+    # 检索降级(Stage 0):Qdrant 瞬时错误指数退避重试上限(全部在 config,铁律 4)
+    qdrant_retry_max_tries: int = 2
+    qdrant_retry_base_delay_ms: int = 500
+    qdrant_retry_max_delay_ms: int = 3000
     redis_url: str = "redis://:123456@101.132.61.48:6379/2"
 
 
@@ -169,6 +173,9 @@ _ENV = {
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",
     "qdrant_url": "QDRANT_URL",
     "qdrant_collection": "QDRANT_COLLECTION",
+    "qdrant_retry_max_tries": "QDRANT_RETRY_MAX_TRIES",
+    "qdrant_retry_base_delay_ms": "QDRANT_RETRY_BASE_DELAY_MS",
+    "qdrant_retry_max_delay_ms": "QDRANT_RETRY_MAX_DELAY_MS",
     "redis_url": "REDIS_URL",
 }
 
@@ -176,6 +183,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
+                  "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",
                   "api_rate_limit", "api_rate_window_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")

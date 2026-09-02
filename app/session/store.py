@@ -137,6 +137,33 @@ class SessionStore:
         row = self._conn.execute("SELECT MAX(seq) AS m FROM events WHERE session_id=?", (session_id,)).fetchone()
         return int(row["m"] or 0)
 
+    def reconcile_dangling_turns(self) -> int:
+        """启动对账:补齐因进程崩溃/断电而缺失 turn_end 的悬挂 turn(只 append,遵守 append-only)。
+
+        判断:每个 turn 以 turn_start 开头、turn_end 收尾。若某会话最后一条 turn_start 之后无
+        turn_end,说明进程在写终结事件前死亡(其 finally 未执行)→ 补写兜底 assistant_message
+        (若该 turn 尚未产出回答)与 turn_end(reason="interrupted")。返回补写的 turn 数。
+        """
+        fixed = 0
+        for s in self.list_sessions():
+            sid = s["id"]
+            evs = self.read(sid)
+            last_start = None
+            for i, e in enumerate(evs):
+                if e["type"] == "turn_start":
+                    last_start = i
+            if last_start is None:
+                continue
+            tail = evs[last_start + 1:]
+            if any(e["type"] == "turn_end" for e in tail):
+                continue  # 该 turn 已收尾
+            if not any(e["type"] == "assistant_message" for e in tail):
+                self.append(sid, "assistant_message",
+                            {"blocks": [{"t": "p", "text": "会话中断,请重试。"}], "citations": []})
+            self.append(sid, "turn_end", {"turn": 1, "reason": "interrupted"})
+            fixed += 1
+        return fixed
+
     # ---- sessions 元数据 ----
     def create_session(self, user_id: str = "", title: str = "新会话") -> dict:
         sid = uuid.uuid4().hex[:12]
@@ -153,18 +180,42 @@ class SessionStore:
         self._conn.commit()
         return cur.rowcount
 
-    def list_sessions(self) -> list[dict]:
-        """列出未删除会话,按**最新活动**(最近一次事件 seq,含最新回答/用户提问)降序。
+    def prune_empty_sessions(self, keep_id: str = "") -> int:
+        """清理"从没发过消息"的会话:硬删 sessions 元数据,不动 events(append-only)。
 
-        seq 单调递增,用它做"最近活跃"排序比时间戳解析更稳;无事件的会话排在建库时间之后。
+        有效性判定:会话没有任何 user_message 事件 = 用户从没发过消息 = 只是占位,
+        切走即弃(新建后未发消息就切到别处、或再建一个新的,旧的应自动消失)。
+        keep_id(通常传当前激活会话)豁免,保证"正在看的那个新会话"不会被自己清掉。
+        复用 delete_sessions_meta:只删 sessions 行,不触碰事件历史。
+        """
+        rows = self._conn.execute(
+            """SELECT s.id FROM sessions s
+               WHERE (s.deleted IS NULL OR s.deleted=0)
+                 AND s.id <> ?
+                 AND NOT EXISTS (SELECT 1 FROM events e
+                                 WHERE e.session_id = s.id AND e.type = 'user_message')""",
+            (keep_id,)).fetchall()
+        ids = [r["id"] for r in rows]
+        if not ids:
+            return 0
+        return self.delete_sessions_meta(ids)
+
+    def list_sessions(self) -> list[dict]:
+        """列出未删除会话,按**最后被触碰的时间**降序(最近活跃 / 最新创建的在最前)。
+
+        排序键 = COALESCE(最近一次事件 ts, 创建时间):
+        - 有消息的会话按"最近活跃"排(ts 随 seq 单调递增,等效于按 seq 降序);
+        - 从未发过消息的会话用 created_at,因此**刚新建的空会话会置顶**——旧实现
+          COALESCE(MAX(seq), 0) 会把无事件会话压到列表最后,与"新建即在第一位"相悖。
+        ts 与 created_at 同源于 events.utcnow()(ISO8601 毫秒 +00:00),字典序即时间序。
         """
         rows = self._conn.execute(
             """SELECT s.id, s.title, s.user_id, s.created_at,
                       (SELECT e.ts FROM events e WHERE e.session_id=s.id ORDER BY e.seq DESC LIMIT 1) AS last_ts
                FROM sessions s
                WHERE (s.deleted IS NULL OR s.deleted=0)
-               ORDER BY COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.session_id=s.id), 0) DESC,
-                        s.created_at DESC""").fetchall()
+               ORDER BY COALESCE(last_ts, s.created_at) DESC,
+                        COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.session_id=s.id), 0) DESC""").fetchall()
         return [dict(r_) for r_ in rows]
 
     def get_session(self, sid: str) -> dict | None:
