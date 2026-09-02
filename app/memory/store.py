@@ -17,6 +17,10 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+# 记忆优先级(高→低):redline 永不压;归档从最低档(pending)开始
+_PRIORITY_ORDER = {"pending": 0, "lesson": 1, "fact": 2, "preference": 3, "policy": 4, "redline": 5}
+
+
 def _features(q: str) -> set[str]:
     """query 检索特征:英文词(>=2 字符)+ 连续中文段逐字。简单重叠打分。"""
     feats: set[str] = set()
@@ -115,6 +119,26 @@ class MemoryStore:
             "SELECT content FROM memory_entries WHERE status='active' AND (scope='global' OR user_id=?)",
             (user_id,)).fetchall()
         return sum(len(r["content"]) for r in rows)
+
+    # ---- 程序级保守压实(D53):按优先级从低到高归档该客服 user 级非 redline,直到总量回到预算 ----
+    # global 由主管维护,不程序归档;redline 永不压(安全底线)。
+    def consolidate(self, user_id: str, target_chars: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id,type,key,content FROM memory_entries WHERE status='active' "
+            "AND user_id=? AND scope='user' AND type!='redline'", (user_id,)).fetchall()
+        # 归档顺序 = 优先级从低到高(pending/lesson/fact/preference/policy),同档长条先用
+        rows = sorted(rows, key=lambda r: (_PRIORITY_ORDER.get(r["type"], 0), -len(r["content"])))
+        total = self.count_chars(user_id)
+        archived: list[dict] = []
+        for r in rows:
+            if total <= target_chars:
+                break
+            self._conn.execute("UPDATE memory_entries SET status='archived', updated_at=? WHERE id=?",
+                               (utcnow(), r["id"]))
+            self._conn.commit()
+            total -= len(r["content"])
+            archived.append({"id": r["id"], "key": r["key"], "type": r["type"]})
+        return archived
 
     # ---- 常驻注入(红线/偏好/口径,按 token 预算取高优)----
     def inject_frames(self, user_id: str, inject_tokens: int, entry_max: int,

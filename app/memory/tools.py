@@ -78,8 +78,22 @@ def _make_save_handler(mstore: MemoryStore, sstore, cfg):
                     "source_session_id": session_id})
             except Exception:
                 pass   # 事件写入失败不阻断工具(审计 best-effort)
+        # D53 写入后总量超限触发程序级保守压实(保 redline、按优先级归档 user 级、压回 target)
+        budget = int(getattr(cfg, "memory_total_budget_chars", 0) or 0)
+        target = int(getattr(cfg, "memory_total_budget_target_chars", 0) or 0)
+        consolidated = []
+        if budget > 0 and target > 0 and mstore.count_chars(user_id) > budget:
+            consolidated = mstore.consolidate(user_id, target)
+            for a in consolidated:
+                if sstore and session_id:
+                    try:
+                        sstore.append(session_id, "memory_archive", {
+                            "key": a["key"], "reason": "压实自动归档(超总量预算)", "user_id": user_id})
+                    except Exception:
+                        pass
         verb = "更新" if not res["is_new"] else "新增"
-        return {"content": f"已{verb}跨会话记忆:key={key}", "reference": res}
+        note = f";压实归档{len(consolidated)}条" if consolidated else ""
+        return {"content": f"已{verb}跨会话记忆:key={key}{note}", "reference": res}
     return handler
 
 

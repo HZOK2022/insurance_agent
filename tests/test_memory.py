@@ -82,6 +82,19 @@ class MemoryStoreTest(unittest.TestCase):
         mstore.close()
 
 
+    def test_consolidate_archives_low_priority_and_protects_redline(self):
+        sstore, mstore, path = _tmp()
+        mstore.save("agent1", "user", "redline", "redline:a", "x" * 100)   # 红线,永不压
+        mstore.save("agent1", "user", "pending", "pending:a", "y" * 100)   # 最低优先,先弃
+        mstore.save("agent1", "user", "fact", "fact:a", "z" * 100)
+        archived = mstore.consolidate("agent1", target_chars=150)
+        self.assertTrue(any(a["type"] == "pending" for a in archived))     # pending 先弃
+        act = mstore.list_active("agent1")
+        self.assertTrue(any(a["type"] == "redline" for a in act))          # redline 保留
+        self.assertLessEqual(mstore.count_chars("agent1"), 150)            # 压回目标(redline 100 保留)
+        mstore.close()
+
+
 class MemoryToolsTest(unittest.TestCase):
     def test_tool_save_writes_event_and_entry(self):
         sstore, mstore, path = _tmp()
@@ -105,6 +118,19 @@ class MemoryToolsTest(unittest.TestCase):
         h = _make_forget_handler(mstore, sstore, _cfg())
         res = h({"key": "lesson:x", "reason": "过时"}, session_id=sid)
         self.assertIn("已遗忘", res["content"])
+        mstore.close()
+
+
+    def test_tool_save_triggers_consolidate_on_overflow(self):
+        sstore, mstore, path = _tmp()
+        sid = sstore.create_session(user_id="agent1")["id"]
+        cfg = _cfg(memory_total_budget_chars=250, memory_total_budget_target_chars=150)
+        h = _make_save_handler(mstore, sstore, cfg)
+        h({"key": "pending:a", "type": "pending", "scope": "user", "content": "y" * 100}, session_id=sid)
+        h({"key": "fact:a", "type": "fact", "scope": "user", "content": "z" * 100}, session_id=sid)
+        res = h({"key": "pending:b", "type": "pending", "scope": "user", "content": "w" * 100}, session_id=sid)  # 超 250
+        self.assertIn("压实归档", res["content"])
+        self.assertLessEqual(mstore.count_chars("agent1"), 150)   # 压回目标,低优先先弃
         mstore.close()
 
 
