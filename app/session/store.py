@@ -63,6 +63,23 @@ class SessionStore:
           FOREIGN KEY (username) REFERENCES users(username)
         );
         CREATE INDEX IF NOT EXISTS idx_auth_tokens_username ON auth_tokens(username);
+        CREATE TABLE IF NOT EXISTS memory_entries (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          type TEXT NOT NULL,
+          key TEXT NOT NULL,
+          content TEXT NOT NULL,
+          status TEXT DEFAULT 'active',
+          confidence TEXT DEFAULT 'auto',
+          source_session_id TEXT,
+          source_event_seq INTEGER,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, scope, type, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mem_user_scope ON memory_entries(user_id, scope, status);
+        CREATE INDEX IF NOT EXISTS idx_mem_type_status ON memory_entries(type, status);
         """
 
     def _ensure_schema(self) -> None:

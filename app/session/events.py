@@ -142,6 +142,25 @@ def _validate_guard_triggered(p):
 
 
 def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
+
+
+# ---- 跨会话记忆事件(D52,可插拔增强)----
+def _validate_memory_upsert(p):
+    return {"entry_id": p.get("entry_id"), "user_id": p.get("user_id"),
+            "key": _req(p, "key", str), "type": p.get("type"), "scope": p.get("scope"),
+            "content": _req(p, "content", str), "confidence": p.get("confidence"),
+            "reason": p.get("reason"), "old_text": p.get("old_text"),
+            "source_session_id": p.get("source_session_id")}
+
+
+def _validate_memory_archive(p):
+    return {"entry_id": p.get("entry_id"), "user_id": p.get("user_id"),
+            "key": p.get("key"), "reason": p.get("reason")}
+
+
+def _validate_memory_injected(p):
+    return {"scope": p.get("scope"), "count": p.get("count"), "tokens": p.get("tokens"),
+            "user_id": p.get("user_id")}
 def _validate_step_end(p):
     out = {"turn": p.get("turn"), "step": p.get("step")}
     if p.get("elapsed_ms") is not None:
@@ -171,6 +190,9 @@ _EVENT_TYPES.update({
     "step_start": _validate_step,
     "step_end": _validate_step_end,
     "guard_triggered": _validate_guard_triggered,
+    "memory_upsert": _validate_memory_upsert,
+    "memory_archive": _validate_memory_archive,
+    "memory_injected": _validate_memory_injected,
 })
 
 

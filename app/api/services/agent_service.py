@@ -32,6 +32,17 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     if detect_injection(text):
         sys_msg = sys_msg + "\n" + GUARD_CAUTION
         emit("guard_triggered", {"kind": "injection", "detail": "检测到疑似提示注入/越权指令,已追加安全提示"})
+    # 跨会话记忆(非侵入增强,D52):memory_enabled 时拼"指令+常驻记忆帧"到 system;关/未接入则原样
+    if bundle.get("memory_system"):
+        from app.memory.tools import build_memory_frame
+        frame = build_memory_frame(bundle, store, session_id, _fresh_cfg())
+        if frame:
+            sys_msg = sys_msg + "\n\n" + frame
+            try:
+                emit("memory_injected", {"scope": "常驻", "count": 1, "tokens": None,
+                                         "user_id": (store.get_session(session_id) or {}).get("user_id")})
+            except Exception:
+                pass
     loop = AgentLoop(llm, sys_msg, bundle["tools"], bundle["present_answer"],
                      _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model,
                      approval=_container.get_approval())

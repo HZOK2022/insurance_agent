@@ -87,6 +87,16 @@ class Config:
     max_retrieve_per_turn: int = 5   # 单轮最多检索次数;超过后强制基于现有资料诚实回答,防反复无效检索
     max_history_search_per_turn: int = 1   # 单轮最多本会话历史检索次数(防滥用,回指场景才用)
     history_search_top_k: int = 4          # 本会话历史检索返回的相关早前记录条数
+    # 跨会话记忆(可插拔增强,memory_enabled 开关;关=完全不参与,非侵入)
+    memory_enabled: bool = False             # 跨会话记忆开关(关:不注入指令帧/不注册工具,行为与未加一致)
+    memory_entry_max_chars: int = 500        # 单条记忆 content 上限(写入截断)
+    memory_total_budget_chars: int = 3000    # 某客服 active 记忆总字符,超限触发压实
+    memory_total_budget_target_chars: int = 2000  # 压实压回目标(留缓冲)
+    memory_inject_max_tokens: int = 800      # 常驻记忆注入 system 的 token 预算(取高优)
+    memory_search_top_k: int = 4             # memory_search 返回条数
+    memory_prune_head_chars: int = 200       # 单条记忆剪枝保留头(主题)
+    memory_prune_tail_chars: int = 100       # 单条记忆剪枝保留尾(关键数字/结论)
+    memory_consolidate_min_interval: int = 600  # 压实最小间隔(秒),防连写连压
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
     max_tool_result_chars: int = 8000
@@ -156,6 +166,15 @@ _ENV = {
     "max_retrieve_per_turn": "MAX_RETRIEVE_PER_TURN",
     "max_history_search_per_turn": "MAX_HISTORY_SEARCH_PER_TURN",
     "history_search_top_k": "HISTORY_SEARCH_TOP_K",
+    "memory_enabled": "MEMORY_ENABLED",
+    "memory_entry_max_chars": "MEMORY_ENTRY_MAX_CHARS",
+    "memory_total_budget_chars": "MEMORY_TOTAL_BUDGET_CHARS",
+    "memory_total_budget_target_chars": "MEMORY_TOTAL_BUDGET_TARGET_CHARS",
+    "memory_inject_max_tokens": "MEMORY_INJECT_MAX_TOKENS",
+    "memory_search_top_k": "MEMORY_SEARCH_TOP_K",
+    "memory_prune_head_chars": "MEMORY_PRUNE_HEAD_CHARS",
+    "memory_prune_tail_chars": "MEMORY_PRUNE_TAIL_CHARS",
+    "memory_consolidate_min_interval": "MEMORY_CONSOLIDATE_MIN_INTERVAL",
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
     "max_tool_result_chars": "MAX_TOOL_RESULT_CHARS",
@@ -186,6 +205,9 @@ _ENV = {
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_history_search_per_turn", "history_search_top_k", "max_tokens_per_turn", "tool_timeout_seconds",
+                  "memory_entry_max_chars", "memory_total_budget_chars", "memory_total_budget_target_chars",
+                  "memory_inject_max_tokens", "memory_search_top_k", "memory_prune_head_chars", "memory_prune_tail_chars",
+                  "memory_consolidate_min_interval",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",
                   "api_rate_limit", "api_rate_window_seconds",

@@ -55,4 +55,9 @@ def get_approval() -> ApprovalCenter:
 @lru_cache(maxsize=1)
 def get_insurance_bundle() -> dict:
     from app.businesses.insurance import bundle
-    return bundle(get_embedder(), get_qstore(), get_cfg(), store=get_store())
+    b = bundle(get_embedder(), get_qstore(), get_cfg(), store=get_store())
+    # 非侵入:memory_enabled 时才叠加跨会话记忆(工具+指令帧+存储);关=原样,业务行为不变
+    if get_cfg().memory_enabled:
+        from app.memory import tools as mtools
+        b = mtools.attach_memory(b, get_store(), get_cfg())
+    return b
