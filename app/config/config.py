@@ -85,6 +85,8 @@ class Config:
     compaction_retain_ratio: float = 0.16   # 保留尾(最近对话逐字)占比
     compaction_max_tokens: int = 2000       # 摘要输出上限(估计 token)
     max_retrieve_per_turn: int = 5   # 单轮最多检索次数;超过后强制基于现有资料诚实回答,防反复无效检索
+    max_history_search_per_turn: int = 1   # 单轮最多本会话历史检索次数(防滥用,回指场景才用)
+    history_search_top_k: int = 4          # 本会话历史检索返回的相关早前记录条数
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
     max_tool_result_chars: int = 8000
@@ -152,6 +154,8 @@ _ENV = {
     "compaction_retain_ratio": "COMPACTION_RETAIN_RATIO",
     "compaction_max_tokens": "COMPACTION_MAX_TOKENS",
     "max_retrieve_per_turn": "MAX_RETRIEVE_PER_TURN",
+    "max_history_search_per_turn": "MAX_HISTORY_SEARCH_PER_TURN",
+    "history_search_top_k": "HISTORY_SEARCH_TOP_K",
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
     "max_tool_result_chars": "MAX_TOOL_RESULT_CHARS",
@@ -181,7 +185,7 @@ _ENV = {
 
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
                   "reranking_external_timeout", "rerank_max_length",
-                  "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_tokens_per_turn", "tool_timeout_seconds",
+                  "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_history_search_per_turn", "history_search_top_k", "max_tokens_per_turn", "tool_timeout_seconds",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",
                   "api_rate_limit", "api_rate_window_seconds",

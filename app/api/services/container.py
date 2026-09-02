@@ -55,4 +55,4 @@ def get_approval() -> ApprovalCenter:
 @lru_cache(maxsize=1)
 def get_insurance_bundle() -> dict:
     from app.businesses.insurance import bundle
-    return bundle(get_embedder(), get_qstore(), get_cfg())
+    return bundle(get_embedder(), get_qstore(), get_cfg(), store=get_store())

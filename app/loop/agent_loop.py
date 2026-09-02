@@ -96,6 +96,15 @@ def parse_tool_arguments(raw: str) -> Any:
         return raw
 
 
+def _handler_accepts_session(handler) -> bool:
+    """handler 是否接受 session_id 参数(D52:会话 id 注入)。不接受的 handler 保持旧调用,避免 TypeError。"""
+    try:
+        import inspect
+        return "session_id" in inspect.signature(handler).parameters
+    except Exception:
+        return False
+
+
 # ---- agent loop ----
 class AgentLoop:
     """dsh agent-loop 核心:ReAct 循环,业务无关(工具表 + 回答呈现为注入)。"""
@@ -220,7 +229,9 @@ class AgentLoop:
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
         max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
+        max_history_search = int(getattr(self.cfg, "max_history_search_per_turn", 0) or 0)
         n_retrieve = 0
+        n_history_search = 0
 
         try:
             while True:
@@ -280,7 +291,10 @@ class AgentLoop:
                     assembler.push(chunk)
 
                 tool_calls = assembler.tool_calls()
-                if tool_calls and n_retrieve >= max_retrieve:
+                # D52 知识检索达上限:仅当本轮还调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
+                # 不触发也不被拦(它帮收尾,不增加知识检索收敛)。
+                _has_kw_tool = any((tc.name or "search_knowledge") != "session_history_search" for tc in tool_calls)
+                if tool_calls and _has_kw_tool and n_retrieve >= max_retrieve:
                     # LLM 无视上限仍想调工具 → 强制诚实结束(业务层兜底)
                     blocks, citations = (self.force_answer(references) if self.force_answer
                                          else self.present_answer("已检索多次,未能获得完整资料,请以原文为准。", references))
@@ -289,7 +303,8 @@ class AgentLoop:
                     yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
                     break
                 if tool_calls:
-                    n_retrieve += 1
+                    if _has_kw_tool:
+                        n_retrieve += 1      # 整轮知识检索收敛计数(保持原语义);历史检索不占
                     asst: dict = {"role": "assistant", "content": assembler.text_blocks().strip() or None}
                     asst["tool_calls"] = [{"id": tc.id or f"call_{i}", "type": "function",
                                            "function": {"name": tc.name or "search_knowledge", "arguments": tc.text or "{}"}}
@@ -301,20 +316,28 @@ class AgentLoop:
                         name = tc.name or "search_knowledge"
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
-                        # 阶段5:写工具审批门控(读工具放行;写工具需人工批准,可改参数/拒绝/挂起)
-                        _gated = (self.tools.get(name) or {}).get("write") and self.approval is not None \
-                                 and getattr(self.cfg, "write_tools_approval", "manual") != "auto"
-                        if _gated:
-                            _rid, _areq = self.approval.new_request(name, args, f"写入型工具 {name} 需人工审批")
-                            yield self._emit("approval_request", _areq)
-                            _ad = self.approval.wait(_rid)
-                            if _ad and _ad.get("status") == "approve":
-                                args = _ad.get("edited_args") or args   # 用改后的参数执行
-                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset)
+                        if name == "session_history_search":
+                            # D52:本会话历史检索(回忆)——独立上限,不占知识检索收敛;会话 id 由系统注入,不来自模型
+                            if max_history_search and n_history_search >= max_history_search:
+                                content, reference, _tok, _terr = ("已达本会话历史检索上限,请基于现有资料回答。", None, False, "history_search_limit")
                             else:
-                                content, reference, _tok, _terr = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None, False, "approval_denied")
+                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
+                                n_history_search += 1
                         else:
-                            content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset)
+                            # 阶段5:写工具审批门控(读工具放行;写工具需人工批准,可改参数/拒绝/挂起)
+                            _gated = (self.tools.get(name) or {}).get("write") and self.approval is not None \
+                                     and getattr(self.cfg, "write_tools_approval", "manual") != "auto"
+                            if _gated:
+                                _rid, _areq = self.approval.new_request(name, args, f"写入型工具 {name} 需人工审批")
+                                yield self._emit("approval_request", _areq)
+                                _ad = self.approval.wait(_rid)
+                                if _ad and _ad.get("status") == "approve":
+                                    args = _ad.get("edited_args") or args   # 用改后的参数执行
+                                    content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
+                                else:
+                                    content, reference, _tok, _terr = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None, False, "approval_denied")
+                            else:
+                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
                         # 跨轮引用:检索内容用"会话全局编号"重排(同一 chunk 各轮同 idx),供上下文回答复用 [idx]。
@@ -488,7 +511,7 @@ class AgentLoop:
                      "pruned": pruned_list})
         yield ("result", (new_conv, info))
 
-    def _run_tool(self, name: str, args: Any, start_idx: int = 0) -> tuple[str, Any, bool, str | None]:
+    def _run_tool(self, name: str, args: Any, start_idx: int = 0, session_id: str | None = None) -> tuple[str, Any, bool, str | None]:
         """按名字查表执行工具;返回 (喂给 LLM 的 content, reference, ok, error_code)。
 
         ok=False 表示工具未成功执行(未知/抛异常),error_code 区分 unknown_tool/tool_error/retrieval_unavailable。
@@ -499,7 +522,10 @@ class AgentLoop:
         if not tool:
             return "（无此工具）", None, False, "unknown_tool"
         try:
-            raw = tool["handler"](args, start_idx)
+            if _handler_accepts_session(tool["handler"]):
+                raw = tool["handler"](args, start_idx, session_id=session_id)
+            else:
+                raw = tool["handler"](args, start_idx)
         except RetrievalUnavailable:
             # 检索基础设施(向量库)不可用 → 注入零检索结果,LLM 依 SYSTEM 诚实拒答(严禁杜撰)
             logger.error("检索服务不可用 tool=%s(重试后仍失败)→ 记 retrieval_unavailable", name)
