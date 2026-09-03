@@ -68,7 +68,10 @@ def _validate_assistant_message(p):
             except (TypeError, ValueError):
                 idx = len(cites)
             cites.append({"idx": idx, "chunk_id": str(c["chunk_id"])})
-    return {"blocks": norm, "citations": cites}
+    out = {"blocks": norm, "citations": cites}
+    if p.get("interrupted") is not None:
+        out["interrupted"] = bool(p["interrupted"])
+    return out
 
 
 def _validate_assistant_chunk(p):

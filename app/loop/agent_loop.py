@@ -113,7 +113,8 @@ class AgentLoop:
                  present_answer: Callable[[str, list], tuple[list, list]], cfg,
                  emit: Callable[[str, dict], dict] | None = None,
                  force_answer: Callable[[list], tuple[list, list]] | None = None,
-                 model: str | None = None, approval=None):
+                 model: str | None = None, approval=None,
+                 should_abort: Callable[[], bool] | None = None):
         # llm: .chat_stream(messages, json_mode, tools) -> iter chunks
         # system: 业务 prompt
         # tools: {name: {"schema": openai 工具 schema, "handler": fn(args)->{"content":str,"reference":any}}}
@@ -128,10 +129,20 @@ class AgentLoop:
         self.force_answer = force_answer   # 检索达上限强制结束时的业务兜底(如保险的"诚实说明")
         self.model_override = model   # 模型可配置:前端选 deepseek-v4-flash / deepseek-v4-pro
         self.approval = approval      # 写审批中心(None=不门控,兼容旧调用/测试)
+        self.should_abort = should_abort   # 显式"停止"通道(见 app/loop/abort.py):每 step 边界 + 每 chunk 检查
 
     @property
     def _effective_model(self) -> str:
         return self.model_override or getattr(self.cfg, "deepseek_model", "")
+
+    def _abort_requested(self) -> bool:
+        """显式"停止"是否被置位(回调来自业务层;回调自身异常一律当作"没停",不能让停止通道搞崩回合)。"""
+        if not self.should_abort:
+            return False
+        try:
+            return bool(self.should_abort())
+        except Exception:  # noqa: BLE001
+            return False
 
     def _llm_retry_kw(self) -> dict:
         """真实 LLMClient(有 max_retries)才传 on_retry(记 llm_retry 事件);fake LLM 不传,避免破测试。"""
@@ -178,6 +189,8 @@ class AgentLoop:
         reason = "completed"
         n_steps = 0
         _step_t0: float | None = None   # 当前 step 起点,供 step_end 计算每步耗时
+        _stopped = False                # 显式"停止"命中(非异常):仍要把终结事件推给客户端(客户端没断流)
+        _partial_text: list = []        # 当前 step 已流出的正文(中断时保留已生成的部分回答,不丢)
         max_steps = int(getattr(self.cfg, "max_steps_per_turn", 20))
         # 阶段 A:跨轮上下文。history = 此前轮次的 user/assistant(已剥旧 [idx]);当前 user 追加在后。
         # history 消息带 "seq"(事件序号)供压缩回指;构造模型消息前剥掉。
@@ -235,6 +248,11 @@ class AgentLoop:
 
         try:
             while True:
+                # 停止点①:step 边界。命中就地收尾(保留部分回答),照常写 turn_end。
+                if self._abort_requested():
+                    _stopped = True
+                    reason = "interrupted"
+                    break
                 n_steps += 1
                 if n_steps > max_steps:
                     blocks, cits = self.present_answer("已达回答步数上限,请补充资料后再试。", references)
@@ -244,6 +262,7 @@ class AgentLoop:
                     break
                 yield self._emit("step_start", {"turn": 1, "step": n_steps})
                 _step_t0 = time.time()
+                _partial_text.clear()      # 每 step 重新累计,与前端"当前流式行"对齐(叙述/回答不混)
 
                 # 阶段C·回合中 pressure/context-overflow:检索/推理增长可能跨过 80% 或硬窗口 → 立即压缩头部。
                 if win > 0:
@@ -289,6 +308,15 @@ class AgentLoop:
                                                          "delta": chunk.get("text") or chunk.get("argumentsDelta", ""),
                                                          "ttft_ms": chunk.get("ttft_ms")})
                     assembler.push(chunk)
+                    if chunk["type"] == "text-delta":
+                        _partial_text.append(chunk.get("text") or "")
+                    # 停止点②:每个 chunk 之后 —— 长回答能"立刻停",不必等本步跑完再检查。
+                    if self._abort_requested():
+                        _stopped = True
+                        reason = "interrupted"
+                        break
+                if _stopped:
+                    break
 
                 tool_calls = assembler.tool_calls()
                 # D52 知识检索达上限:仅当本轮还调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
@@ -313,6 +341,11 @@ class AgentLoop:
                         asst["reasoning_content"] = assembler.reasoning_text()
                     conversation.append(asst)
                     for i, tc in enumerate(tool_calls):
+                        # 停止点③:每个工具执行前 —— 一次 tool-call 段里有多个调用时也能及时停。
+                        if self._abort_requested():
+                            _stopped = True
+                            reason = "interrupted"
+                            break
                         name = tc.name or "search_knowledge"
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
@@ -371,6 +404,8 @@ class AgentLoop:
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
                         if isinstance(reference, list) and reference and isinstance(reference[0], dict):
                             yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
+                    if _stopped:
+                        break
                     yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
                     continue
 
@@ -408,12 +443,20 @@ class AgentLoop:
             logger.exception("turn failed sid=%s err=%s", session_id, e, extra={"session_id": session_id, "trace_id": session_id})
         finally:
             if not assistant_emitted:
-                blocks, cits = self.present_answer("回答生成失败/中断,请重试。", references)
+                # 显式"停止":保留本 step 已流出的正文(用户屏幕上已看到的部分,不能丢);
+                # 一个字都没流出才用兜底话术。异常/断流路径维持原话术不变。
+                _partial = "".join(_partial_text).strip()
+                _stopped_now = bool(_stopped)
+                _fallback = (_partial or "已手动停止本轮生成。") if _stopped_now else "回答生成失败/中断,请重试。"
+                blocks, cits = self.present_answer(_fallback, references)
+                _msg = {"blocks": blocks, "citations": cits}
+                if _stopped_now:
+                    _msg["interrupted"] = True    # 半截(手动停止)标记,供前端"已中断"展示 + build_history 续写识别
                 if not aborted:
-                    yield self._emit("assistant_message", {"blocks": blocks, "citations": cits})
-                    conversation.append({"role": "assistant", "content": "回答生成失败/中断,请重试。"})
+                    yield self._emit("assistant_message", _msg)
+                    conversation.append({"role": "assistant", "content": _fallback})
                 else:
-                    self._emit("assistant_message", {"blocks": blocks, "citations": cits})
+                    self._emit("assistant_message", _msg)
             _run_ms = int((time.time() - t0) * 1000)
             tps = (_completion_tokens / (_run_ms / 1000)) if (_completion_tokens > 0 and _run_ms > 0) else None
             # 阶段 B:回合结束时的上下文快照 —— 完整对话(历史 + 当前用户提问 + 助手回答),
