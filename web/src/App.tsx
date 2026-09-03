@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
+import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import "./App.css"
 
@@ -228,13 +228,16 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
   )
 }
 
-function Center({ messages, input, setInput, busy, send, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void }) {
+function Center({ messages, input, setInput, busy, send, onStop, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onStop: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void }) {
   const win = cfgWindow || ctxUsage?.window || 0   // cfgWindow(实时 /api/config)优先,避免历史 request_context 固化的旧窗口盖过新配置
   const ctxPct = ctxUsage && win > 0 ? Math.min(100, Math.round((ctxUsage.used / win) * 100)) : 0
   const [modelMenu, setModelMenu] = useState(false)
   const [ctxPop, setCtxPop] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
+  const [atBottom, setAtBottom] = useState(true)   // 是否贴底;用户滚上去则 false,推理流式时不打断
+  const onScroll = () => { const el = listRef.current; if (!el) return; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80) }
+  useEffect(() => { const el = listRef.current; if (el && atBottom) el.scrollTo(0, el.scrollHeight) }, [messages, atBottom])
+  const jumpToBottom = () => { const el = listRef.current; if (el) { el.scrollTo(0, el.scrollHeight); setAtBottom(true) } }
   const fmtD = (ms?: number) => { if (ms == null) return "—"; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
   const fmtT = (v?: number) => { if (v == null) return "—"; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
   // 每行渲染一个"节点":user / think / tool / answer,按事件序交错
@@ -257,11 +260,13 @@ function Center({ messages, input, setInput, busy, send, onCite, activeCite, tit
       <div className={"tab" + (activeTab === "audit" ? " active" : "")} onClick={() => setActiveTab("audit")}>审计</div>
     </div></div>
     {activeTab === "chat"
-      ? <div className="messages" ref={listRef}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{(() => { const rows: ReactNode[] = []; let i = 0; while (i < messages.length) { const m = messages[i]; if (m.role === "user" || m.role === "answer" || m.role === "note") { rows.push(<div key={m.id} className={"message " + (m.role === "answer" ? "assistant" : m.role)} data-time-hover-root>{renderRow(m)}</div>); i += 1; continue } const grp: Msg[] = []; let j = i; while (j < messages.length && (messages[j].role === "think" || messages[j].role === "text" || messages[j].role === "tool")) { grp.push(messages[j]); j += 1 } const hasAnswer = j < messages.length && messages[j].role === "answer"; const ansRun = hasAnswer ? messages[j].runMs : undefined; const label = hasAnswer ? (ansRun != null ? ("任务耗时 " + fmtElapsed(ansRun)) : (busy ? "任务进行中…" : "会话中断")) : (busy ? "任务进行中…" : "会话中断"); rows.push(<div key={"g" + i} className="message assistant" data-time-hover-root><div className="ans-wrap"><details className="process-group" open={!hasAnswer}><summary className="process-summary"><span className="process-label">{label}</span></summary><div className="process-body">{grp.map((g) => (<div key={g.id} className="message assistant" data-time-hover-root>{renderRow(g)}</div>))}</div></details></div></div>); i = j } return rows })()}</div>
+      ? <div className="messages" ref={listRef} onScroll={onScroll}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{(() => { const rows: ReactNode[] = []; let i = 0; while (i < messages.length) { const m = messages[i]; if (m.role === "user" || m.role === "answer" || m.role === "note") { rows.push(<div key={m.id} className={"message " + (m.role === "answer" ? "assistant" : m.role)} data-time-hover-root>{renderRow(m)}</div>); i += 1; continue } const grp: Msg[] = []; let j = i; while (j < messages.length && (messages[j].role === "think" || messages[j].role === "text" || messages[j].role === "tool")) { grp.push(messages[j]); j += 1 } const hasAnswer = j < messages.length && messages[j].role === "answer"; const ansRun = hasAnswer ? messages[j].runMs : undefined; const label = hasAnswer ? (ansRun != null ? ("任务耗时 " + fmtElapsed(ansRun)) : (busy ? "任务进行中…" : "会话中断")) : (busy ? "任务进行中…" : "会话中断"); rows.push(<div key={"g" + i} className="message assistant" data-time-hover-root><div className="ans-wrap"><details className="process-group" open={!hasAnswer}><summary className="process-summary"><span className="process-label">{label}</span></summary><div className="process-body">{grp.map((g) => (<div key={g.id} className="message assistant" data-time-hover-root>{renderRow(g)}</div>))}</div></details></div></div>); i = j } return rows })()}{!atBottom && messages.length > 0 && (<button className="jump-bottom" onClick={jumpToBottom} aria-label="回到底部" title="回到底部">↓</button>)}</div>
       : activeTab === "trace"
       ? <TraceView turns={trace} />
       : <AuditView sessionId={sessionId} audit={audit} onRefresh={onRefreshAudit} />}
-    <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-wrap"><div className="model-select" onClick={() => setModelMenu((m) => !m)} title="选择模型"><span className="model-dot"></span><span className="model-name">{model}</span><I><path d="M6 9l6 6 6-6"/></I></div>{modelMenu && (<><span className="ctx-backdrop" onClick={() => setModelMenu(false)} /><div className="model-menu">{["deepseek-v4-flash", "deepseek-v4-pro"].map((m) => (<div key={m} className={"model-item" + (m === model ? " active" : "")} onClick={() => { setModel(m); setModelMenu(false) }}><span>{m}</span>{m === model ? <span className="model-check">✓</span> : null}</div>))}</div></>)}</div><button className="ctx-toggle" title="上下文用量" onClick={() => setCtxPop((p) => !p)}><svg className="ctx-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="#edf1f7" strokeWidth="4"/><circle cx="18" cy="18" r="15.5" fill="none" stroke="#5686fe" strokeWidth="4" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 15.5)} strokeDashoffset={String(2 * Math.PI * 15.5 * (1 - ctxPct / 100))} transform="rotate(-90 18 18)"/><text x="18" y="21" textAnchor="middle" fontSize="8" fill="#0f1115">{ctxPct}%</text></svg></button>{ctxPop && (<><span className="ctx-backdrop" onClick={() => setCtxPop(false)} /><div className="ctx-pop"><div className="ctx-usage"><div className="ctx-head"><span>上下文已用 <b>{ctxPct}%</b></span><span className="ctx-total">{fmtCtx(ctxUsage?.used ?? 0)} / {fmtCtx(win)}</span></div><div className="ctx-bar"><div className="ctx-fill" style={{ width: ctxPct + "%" }} /></div><div className="ctx-rows"><div className="ctx-row"><span className="ctx-dot sys" />系统提示词<span className="ctx-val">{fmtCtx(ctxUsage?.system)}</span></div><div className="ctx-row"><span className="ctx-dot tool" />工具<span className="ctx-val">{fmtCtx(ctxUsage?.tools)}</span></div><div className="ctx-row"><span className="ctx-dot msg" />对话消息<span className="ctx-val">{fmtCtx(ctxUsage?.messages)}</span></div></div></div></div></>)}<button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button></div></div></div></div>
+        <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-wrap"><div className="model-select" onClick={() => setModelMenu((m) => !m)} title="选择模型"><span className="model-dot"></span><span className="model-name">{model}</span><I><path d="M6 9l6 6 6-6"/></I></div>{modelMenu && (<><span className="ctx-backdrop" onClick={() => setModelMenu(false)} /><div className="model-menu">{["deepseek-v4-flash", "deepseek-v4-pro"].map((m) => (<div key={m} className={"model-item" + (m === model ? " active" : "")} onClick={() => { setModel(m); setModelMenu(false) }}><span>{m}</span>{m === model ? <span className="model-check">✓</span> : null}</div>))}</div></>)}</div><button className="ctx-toggle" title="上下文用量" onClick={() => setCtxPop((p) => !p)}><svg className="ctx-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="#edf1f7" strokeWidth="4"/><circle cx="18" cy="18" r="15.5" fill="none" stroke="#5686fe" strokeWidth="4" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 15.5)} strokeDashoffset={String(2 * Math.PI * 15.5 * (1 - ctxPct / 100))} transform="rotate(-90 18 18)"/><text x="18" y="21" textAnchor="middle" fontSize="8" fill="#0f1115">{ctxPct}%</text></svg></button>{ctxPop && (<><span className="ctx-backdrop" onClick={() => setCtxPop(false)} /><div className="ctx-pop"><div className="ctx-usage"><div className="ctx-head"><span>上下文已用 <b>{ctxPct}%</b></span><span className="ctx-total">{fmtCtx(ctxUsage?.used ?? 0)} / {fmtCtx(win)}</span></div><div className="ctx-bar"><div className="ctx-fill" style={{ width: ctxPct + "%" }} /></div><div className="ctx-rows"><div className="ctx-row"><span className="ctx-dot sys" />系统提示词<span className="ctx-val">{fmtCtx(ctxUsage?.system)}</span></div><div className="ctx-row"><span className="ctx-dot tool" />工具<span className="ctx-val">{fmtCtx(ctxUsage?.tools)}</span></div><div className="ctx-row"><span className="ctx-dot msg" />对话消息<span className="ctx-val">{fmtCtx(ctxUsage?.messages)}</span></div></div></div></div></>)}{busy
+  ? <button className="stop-btn" onClick={onStop} title="停止生成" aria-label="停止生成"><I><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></I></button>
+  : <button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button>}</div></div></div></div>
     <div className="footer-stats"><span>引用:点击回答中的角标,右侧展开对应溯源片段</span></div>
   </div>)
 }
@@ -299,6 +304,9 @@ export default function App() {
   const mid = () => "m" + (idRef.current++)
   const retrievalRef = useRef<any[]>([])
   const activeIdRef = useRef<string | null>(null)   // 当前激活会话(切换会话时用于判断事件该不该应用到当前视图)
+  // "停止":abortRef 持有当轮的 AbortController(仅兜底断流用);abortTimerRef 是兜底定时器
+  const abortRef = useRef<AbortController | null>(null)
+  const abortTimerRef = useRef<number | null>(null)
 
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
@@ -308,9 +316,13 @@ export default function App() {
   const activeSource = activeMsg?.sources?.find((s) => s.idx === activeCite?.idx) || null
 
   const mergeChunks = (base: any[], incoming: any[]): any[] => { const seen = new Set((base || []).map((c: any) => c.chunk_id)); const out = [...(base || [])]; for (const c of (incoming || [])) { if (!c || seen.has(c.chunk_id)) continue; seen.add(c.chunk_id); out.push(c) } return out }
-  const buildSources = (blocks: Block[] | undefined, chunks: any[]): Source[] => {
-    // 按块文本里的 [idx] 位置映射到检索 chunks(而非只信服务端去重后的 cites),
-    // 避免"同 chunk_id 被去重"导致某些 [idx] 无来源、不可点(旧存库事件 citations 已缺)。
+  const buildSources = (blocks: Block[] | undefined, chunks: any[], cites?: Citation[]): Source[] => {
+    // D55:引用编号每轮 turn-local、从 1 起 —— 溯源以服务端 citations(idx→chunk_id)为准,
+    // 文本里出现的 [idx] 用 citations 映射到 chunk_id,再从 chunk 池取原文展示;
+    // 不能再按 chunks[idx-1] 全局位置猜(会话跨轮后位置≠本轮编号)。
+    // 兜底:极早期存库事件无 citations 时回退位置映射(彼时编号=会话全局=池位置,仍对齐)。
+    const cmap = new Map((chunks || []).map((c: any) => [c.chunk_id, c]))
+    const citeByIdx = new Map((cites || []).map((c) => [c.idx, c.chunk_id]))
     const out: Source[] = []; const seen = new Set<number>(); const re = /\[(\d+)\]/g
     for (const b of (blocks || [])) {
       const texts = (b.t === "ul" || b.t === "ol") ? (b.items || []) : [b.text || ""]
@@ -320,7 +332,8 @@ export default function App() {
           const idx = parseInt(m[1], 10)
           if (seen.has(idx)) continue
           seen.add(idx)
-          const ch = chunks[idx - 1]
+          const cid = citeByIdx.get(idx)
+          const ch = (cid != null ? cmap.get(cid) : undefined) || (chunks || [])[idx - 1]
           if (!ch) continue
           out.push({ idx, chunk_id: ch.chunk_id, title: (ch.product_category ? ch.product_category + " · " : "") + (ch.doc_id || "") + " " + (ch.version || "") + " · " + (ch.section || ""), content: ch.content || "(未找到原文)" })
         }
@@ -334,13 +347,13 @@ export default function App() {
     // 按 step 重构:每步 reasoning→think 行、text→叙述/回答行、tool_call→工具卡,按事件序交错还原历史视图
     let step: { kind: "tool" | "answer" | null; reason: string; text: string; tools: any[] } = { kind: null, reason: "", text: "", tools: [] }
     evs.forEach((e) => {
-      if (e.type === "turn_start") { /* chunks 跨轮累积,不重置,供上下文回答的 [idx] 解析 */ }
+      if (e.type === "turn_start") { /* chunks 跨轮累积成"chunk 内容池"(按 chunk_id 溯源用,D55 不再依赖位置编号) */ }
       else if (e.type === "user_message") msgs.push({ id: mid(), role: "user", text: e.payload.text, time: e.ts })
       else if (e.type === "step_start") { step = { kind: null, reason: "", text: "", tools: [] } }
       else if (e.type === "assistant_chunk") { const k = e.payload?.kind; const d = e.payload?.delta || ""; if (k === "reasoning") step.reason += d; else if (k === "text") step.text += d }
       else if (e.type === "tool_call") { step.kind = "tool" }
       else if (e.type === "retrieval") { chunks = mergeChunks(chunks, e.payload.chunks || []); step.tools.push({ query: e.payload?.query }) }
-      else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, sources: buildSources(e.payload?.blocks, chunks), time: e.ts }) }
+      else if (e.type === "assistant_message") { step.kind = "answer"; cites = e.payload.citations || []; if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); msgs.push({ id: mid(), role: "answer", blocks: e.payload?.blocks || [{ t: "p", text: "" }], citations: cites, sources: buildSources(e.payload?.blocks, chunks, cites), time: e.ts }) }
       else if (e.type === "step_end") { if (step.kind === "tool") { if (step.reason.trim()) msgs.push({ id: mid(), role: "think", reasoning: step.reason, time: e.ts }); if (step.text.trim()) msgs.push({ id: mid(), role: "text", text: step.text, time: e.ts }); for (const t of step.tools) msgs.push({ id: mid(), role: "tool", tool: { name: "search_knowledge", ok: true, args: { query: t.query } }, time: e.ts }) } }
       else if (e.type === "compaction_start") { /* 压缩事件进 trace,不在这里 push */ }
       else if (e.type === "compaction_summary") { }
@@ -405,6 +418,8 @@ export default function App() {
     const text = input.trim(); if (!text || busy) return
     if (!activeId) { const n = await createSession("u1"); setActiveId(n.id); setSessions(await listSessions()) }
     const sid = activeId as string
+    const ctl = new AbortController()
+    abortRef.current = ctl
     setInput(""); setBusy(true)
     setMessages((m) => [...m, { id: mid(), role: "user", text, time: new Date().toISOString() }])
     // 发送即把当前会话乐观置顶,并把 last_ts 置为当前(时间也即时更新,无需等回答结束)
@@ -469,7 +484,7 @@ export default function App() {
         else if (e.type === "tool_call") { closeThink(); if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, streaming: false } : x)) } setMessages((m) => [...m, { id: mid(), role: "tool", tool: { name: e.payload?.tool || "search_knowledge", ok: true, args: e.payload?.args, running: true }, time: e.ts }]) }
         else if (e.type === "tool_result") { setMessages((m) => m.map((x) => x.role === "tool" ? { ...x, tool: { name: x.tool?.name || "search_knowledge", ok: e.payload?.ok !== false, running: false, args: x.tool?.args, error: e.payload?.error || null } } : x)) }
         else if (e.type === "retrieval") { retrievalRef.current = mergeChunks(retrievalRef.current, e.payload?.chunks) }
-        else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(e.payload?.blocks, retrievalRef.current); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
+        else if (e.type === "assistant_message") { const cites = e.payload?.citations || []; const srcs = buildSources(e.payload?.blocks, retrievalRef.current, cites); closeThink(); const bl = e.payload?.blocks || [{ t: "p", text: "（本次回答为空）" }]; if (openText) { const id = openText; openText = null; setMessages((mm) => mm.map((x) => x.id === id ? { ...x, role: "answer", blocks: bl, citations: cites, sources: srcs, streaming: false } : x)); answerId = id } else { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: bl, citations: cites, sources: srcs, time: e.ts }]) } }
         else if (e.type === "compaction_start") { if (!compactionNoteId) { const id = mid(); compactionNoteId = id; setMessages((m) => [...m, { id, role: "note", text: "上下文窗口压缩中", time: e.ts }]) } }
         else if (e.type === "compaction_summary") { }
         else if (e.type === "compaction_end") { if (compactionNoteId) { const id = compactionNoteId; compactionNoteId = null; setMessages((m) => m.filter((x) => x.id !== id)) } }
@@ -477,8 +492,20 @@ export default function App() {
         else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
         else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setBusy(false); listSessions().then(setSessions).catch(() => {}) }
-      }, model)
-    } catch { } finally { setBusy(false); try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (lt.turn && !lt.turn.reason) { lt.turn.reason = "interrupted"; setTrace((prev) => [...prev]) } if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
+      }, model, ctl.signal)
+    } catch { } finally { setBusy(false); if (abortTimerRef.current) { window.clearTimeout(abortTimerRef.current); abortTimerRef.current = null } abortRef.current = null; try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (lt.turn && !lt.turn.reason) { lt.turn.reason = "interrupted"; setTrace((prev) => [...prev]) } if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
+  }
+  // 停止:先让后端置中止位(它会收尾并推 turn_end),再挂一个兜底定时器——
+  // 万一后端卡在写工具审批/长调用 5s 内没收尾,直接断流,保证 UI 不永久停在 busy。
+  const stop = async () => {
+    const sid = activeIdRef.current
+    const ctl = abortRef.current
+    if (!sid || !ctl || abortTimerRef.current != null) return
+    try { await abortPrompt(sid) } catch (e) { console.error("abortPrompt 失败", e) }
+    abortTimerRef.current = window.setTimeout(() => {
+      abortTimerRef.current = null
+      if (abortRef.current === ctl) { abortRef.current = null; try { ctl.abort() } catch { } }
+    }, 5000)
   }
   const toggleSource = (msgId: string, idx: number) => { setActiveCite({ msgId, idx }); setDetailsOpen(true) }
   // 阶段5:提交审批决定(批准/改后批准/拒绝/稍后)。改后批准=status approve + edited_args;拒绝必填原因。
@@ -494,7 +521,7 @@ export default function App() {
 
   return (<div className="frame" ref={frameRef}>
     <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} collapsed={sideCollapsed} onToggleCollapse={() => setSideCollapsed((c) => !c)} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} /></div>
+    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} /></div>
     <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
     {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
     <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>

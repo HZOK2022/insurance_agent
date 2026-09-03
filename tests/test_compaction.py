@@ -240,58 +240,64 @@ class MidTurnOverflowTest(_Base):
 
 
 
-class CrossTurnCitationTest(_Base):
-    """跨轮引用:上下文回答(当轮无检索)也能把 [idx] 解析到历史检索过的 chunk。"""
-    def test_context_only_answer_resolves_prior_citations(self):
-        from app.businesses.insurance import present_answer as ins_present
+class PerTurnCitationTest(_Base):
+    """D55 引用编号每轮 turn-local、从 1 起:上下文回答(当轮无检索)不再解析历史 [idx];
+    有检索的轮,编号只取决于当轮检出的块(前一轮检索过什么不影响本轮编号)。"""
+
+    def _prior_round(self):
+        """在 store 里造一个"上一轮":检索过 c1 + 引用 [1]->c1(旧编号空间)。"""
         self.store.append("s1", "retrieval", {"query": "q", "chunks": [
             {"chunk_id": "c1", "content": "条款X", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.9}]})
         self.store.append("s1", "assistant_message", {"blocks": [{"t": "p", "text": "答案是X [1]"}], "citations": [{"idx": 1, "chunk_id": "c1"}]})
-        pool, idx_map = context.build_chunk_registry(self.store, "s1")
+
+    def test_context_only_answer_has_no_citations(self):
+        """当轮无检索(纯复述)→ 历史 [idx] 无块可解析 → citations 为空(不再跨轮引用)。"""
+        from app.businesses.insurance import present_answer as ins_present
+        self._prior_round()
         class LLM:
             def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 yield {"kind": "text", "delta": "复述:答案是X [1]", "block_index": 0}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
         def emit(t_, p_): ev = make_event(t_, p_); self.store.append("s1", t_, p_); return ev
         loop = AgentLoop(LLM(), "系统", {}, ins_present, make_cfg(), emit=emit)
-        evs = list(loop.turn("s1", "再复述一遍", history=[], citation_pool=pool, citation_idx=idx_map))
+        evs = list(loop.turn("s1", "再复述一遍", history=[]))
         am = next(e["payload"] for e in evs if e["type"] == "assistant_message")
-        self.assertTrue(am["citations"])
-        self.assertEqual(am["citations"][0]["chunk_id"], "c1")
+        self.assertEqual(am["citations"], [])   # 旧 [1] 不再可解析(上下文回答无角标)
 
-class RetrievalTurnScopesCitationsTest(_Base):
-    """D43:一轮有检索 → 引用只准用本轮检出的块(其全局 idx);跨轮历史索引被剔除。"""
-    def test_retrieval_turn_drops_prior_turn_citation(self):
+    def test_retrieval_turn_numbering_restarts_from_one(self):
+        """上一轮检索过 c1;本轮检出新块 c2 → 本轮 feed/citations 从 [1] 开始指向 c2(不沿用全局编号)。"""
         from app.businesses.insurance import present_answer as ins_present
-        # 历史轮:检出 c1(全局 idx1)+ 引用 [1]->c1
-        self.store.append("s1", "retrieval", {"query": "q", "chunks": [
-            {"chunk_id": "c1", "content": "条款X", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.9}]})
-        self.store.append("s1", "assistant_message", {"blocks": [{"t": "p", "text": "X [1]"}], "citations": [{"idx": 1, "chunk_id": "c1"}]})
-        pool, idx_map = context.build_chunk_registry(self.store, "s1")
-        # 本轮:工具返回新块 c2(全局 idx2);LLM 回答引用 [2](本轮)与 [1](历史,应被剔除)
+        from app.businesses.insurance import _format_chunks
+        self._prior_round()
+        # 本轮:工具返回新块 c2(handler 按 start_idx 从本轮 1 编号)
         def handler(args, start_idx=0):
-            return {"content": "[2] (c2) 条款Y", "reference": [
-                {"chunk_id": "c2", "content": "条款Y", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.9}]}
+            chunks = [{"chunk_id": "c2", "content": "条款Y", "doc_id": "d", "version": "v1", "section": "s", "source": "src", "score": 0.9}]
+            return {"content": _format_chunks(chunks, start_idx), "reference": chunks}
         tools = {"search_knowledge": {"schema": {"type": "function", "function": {
             "name": "search_knowledge", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
             "handler": handler}}
         class TwoStep:
-            def __init__(self): self.calls = 0
+            def __init__(self): self.calls = 0; self.tool_feed = None
             def chat_stream(self, messages, json_mode=False, tools=None, model=None):
                 self.calls += 1
                 if self.calls == 1:
                     yield {"kind": "text", "delta": "查", "block_index": 0, "ttft_ms": 10}
                     yield {"kind": "tool-call", "delta": '{"query":"q"}', "block_index": 1, "name": "search_knowledge", "call_id": "c1"}
                 else:
-                    yield {"kind": "text", "delta": "概括 [2] [1]", "block_index": 0, "ttft_ms": 10}
+                    # 记录本轮喂给模型的检索内容编号(应 [1] 起,而不是接历史全局编号 [2])
+                    for m in messages:
+                        if m.get("role") == "tool":
+                            self.tool_feed = m.get("content", "")
+                    yield {"kind": "text", "delta": "本轮结论 [1]", "block_index": 0, "ttft_ms": 10}
                 yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
         def emit(t_, p_): ev = make_event(t_, p_); self.store.append("s1", t_, p_); return ev
-        loop = AgentLoop(TwoStep(), "系统", tools, ins_present, make_cfg(), emit=emit)
-        evs = list(loop.turn("s1", "推荐医疗险", history=[], citation_pool=pool, citation_idx=idx_map))
+        llm = TwoStep()
+        loop = AgentLoop(llm, "系统", tools, ins_present, make_cfg(), emit=emit)
+        evs = list(loop.turn("s1", "那Y呢", history=[]))
+        self.assertIn("[1] (c2)", llm.tool_feed or "")     # 本轮编号从 1 起
+        self.assertNotIn("[2]", llm.tool_feed or "")       # 不沿用会话全局编号
         am = next(e["payload"] for e in evs if e["type"] == "assistant_message")
-        cites = [dict(c) for c in (am["citations"] or [])]
-        self.assertIn({"idx": 2, "chunk_id": "c2"}, cites)     # 本轮块可引用
-        self.assertNotIn({"idx": 1, "chunk_id": "c1"}, cites)  # 历史块(未在本轮检索)被剔除
+        self.assertEqual(am["citations"], [{"idx": 1, "chunk_id": "c2"}])
 
 
 if __name__ == "__main__":

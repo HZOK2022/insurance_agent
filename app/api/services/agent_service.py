@@ -2,8 +2,9 @@
 from typing import Iterator
 
 from app.guardrails.injection import detect_injection, GUARD_CAUTION, mask_system_leak, looks_like_system_leak
+from app.loop.abort import begin as begin_abort, clear as clear_abort, is_set as abort_is_set
 from app.loop.agent_loop import AgentLoop
-from app.session.context import build_history, build_chunk_registry
+from app.session.context import build_history
 from app.session.events import make_event
 from app.session.store import SessionStore
 
@@ -22,10 +23,8 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
         ev = make_event(type_, payload)
         store.append(session_id, type_, payload)
         return ev
-    # 阶段 A:构建跨轮历史(保留 [idx],供跨轮引用)。在 loop 写入当前 user_message 之前调用。
+    # 阶段 A:构建跨轮历史(剥掉旧 [idx] 角标,防跨轮编号混淆,D55)。在 loop 写入当前 user_message 之前调用。
     history = build_history(store, session_id)
-    # 会话级 chunk 注册表(全局编号):上下文回答(当轮无检索)也能解析 [idx] 到历史 chunk。
-    citation_pool, citation_idx = build_chunk_registry(store, session_id)
     from app.api.services import container as _container   # 局部导入,避免与 container 模块循环引用
     sys_msg = bundle["system"]
     # ① 输入注入护栏:命中疑似注入/越权指令 → 追加安全提示到 system + 记 guard_triggered(审计)
@@ -43,15 +42,22 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
                                          "user_id": (store.get_session(session_id) or {}).get("user_id")})
             except Exception:
                 pass
+    # 显式"停止"通道:回合开始清位;loop 在每个 step 边界 / 每个 chunk 之后检查(不依赖客户端断开,
+    # 见 app/loop/abort.py 注释 —— Starlette 不保证断开时 close 底层生成器)。
+    begin_abort(session_id)
     loop = AgentLoop(llm, sys_msg, bundle["tools"], bundle["present_answer"],
                      _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model,
-                     approval=_container.get_approval())
+                     approval=_container.get_approval(),
+                     should_abort=lambda: abort_is_set(session_id))
     # ① 输出护栏:回答若泄漏系统签名片段 → 掩码 + 记 guard_triggered(审计)
-    for ev in loop.turn(session_id, text, history=history, citation_pool=citation_pool, citation_idx=citation_idx):
-        if ev["type"] == "assistant_message":
-            blocks = (ev["payload"] or {}).get("blocks") or []
-            if looks_like_system_leak(str(blocks), bundle["system"]):
-                new_blocks, _m = mask_system_leak(blocks, bundle["system"])
-                ev["payload"]["blocks"] = new_blocks
-                emit("guard_triggered", {"kind": "system_leak", "detail": "输出疑似泄漏系统提示,已掩码"})
-        yield ev
+    try:
+        for ev in loop.turn(session_id, text, history=history):
+            if ev["type"] == "assistant_message":
+                blocks = (ev["payload"] or {}).get("blocks") or []
+                if looks_like_system_leak(str(blocks), bundle["system"]):
+                    new_blocks, _m = mask_system_leak(blocks, bundle["system"])
+                    ev["payload"]["blocks"] = new_blocks
+                    emit("guard_triggered", {"kind": "system_leak", "detail": "输出疑似泄漏系统提示,已掩码"})
+            yield ev
+    finally:
+        clear_abort(session_id)

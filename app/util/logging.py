@@ -10,7 +10,7 @@ import datetime
 import json
 import logging
 import os
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
 # 会作为"字段"打进 JSON 的 extra 键
 _EXTRA_KEYS = ("trace_id", "session_id", "turn", "step", "event_type", "tool", "model",
@@ -38,9 +38,12 @@ class JsonFormatter(logging.Formatter):
             return json.dumps(d, ensure_ascii=False)
 
 
-def setup_logging(level: str = "INFO", log_dir: str = "data/logs", max_bytes: int = 5 * 1024 * 1024,
-                  backup_count: int = 5) -> None:
-    """配置根 logger:控制台(可读)+ 文件(JSON,滚动)。重复调用只生效一次。"""
+def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
+                  backup_count: int = 30) -> None:
+    """配置根 logger:控制台(可读)+ 文件(JSON,滚动)。重复调用只生效一次。
+
+    按天滚动:每天生成一个新文件,保留 backup_count 天。
+    """
     lg = logging.getLogger()
     if getattr(lg, "_dsh_setup", False):
         return
@@ -51,8 +54,15 @@ def setup_logging(level: str = "INFO", log_dir: str = "data/logs", max_bytes: in
     lg.addHandler(ch)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        fh = RotatingFileHandler(os.path.join(log_dir, "app.log"), maxBytes=max_bytes,
-                                 backupCount=backup_count, encoding="utf-8")
+        # 每天生成一个新日志文件,后缀为 .YYYY-MM-DD
+        fh = TimedRotatingFileHandler(
+            os.path.join(log_dir, "app.log"),
+            when="midnight",  # 午夜切换
+            interval=1,      # 每 1 天一个文件
+            backupCount=backup_count,
+            encoding="utf-8",
+            utc=True         # 用 UTC 时间切分,避免时区问题
+        )
         fh.setFormatter(fmt)
         lg.addHandler(fh)
     lg._dsh_setup = True  # type: ignore[attr-defined]

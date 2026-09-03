@@ -171,12 +171,14 @@ class AgentLoop:
                        "id": piece.get("call_id"), "name": piece.get("name"),
                        "argumentsDelta": piece.get("delta", ""), "ttft_ms": ttft}
 
-    def turn(self, session_id: str, text: str, history: list[dict] | None = None,
-             citation_pool: list | None = None, citation_idx: dict | None = None) -> Iterator[dict]:
-        """turn/start → step* → turn/end(ReAct:思考→行动→观察→回答)。生成器:每写一条事件 yield 一条。"""
-        _cpool: list = list(citation_pool) if citation_pool is not None else []   # 会话级 chunk 池(全局编号)
-        _cidx: dict = dict(citation_idx) if citation_idx is not None else {}       # chunk_id -> 全局 idx
-        _has_registry = citation_idx is not None
+    def turn(self, session_id: str, text: str, history: list[dict] | None = None) -> Iterator[dict]:
+        """turn/start → step* → turn/end(ReAct:思考→行动→观察→回答)。生成器:每写一条事件 yield 一条。
+
+        引用编号 = **每轮 turn-local、从 1 连续**(D55):feed 给模型的检索片段用当轮编号
+        (检索1 [1..k],检索2 [k+1..],由 handler 的 start_idx 保证),回答 citations 也按当轮
+        references 顺序解析 —— 不再做跨轮全局编号重排(D35 取消),上下文回答(当轮无检索)
+        不产生引用角标,需要回指早前内容时模型走 session_history_search 回源。
+        """
         t0 = time.time()
         yield self._emit("turn_start", {"turn": 1})
         yield self._emit("user_message", {"text": text, "client_time": None})
@@ -238,7 +240,7 @@ class AgentLoop:
                 "completion_tokens": 0,
                 "compression_triggered": _ctx_compressed,
             })
-        _chunk_offset = 0             # 本 turn 已返回 chunk 总数 → 检索内容 [idx] 整轮全局编号(检索1 [1..k],检索2 [k+1..]),避免多轮检索引用错位
+        _chunk_offset = 0             # 本 turn 已返回 chunk 总数 → 检索片段当轮编号(检索1 [1..k],检索2 [k+1..]),每轮从 1 起,避免多轮检索引用错位
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
         max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
@@ -373,15 +375,8 @@ class AgentLoop:
                                 content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
-                        # 跨轮引用:检索内容用"会话全局编号"重排(同一 chunk 各轮同 idx),供上下文回答复用 [idx]。
-                        if _has_registry and isinstance(reference, list) and reference and isinstance(reference[0], dict):
-                            for _c in reference:
-                                _cid2 = _c.get("chunk_id")
-                                if _cid2 is not None and _cid2 not in _cidx:
-                                    _cpool.append(_c)
-                                    _cidx[_cid2] = len(_cpool)
-                            content = "\n\n".join(
-                                f"[{_cidx[c['chunk_id']]}] ({c['chunk_id']}) {c['content']}" for c in reference)
+                        # D55:引用编号每轮 turn-local —— 检索内容保持 handler 的当轮编号
+                        # (search_knowledge 用 start_idx 从 1 连续编号),不再用会话全局编号重排(D35 取消)。
                         # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
                         # reference(原始 chunks)不动,完整进 retrieval 事件(引用/溯源不丢)。
                         pruned, truncated = content, False
@@ -410,25 +405,9 @@ class AgentLoop:
                     continue
 
                 answer_text = assembler.text_blocks().strip()
-                if _has_registry:
-                    # D43:本轮有检索 → 引用只准用本轮检出的块(按其全局 idx 解析),防止模型复用历史轮次索引导致 idx↔事实错配;
-                    # 当轮无检索(上下文回答)→ 才允许跨轮复用全局编号(references 为空时).
-                    _turn_used = set()
-                    for _r in references:
-                        if not isinstance(_r, list):
-                            continue
-                        for _c in _r:
-                            if isinstance(_c, dict):
-                                _ri = _cidx.get(_c.get("chunk_id"))
-                                if _ri is not None:
-                                    _turn_used.add(_ri)
-                    if _turn_used:
-                        _idx_map = {idx: cid for cid, idx in _cidx.items() if idx in _turn_used}
-                    else:
-                        _idx_map = {idx: cid for cid, idx in _cidx.items()}
-                    blocks, citations = self.present_answer(answer_text or "（无回答）", references, idx_map=_idx_map)
-                else:
-                    blocks, citations = self.present_answer(answer_text or "（无回答）", references)
+                # D55:回答引用按当轮 references 顺序解析(present_answer 平铺编号 1..N)——
+                # 模型只见过当轮编号(检索内容当轮从 1 起),上下文回答(无检索)无块可解析 → 无角标。
+                blocks, citations = self.present_answer(answer_text or "（无回答）", references)
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True

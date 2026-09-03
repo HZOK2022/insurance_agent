@@ -2,14 +2,19 @@
 """会话上下文:把事件日志折成"模型可见的对话历史",供多轮上下文。
 
 阶段 A(恢复跨轮上下文):user_message→user,assistant_message→assistant。
-- 保留历史回答里的 [idx](全局编号下可跨轮复用,供上下文回答继续引用)。
+- **剥离历史回答里的 [idx] 角标**(D55):引用编号每轮 turn-local、从 1 起,历史编号
+  空间与本轮冲突;若保留,模型会在复述时复用旧编号 → 张冠李戴(D43 已实测)。需要回指
+  早前内容时,引导模型走 session_history_search 回源原文(按文本内容,不依赖编号)。
 - 跳过 reasoning(r 块)、narration、retrieval/tool(过程性,不作为历史正文)。
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.compaction.compactor import frame_summary
+
+_IDX_RE = re.compile(r"\[\d+\]")   # 引用角标 [n]:每轮局部编号,跨轮无意义 → 喂给模型时剥掉
 
 
 def _block_text(b: dict) -> str:
@@ -20,7 +25,7 @@ def _block_text(b: dict) -> str:
 
 
 def _assistant_content(blocks: list) -> str:
-    """只取回答块(p/h/ul/ol),跳过 reasoning(r);保留 [idx](跨轮引用)。"""
+    """只取回答块(p/h/ul/ol),跳过 reasoning(r);剥掉 [idx] 角标(防跨轮编号混淆,见模块 docstring)。"""
     parts: list[str] = []
     for b in blocks:
         if not isinstance(b, dict):
@@ -30,7 +35,7 @@ def _assistant_content(blocks: list) -> str:
         txt = _block_text(b)
         if txt:
             parts.append(txt)
-    return "\n".join(parts).strip()
+    return _IDX_RE.sub("", "\n".join(parts)).strip()
 
 
 def build_history(store: Any, session_id: str) -> list[dict]:
@@ -69,26 +74,3 @@ def build_history(store: Any, session_id: str) -> list[dict]:
             if summ:
                 out.append({"role": "system", "content": frame_summary(summ), "seq": seq})
     return out
-
-
-def build_chunk_registry(store: Any, session_id: str):
-    """把该会话所有 retrieval 事件的 chunks 按 chunk_id 去重、按首次出现顺序给全局编号 idx=1..N。
-
-    返回 (pool, idx_map):pool=[{chunk_id, content, ...}, ...](全局顺序);idx_map={chunk_id: 全局idx}。
-    用途:跨轮引用 —— 上下文回答(当轮无检索)也能把答案里的 [idx] 解析到历史检索过的 chunk,
-    从而仍能给出引用角标(铁律3:答复可追溯)。
-    """
-    pool = []
-    idx_map = {}
-    for e in store.read(session_id):
-        if e["type"] != "retrieval":
-            continue
-        for c in (e.get("payload") or {}).get("chunks") or []:
-            if not isinstance(c, dict):
-                continue
-            cid = c.get("chunk_id")
-            if cid is None or cid in idx_map:
-                continue
-            idx_map[cid] = len(pool) + 1
-            pool.append(c)
-    return pool, idx_map

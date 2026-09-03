@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""产品类别(保险类型):字段加到 chunks + to_chunk + chunk 注册表;区分医疗险/重疾险/意外险。
+"""产品类别(保险类型):字段加到 chunks + to_chunk;区分医疗险/重疾险/意外险。
 
 B 方案:search_knowledge 可选 category —— 检索后把同类别块稳定前置(软偏置),不排除其它类别。
 """
@@ -13,7 +13,6 @@ from app.businesses import insurance
 from app.retrieval.categories import classify_product_category
 from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.search_tool import search_knowledge, to_chunk
-from app.session.context import build_chunk_registry
 from app.session.store import SessionStore
 
 
@@ -72,21 +71,6 @@ class ToChunkCategoryTest(unittest.TestCase):
                       "meta": {"doc_id": "d", "product_category": "重疾险", "title": "t"}}, 0.9)
         self.assertEqual(c["product_category"], "重疾险")
 
-
-class RegistryCategoryTest(unittest.TestCase):
-    def test_registry_preserves_category(self):
-        db = tempfile.mktemp(suffix=".db")
-        store = SessionStore(db)
-        sid = store.create_session("u1")["id"]
-        chunk = {"chunk_id": "c1", "score": 0.9, "doc_id": "安盛住院医疗", "version": "v1", "section": "",
-                 "source": "s", "doc_type": "policy_document", "title": "安盛住院医疗", "product_category": "医疗险",
-                 "content": "正文"}
-        store.append(sid, "retrieval", {"query": "q", "chunks": [chunk]})
-        pool, idx_map = build_chunk_registry(store, sid)
-        self.assertEqual(pool[0]["product_category"], "医疗险")
-        self.assertEqual(idx_map["c1"], 1)
-        store.close()
-        os.remove(db)
 
 
 class _FakeEmbedder:

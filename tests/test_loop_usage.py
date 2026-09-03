@@ -159,6 +159,18 @@ class BusinessLayerTest(_Base):
         self.assertIn("30日", blocks[3]["items"][0])
         self.assertEqual(cites, [{"idx": 1, "chunk_id": "c1"}, {"idx": 2, "chunk_id": "c2"}, {"idx": 3, "chunk_id": "c3"}])
 
+    def test_present_answer_renumbers_citations_from_1(self):
+        # 模型引用当轮第4/7/8号(非连续、不从1起)→ 回答里应重排为 [1][2][3]… 且溯源不变
+        chunks = [[{"chunk_id": f"c{i}", "content": "x", "doc_id": "d", "version": "v", "section": "s", "source": "src"} for i in range(1, 9)]]
+        blk, cites = ins_present("责任免除:故意杀害[4][7]、违法[4]、既往症[7];等待期确诊[8]。", chunks)
+        self.assertEqual(cites, [{"idx": 1, "chunk_id": "c4"}, {"idx": 2, "chunk_id": "c7"}, {"idx": 3, "chunk_id": "c8"}])
+        full = " ".join(b.get("text", "") for b in blk if b.get("t") == "p")
+        for b in blk:
+            if b.get("t") == "ul":
+                full += " " + " ".join(str(x) for x in (b.get("items") or []))
+        import re
+        self.assertEqual(re.findall(r"\[\d+\]", full), ["[1]", "[2]", "[1]", "[2]", "[3]"])
+
     def test_no_idx_citation_completes_with_valid_int_idx(self):
         class CiteNoIdxLLM:
             def __init__(self): self.calls = 0

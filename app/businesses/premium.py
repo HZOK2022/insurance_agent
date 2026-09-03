@@ -254,7 +254,14 @@ def build_premium_tool(store):
         }, "required": ["product", "age", "items"]}}}
 
     def handler(args, start_idx=0, session_id=None):
-        return calculate_premium(store, args or {})
+        res = calculate_premium(store, args or {})
+        ref = res.get("reference") or []
+        # D55:引用编号每轮 turn-local —— 结果行自带 [idx](start_idx 对齐轮内连续编号),
+        # 与 loop 按当轮 references 平铺解析的编号一致(去掉了 D35 的全局重排覆盖)。
+        if ref:
+            numbered = "\n".join(f"[{i}] ({c['chunk_id']}) {c['content']}" for i, c in enumerate(ref, start_idx + 1))
+            res["content"] = (res.get("content") or "") + "\n\n【费用逐项编号(回答需引用时可标 [idx])】\n" + numbered
+        return res
 
     return {"schema": schema, "handler": handler}
 

@@ -66,12 +66,20 @@ export const getSessionMetrics = (sid: string) => json<Metrics>('/api/observabil
 export const getObservability = () => json<{ totals: Metrics & { sessions: number }; per_session: any[] }>('/api/observability')
 
 
+// 显式"停止":置后端中止位(不是直接断流——断流后 Starlette 不保证 close 底层生成器,后端会白跑完这一轮)。
+// 置位后后端在下一个 step/chunk 边界收尾并照常推 turn_end,前端因此能拿到完整终结事件。
+export const abortPrompt = (sid: string) =>
+  json<{ ok: boolean; session_id: string }>('/api/sessions/' + sid + '/abort', { method: 'POST' })
+
 // POST prompt 响应为 SSE 帧流:逐条 data: {...} 回调 onEvent
-export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string): Promise<void> {
+// signal:仅作"兜底断流"用(后端迟迟不收尾时强制断开),正常停止走 abortPrompt。
+export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => void, model?: string, signal?: AbortSignal): Promise<void> {
   return fetch(BASE + '/api/sessions/' + sid + '/prompt', {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(model ? { text, model } : { text }),
+    signal,
   }).then(async (r) => {
+    if (!r.ok) throw new Error('/prompt -> ' + r.status)
     if (!r.body) return
     const reader = r.body.getReader()
     const dec = new TextDecoder()

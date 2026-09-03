@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""build_history 单测:恢复跨轮上下文、保留 [idx](跨轮引用)、跳过 reasoning/过程事件。"""
+"""build_history 单测:恢复跨轮上下文、剥旧 [idx] 角标(D55)、跳过 reasoning/过程事件。"""
 from __future__ import annotations
 
 import os
@@ -27,7 +27,7 @@ class TestBuildHistory(unittest.TestCase):
     def _append(self, type_: str, payload: dict):
         self.store.append(self.sid, type_, payload)
 
-    def test_user_assistant_and_keeps_old_idx(self):
+    def test_user_assistant_strips_old_idx(self):
         self._append("user_message", {"text": "重疾险责任免除包括哪些?"})
         # 过程性事件:应跳过
         self._append("retrieval", {"query": "重疾险 责任免除",
@@ -42,10 +42,11 @@ class TestBuildHistory(unittest.TestCase):
         self.assertEqual({k: v for k, v in hist[0].items() if k != "seq"},
                          {"role": "user", "content": "重疾险责任免除包括哪些?"})
         self.assertEqual(hist[1]["role"], "assistant")
-        self.assertIn("[1][2]", hist[1]["content"])        # 旧 [idx] 保留(跨轮引用需要全局编号)
+        # D55:旧 [idx] 剥掉(每轮 turn-local 编号,历史编号空间与本轮冲突,防模型照抄错配)
+        self.assertNotIn("[1][2]", hist[1]["content"])
         self.assertIn("责任免除包括故意自伤。", hist[1]["content"])
 
-    def test_skips_reasoning_and_narration(self):
+    def test_skips_reasoning_and_strips_idx_in_text(self):
         self._append("user_message", {"text": "等待期是多久?"})
         self._append("assistant_narration", {"text": "我先检索等待期条款"})
         self._append("assistant_message",
@@ -54,7 +55,7 @@ class TestBuildHistory(unittest.TestCase):
         hist = context.build_history(self.store, self.sid)
         # 只有 user + assistant(p 块);narration 与 reasoning(r) 不进入历史正文
         self.assertEqual(len(hist), 2)
-        self.assertEqual(hist[1]["content"], "等待期30天 [1]")   # [idx] 保留
+        self.assertEqual(hist[1]["content"], "等待期30天")   # 正文保留,旧 [idx] 剥离
 
     def test_empty_session_returns_empty(self):
         self.assertEqual(context.build_history(self.store, self.sid), [])
