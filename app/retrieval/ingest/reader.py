@@ -34,13 +34,28 @@ def _markitdown_text(path: str) -> str | None:
         return None
 
 
+def _mineru_text(path: str) -> str | None:
+    """MinerU 在线精准解析(需 MINERU_API_KEY,默认空)。未配置/失败返回 None,降级 MarkItDown/原库。"""
+    from app.config import load
+    if not (getattr(load(), "mineru_api_key", "") or ""):
+        return None
+    try:
+        from app.retrieval.ingest.mineru_client import parse_file
+        return parse_file(path).get("markdown")
+    except Exception:
+        return None
+
+
 def read_text(path: str) -> str | None:
-    """读取文件提取文本，返回 None 表示不支持该格式。pdf/docx/xlsx 优先 MarkItDown(结构化 md)。"""
+    """读取文件提取文本，返回 None 表示不支持该格式。pdf/docx/xlsx 优先 MinerU(需KEY)→ MarkItDown → 原库。"""
     ext = os.path.splitext(path)[1].lower()
     if ext in (".txt", ".md"):
         with open(path, encoding="utf-8") as f:
             return f.read()
     if ext == ".pdf":
+        t = _mineru_text(path)
+        if t:
+            return t
         t = _markitdown_text(path)
         if t:
             return t
@@ -48,11 +63,17 @@ def read_text(path: str) -> str | None:
         with pdfplumber.open(path) as pdf:
             return "\n".join((p.extract_text() or "") for p in pdf.pages)
     if ext == ".docx":
+        t = _mineru_text(path)
+        if t:
+            return t
         t = _markitdown_text(path)
         if t:
             return t
         return _read_docx(path)
     if ext == ".xlsx":
+        t = _mineru_text(path)
+        if t:
+            return t
         t = _markitdown_text(path)
         if t:
             return t

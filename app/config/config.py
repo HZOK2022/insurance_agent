@@ -97,6 +97,11 @@ class Config:
     memory_prune_head_chars: int = 200       # 单条记忆剪枝保留头(主题)
     memory_prune_tail_chars: int = 100       # 单条记忆剪枝保留尾(关键数字/结论)
     memory_consolidate_min_interval: int = 600  # 压实最小间隔(秒),防连写连压
+    # MinerU 在线精准解析 API(v4):key 为空则不启用(解析走 MarkItDown/pdfplumber);有扫描件/复杂版式时启用
+    mineru_api_key: str = ""                          # .env MINERU_API_KEY(留白=不启用)
+    mineru_model_version: str = "vlm"                 # pipeline | vlm(推荐) | MinerU-HTML
+    mineru_timeout_seconds: int = 300                 # 轮询超时
+    mineru_poll_interval: int = 3                     # 轮询间隔(秒)
     max_tokens_per_turn: int = 16000
     tool_timeout_seconds: int = 30
     max_tool_result_chars: int = 8000
@@ -175,6 +180,10 @@ _ENV = {
     "memory_prune_head_chars": "MEMORY_PRUNE_HEAD_CHARS",
     "memory_prune_tail_chars": "MEMORY_PRUNE_TAIL_CHARS",
     "memory_consolidate_min_interval": "MEMORY_CONSOLIDATE_MIN_INTERVAL",
+    "mineru_api_key": "MINERU_API_KEY",
+    "mineru_model_version": "MINERU_MODEL_VERSION",
+    "mineru_timeout_seconds": "MINERU_TIMEOUT_SECONDS",
+    "mineru_poll_interval": "MINERU_POLL_INTERVAL",
     "max_tokens_per_turn": "MAX_TOKENS_PER_TURN",
     "tool_timeout_seconds": "TOOL_TIMEOUT_SECONDS",
     "max_tool_result_chars": "MAX_TOOL_RESULT_CHARS",
