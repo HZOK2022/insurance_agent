@@ -23,19 +23,39 @@ def is_supported(path: str) -> bool:
     return ext in _SUPPORTED_EXTS
 
 
+def _markitdown_text(path: str) -> str | None:
+    """用 MarkItDown 统一把 pdf/docx/xlsx 转成结构化 markdown(标题/表格保留)。
+    失败(未装/异常)返回 None,由调用方降级到原库(pdfplumber/docx/openpyxl)。
+    后续可平滑升级到 MinerU/Docling(同样输出结构化文档/DoclingDocument)。"""
+    try:
+        from markitdown import MarkItDown
+        return MarkItDown().convert(path).markdown
+    except Exception:
+        return None
+
+
 def read_text(path: str) -> str | None:
-    """读取文件提取文本，返回 None 表示不支持该格式"""
+    """读取文件提取文本，返回 None 表示不支持该格式。pdf/docx/xlsx 优先 MarkItDown(结构化 md)。"""
     ext = os.path.splitext(path)[1].lower()
     if ext in (".txt", ".md"):
         with open(path, encoding="utf-8") as f:
             return f.read()
     if ext == ".pdf":
+        t = _markitdown_text(path)
+        if t:
+            return t
         import pdfplumber
         with pdfplumber.open(path) as pdf:
             return "\n".join((p.extract_text() or "") for p in pdf.pages)
     if ext == ".docx":
+        t = _markitdown_text(path)
+        if t:
+            return t
         return _read_docx(path)
     if ext == ".xlsx":
+        t = _markitdown_text(path)
+        if t:
+            return t
         return _read_xlsx(path)
     return None
 

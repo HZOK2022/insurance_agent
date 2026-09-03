@@ -32,7 +32,7 @@ class Ingester:
         Returns: {chunks_written, chunks_embedded, doc_id}
         """
         docs = [{"text": text, "meta": meta}]
-        chunks = chunk_documents(docs, chunk_size=512, chunk_overlap=64)
+        chunks = chunk_documents(docs, chunk_size=512, overlap=64)
         if not chunks:
             return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": meta.get("doc_id", "")}
 
