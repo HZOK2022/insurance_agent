@@ -53,7 +53,8 @@ class SessionStore:
           salt TEXT NOT NULL,
           display_name TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
-          disabled INTEGER NOT NULL DEFAULT 0
+          disabled INTEGER NOT NULL DEFAULT 0,
+          role TEXT NOT NULL DEFAULT 'agent'
         );
         CREATE TABLE IF NOT EXISTS auth_tokens (
           token TEXT PRIMARY KEY,
@@ -88,6 +89,10 @@ class SessionStore:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if "deleted" not in cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN deleted INTEGER DEFAULT 0")
+        # 增量迁移:既有库的 users 若缺 role 列,补上(admin/agent 权限;默认 agent)
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "role" not in cols:
+            self._conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'agent'")
         self._conn.commit()
 
     def _check_schema(self) -> None:
@@ -259,18 +264,18 @@ class SessionStore:
         row = self._conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
         return int(row["c"] or 0)
 
-    def create_user(self, username: str, password_hash: str, salt: str, display_name: str = "") -> dict:
+    def create_user(self, username: str, password_hash: str, salt: str, display_name: str = "", role: str = "agent") -> dict:
         uid = uuid.uuid4().hex[:12]
         now = events.utcnow()
         self._conn.execute(
-            "INSERT INTO users (id,username,password_hash,salt,display_name,created_at) VALUES (?,?,?,?,?,?)",
-            (uid, username, password_hash, salt, display_name or username, now))
+            "INSERT INTO users (id,username,password_hash,salt,display_name,created_at,role) VALUES (?,?,?,?,?,?,?,?)",
+            (uid, username, password_hash, salt, display_name or username, now, role))
         self._conn.commit()
-        return {"id": uid, "username": username, "display_name": display_name or username, "created_at": now}
+        return {"id": uid, "username": username, "display_name": display_name or username, "role": role, "created_at": now}
 
     def get_user(self, username: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT id,username,password_hash,salt,display_name,disabled FROM users WHERE username=?",
+            "SELECT id,username,password_hash,salt,display_name,disabled,role FROM users WHERE username=?",
             (username,)).fetchone()
         return dict(row) if row else None
 

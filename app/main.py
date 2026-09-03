@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import approval, audit, citation, config, health, login, metrics, prompt, sessions
+from app.api.routers import approval, audit, citation, config, health, kb, login, metrics, prompt, sessions
 from app.api.services import container, auth_service
 from app.api.ratelimit import RateLimiter
 from app.util.logging import setup_logging
@@ -29,6 +29,30 @@ def _token_valid(cfg, request: Request) -> bool:
     except Exception:
         return False
     return False
+
+
+def _check_admin(request: Request, cfg) -> bool:
+    """检查当前请求是否是管理员。
+    规则:
+    - 全局 api_token 直接视为 admin (开发/单用户场景)
+    - 会话 token: 取出 username → 查询用户 → 检查 role == 'admin'
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    bearer = auth[len("Bearer "):]
+    global_tok = (getattr(cfg, "api_token", "") or "").strip()
+    if global_tok and bearer == global_tok:
+        # 全局配置的api_token默认是admin
+        return True
+    # 会话token:验证token后查用户role
+    username = auth_service.validate_token(container.get_store(), bearer)
+    if not username:
+        return False
+    user = container.get_store().get_user(username)
+    if not user:
+        return False
+    return user.get("role", "agent") == "admin"
 
 
 async def _auth_and_ratelimit(request: Request, call_next):
@@ -55,6 +79,10 @@ async def _auth_and_ratelimit(request: Request, call_next):
     global_tok = (getattr(cfg, "api_token", "") or "").strip()
     if global_tok and not _token_valid(cfg, request):
         return JSONResponse(status_code=401, content={"detail": "未授权"})
+    # /api/kb/* 额外检查 admin 权限
+    if path.startswith("/api/kb"):
+        if not _check_admin(request, cfg):
+            return JSONResponse(status_code=403, content={"detail": "仅管理员可操作知识库"})
     return await call_next(request)
 
 
@@ -70,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(citation.router)
     app.include_router(login.router)
     app.include_router(metrics.router)
+    app.include_router(kb.router)
     app.middleware("http")(_auth_and_ratelimit)
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
     auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)

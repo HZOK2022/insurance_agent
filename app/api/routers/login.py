@@ -18,11 +18,13 @@ class LoginOut(BaseModel):
     expires_at: str
     username: str
     display_name: str
+    role: str = "agent"
 
 
 class MeOut(BaseModel):
     username: str
     display_name: str
+    role: str = "agent"
 
 
 @router.post("/login", response_model=LoginOut, status_code=200)
@@ -47,7 +49,9 @@ def me(request: Request):
     if not username:
         raise HTTPException(status_code=401, detail="登录已过期")
     user = container.get_store().get_user(username)
-    return MeOut(username=username, display_name=(user or {}).get("display_name", ""))
+    return MeOut(username=username,
+               display_name=(user or {}).get("display_name", ""),
+               role=(user or {}).get("role", "agent"))
 
 
 @router.post("/logout", status_code=204)

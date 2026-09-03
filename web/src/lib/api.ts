@@ -13,7 +13,7 @@ const authHeaders = (): Record<string, string> => {
 
 // ---- 鉴权:登录 / 登出 ----
 export interface LoginBody { username: string; password: string; remember: boolean }
-export interface LoginResp { token: string; expires_at: string; username: string; display_name: string }
+export interface LoginResp { token: string; expires_at: string; username: string; display_name: string; role: string }
 export async function login(body: LoginBody): Promise<LoginResp> {
   const r = await fetch(BASE + '/api/login', {
     method: 'POST',
@@ -28,7 +28,7 @@ export async function logout(): Promise<void> {
   const r = await fetch(BASE + '/api/logout', { method: 'POST', headers: authHeaders() })
   if (!r.ok && r.status !== 401) throw new Error('/api/logout -> ' + r.status)
 }
-export interface MeResp { username: string; display_name: string }
+export interface MeResp { username: string; display_name: string; role: string }
 export async function getMe(): Promise<MeResp> {
   return json<MeResp>('/api/me')
 }
@@ -97,3 +97,33 @@ export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => vo
     }
   })
 }
+
+// ---- 知识库管理 API (admin-only) ----
+export interface KbDocument {
+  doc_id: string; doc_type: string | null; product_category: string | null;
+  chunk_count: number; last_updated: string | null
+}
+export interface KbDocumentListResp { total: number; page: number; page_size: number; items: KbDocument[] }
+export const listKbDocuments = (page: number = 1, pageSize: number = 50) =>
+  json<KbDocumentListResp>('/api/kb/documents?page=' + page + '&page_size=' + pageSize)
+
+export interface KbChunk {
+  chunk_id: string; doc_id: string; version: string; section: string | null;
+  title: string | null; product_category: string | null; content_preview: string
+}
+export interface KbChunkListResp { doc_id: string; total: number; page: number; page_size: number; items: KbChunk[] }
+export const listKbChunks = (docId: string, page: number = 1, pageSize: number = 100) =>
+  json<KbChunkListResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/chunks?page=' + page + '&page_size=' + pageSize)
+
+export interface KbIngestTextReq { text: string; doc_id: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string }
+export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string }
+export const ingestKbText = (body: KbIngestTextReq) =>
+  json<KbIngestResp>('/api/kb/ingest/text', { method: 'POST', body: JSON.stringify(body) })
+
+export interface KbDeleteResp { ok: boolean; doc_id: string; chunks_deleted: number; points_deleted: number; message: string }
+export const deleteKbDocument = (docId: string) =>
+  json<KbDeleteResp>('/api/kb/documents/' + encodeURIComponent(docId), { method: 'DELETE' })
+
+export interface KbReindexResp { ok: boolean; total_chunks: number; embedded: number; message: string }
+export const reindexKb = () =>
+  json<KbReindexResp>('/api/kb/reindex', { method: 'POST' })

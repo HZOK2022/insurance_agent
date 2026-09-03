@@ -21,6 +21,17 @@ from app.utils.text import prune_tool_content
 
 logger = logging.getLogger(__name__)
 
+# BM25 脏标记:知识库增删后设为 True,下次检索时懒重建
+# 由 kb_service 在 delete/ingest 后调用 mark_bm25_dirty() 触发
+_bm25_dirty = False
+
+
+def mark_bm25_dirty() -> None:
+    """标记 BM25 为脏,下次检索时懒重建(从 SQLite 事实源)。"""
+    global _bm25_dirty
+    _bm25_dirty = True
+    logger.info("bm25 标记为脏,下次检索将懒重建")
+
 SEARCH_TOOL = {"type": "function", "function": {
     "name": "search_knowledge",
     "description": "检索保险知识库(产品条款/重大疾病病种/责任免除/免赔额/理赔等),返回相关条款片段。",
@@ -176,6 +187,13 @@ def build_tools(embedder, qstore, cfg, store=None) -> dict[str, dict]:
 
     def _get_hybrid():
         nonlocal _hybrid, _hybrid_loaded
+        global _bm25_dirty
+        # 脏标记触发重建:重置缓存状态,下次调用重新构建
+        if _bm25_dirty and _hybrid_loaded:
+            _hybrid_loaded = False
+            _hybrid = None
+            _bm25_dirty = False
+            logger.info("bm25 脏标记触发重建")
         if not _hybrid_loaded:
             _hybrid_loaded = True
             if getattr(cfg, "hybrid_bm25_weight", 0.0) > 0:
@@ -318,4 +336,5 @@ def force_answer(chunks_list: list) -> tuple[list, list]:
 
 def bundle(embedder, qstore, cfg, store=None) -> dict:
     return {"system": SYSTEM, "tools": build_tools(embedder, qstore, cfg, store=store),
-            "present_answer": present_answer, "force_answer": force_answer, "cfg": cfg}
+            "present_answer": present_answer, "force_answer": force_answer, "cfg": cfg,
+            "mark_bm25_dirty": mark_bm25_dirty}

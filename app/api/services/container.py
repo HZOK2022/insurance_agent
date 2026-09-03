@@ -5,6 +5,8 @@ from app.config import load
 from app.llm.client import LLMClient
 from app.retrieval.embedder import Embedder
 from app.retrieval.qdrant_store import QdrantStore
+from app.retrieval.knowledge_store import KnowledgeStore
+from app.retrieval.ingest.ingester import Ingester
 from app.session.store import SessionStore
 from app.guardrails.approval import ApprovalCenter
 
@@ -50,6 +52,16 @@ def get_llm() -> LLMClient:
 @lru_cache(maxsize=1)
 def get_approval() -> ApprovalCenter:
     return ApprovalCenter()
+
+
+@lru_cache(maxsize=1)
+def get_knowledge_store() -> KnowledgeStore:
+    cfg = get_cfg()
+    return KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+
+
+def get_ingester() -> Ingester:
+    return Ingester(get_knowledge_store(), get_qstore(), get_embedder())
 
 
 @lru_cache(maxsize=1)

@@ -18,7 +18,7 @@ export default function Login() {
     try {
       const resp: LoginResp = await apiLogin({ username: username.trim(), password, remember })
       setToken(resp.token, remember)
-      setUser({ username: resp.username, display_name: resp.display_name })
+      setUser({ username: resp.username, display_name: resp.display_name, role: resp.role })
       emitAuthChange() // Root 监听后切到工作台
     } catch (ex: any) {
       setErr(ex?.message || "登录失败,请重试")

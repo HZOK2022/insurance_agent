@@ -54,11 +54,12 @@ class LoginResult:
     expires_at: str
     username: str
     display_name: str
+    role: str = "agent"
 
 
-def create_user(store, username: str, password: str, display_name: str = "") -> dict:
+def create_user(store, username: str, password: str, display_name: str = "", role: str = "agent") -> dict:
     salt_hex, hash_hex = hash_password(password)
-    return store.create_user(username, hash_hex, salt_hex, display_name)
+    return store.create_user(username, hash_hex, salt_hex, display_name, role=role)
 
 
 def authenticate(store, username: str, password: str) -> dict | None:
@@ -81,7 +82,9 @@ def issue_token(store, username: str, remember: bool) -> LoginResult:
     expires = _expiry(remember)
     store.add_token(token, username, created, expires)
     user = store.get_user(username) or {}
-    return LoginResult(token=token, expires_at=expires, username=username, display_name=user.get("display_name", ""))
+    return LoginResult(token=token, expires_at=expires, username=username,
+                       display_name=user.get("display_name", ""),
+                       role=user.get("role", "agent"))
 
 
 def validate_token(store, token: str) -> str | None:
@@ -114,6 +117,6 @@ def seed_admin_if_empty(store, login_user: str, login_password: str) -> None:
         print("[auth] users 表为空且无 login_user/login_password 配置,跳过管理员播种;请通过其它方式建账号。",
               flush=True)
         return
-    create_user(store, login_user, login_password, display_name=login_user)
+    create_user(store, login_user, login_password, display_name=login_user, role="admin")
     warn = "默认弱口令" if login_password in ("change-me", "admin", "password", "123456") else "已配置口令"
     print(f"[auth] 已播种管理员账号 '{login_user}'({warn})。正式环境请尽快修改口令。", flush=True)

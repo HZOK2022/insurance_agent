@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 
 from app.retrieval.errors import RetrievalUnavailable
 
@@ -116,3 +116,29 @@ class QdrantStore:
                             "meta": {k: v for k, v in p.items() if k != "content"}})
             return out
         return self._retry_call("search", _q)
+
+    def delete_by_doc_id(self, doc_id: str) -> int:
+        """Delete all points where payload.doc_id == doc_id.
+        Returns number of points deleted (estimated).
+        """
+        def _del():
+            # Filter by doc_id in payload
+            filter_ = Filter(
+                must=[
+                    FieldCondition(
+                        key="doc_id",
+                        match=MatchValue(value=doc_id)
+                    )
+                ]
+            )
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=filter_
+            )
+            # Qdrant doesn't return exact count in some versions, estimate from result
+            if hasattr(result, 'status') and result.status == "completed":
+                # We can't get exact count from delete response, but that's okay
+                # The caller (KnowledgeStore) already has the exact count from SQLite
+                return -1  # -1 means success, unknown count
+            return 0
+        return self._retry_call("delete_by_doc_id", _del)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
+import KbManager from "./KbManager"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -98,7 +99,7 @@ function CopyBtn({ text }: { text: string }) {
   return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
-function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
+function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?: boolean; currentView?: "chat" | "knowledge"; onViewChange?: (v: "chat" | "knowledge") => void }) {
   const [open, setOpen] = useState(false)
   const user = getUser()
   const name = user?.display_name || user?.username || "未登录"
@@ -121,6 +122,9 @@ function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             </div>
           </div>
           <div className="um-list">
+            {user?.role === "admin" && (
+              <button className="um-item" onClick={() => { setOpen(false); onViewChange?.(currentView === "knowledge" ? "chat" : "knowledge") }}><I><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></I><span>{currentView === "knowledge" ? "返回对话" : "知识管理"}</span></button>
+            )}
             <button className="um-item" onClick={() => { setOpen(false) /* TODO: 设置页(后期扩展) */ }}><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></button>
             <button className="um-item" onClick={() => { setOpen(false) /* TODO: 记忆页(后期扩展) */ }}><I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I><span>记忆</span></button>
             <button className="um-item danger" onClick={() => { setOpen(false); if (window.confirm("确定退出登录?")) logout() }}><I><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></I><span>退出登录</span></button>
@@ -131,7 +135,7 @@ function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
   )
 }
 
-function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr, collapsed, onToggleCollapse }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string; collapsed: boolean; onToggleCollapse: () => void }) {
+function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr, collapsed, onToggleCollapse, currentView, onViewChange }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string; collapsed: boolean; onToggleCollapse: () => void; currentView: "chat" | "knowledge"; onViewChange: (v: "chat" | "knowledge") => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [editVal, setEditVal] = useState("")
   const [menu, setMenu] = useState<string | null>(null)
@@ -158,7 +162,7 @@ function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, load
     <div className="sb-search"><I><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></I><input ref={searchRef} className="sb-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></div>
     <button className="new-session" onClick={onNew}><I><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></I><span>新会话</span></button>
     <div className="tree">{filtered.length === 0 && <div className="tree-empty">{loadErr || (qv ? "无匹配会话" : "暂无会话")}</div>}{filtered.map((s2) => (editing === s2.id ? (<div key={s2.id} className="tree-item active" onKeyDown={(e) => { if (e.key === "Enter" && editVal.trim()) { onRename(s2.id, editVal.trim()); setEditing(null) } if (e.key === "Escape") setEditing(null) }}><input className="tree-edit" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} onBlur={() => setEditing(null)} /></div>) : (<div key={s2.id} className={"tree-item" + (s2.id === activeId ? " active" : "")} onClick={() => onSelect(s2.id)} onDoubleClick={() => { setEditing(s2.id); setEditVal(s2.title) }} title="单击切换 · 双击重命名"><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s2.title}</span><span className="tree-time">{s2.last_ts ? timeAgo(s2.last_ts) : ""}</span><button className="tree-more" title="更多操作" aria-label="更多操作" onClick={(e) => { e.stopPropagation(); setMenu(menu === s2.id ? null : s2.id) }}><I><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></I></button>{menu === s2.id && (<><span className="ctx-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(null) }} /><div className="ctx-menu"><button className="ctx-item" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditing(s2.id); setEditVal(s2.title) }}><I><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></I><span>重命名</span></button><button className="ctx-item danger" onClick={(e) => { e.stopPropagation(); setMenu(null); if (window.confirm("确定删除该会话及其内容?")) onDelete(s2.id) }}><I><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></I><span className="danger-text">删除任务</span></button></div></>)}</div>)))}</div>
-    <div className="sb-bottom"><UserMenu /></div>
+    <div className="sb-bottom"><UserMenu currentView={currentView} onViewChange={onViewChange} /></div>
   </aside>)
 }
 
@@ -288,6 +292,7 @@ export default function App() {
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
+  const [currentView, setCurrentView] = useState<"chat" | "knowledge">("chat")
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
   const [cfgWindow, setCfgWindow] = useState(0)   // 后端当前配置的 context_window(前端"窗口"分母,取自 /api/config,不依赖可能过期的历史 request_context)
@@ -310,7 +315,9 @@ export default function App() {
 
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
-  const cols = solve(vp, narrow ? 0 : (sideCollapsed ? 0 : sideW), detailsOpen ? detW : 0, narrow)
+  // 知识管理页隐藏左侧边栏
+  const sideWidth = currentView === "knowledge" ? 0 : (narrow ? 0 : (sideCollapsed ? 0 : sideW))
+  const cols = solve(vp, sideWidth, detailsOpen && currentView === "chat" ? detW : 0, narrow)
   // 激活的引用只属于"被点击的那条回答":按其自身的 sources 解析溯源,不在其它轮编号上高亮。
   const activeMsg = messages.find((m) => m.id === activeCite?.msgId)
   const activeSource = activeMsg?.sources?.find((s) => s.idx === activeCite?.idx) || null
@@ -406,7 +413,7 @@ export default function App() {
   // 登录态恢复:持有有效 token 但未走 Login 流程(如刷新页面/返回用户)时,补齐用户信息供用户菜单展示
   useEffect(() => {
     if (isAuthed() && !getUser()) {
-      getMe().then((u) => setUser({ username: u.username, display_name: u.display_name })).catch(() => {})
+      getMe().then((u) => setUser({ username: u.username, display_name: u.display_name, role: u.role })).catch(() => {})
     }
   }, []) // eslint-disable-line
   useEffect(() => { getConfig().then((c) => setCfgWindow(c.context_window)).catch(() => {}) }, []) // eslint-disable-line  # 挂载时取后端当前配置的上下文窗口
@@ -520,12 +527,26 @@ export default function App() {
   }
 
   return (<div className="frame" ref={frameRef}>
-    <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} collapsed={sideCollapsed} onToggleCollapse={() => setSideCollapsed((c) => !c)} /></div>
-    <div className="centerCol" style={{ width: cols.center }}><Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} /></div>
-    <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
-    {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
-    <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
-    {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
+    {currentView === "chat" && (
+      <>
+        <div className="sidebarCol" style={{ width: cols.sidebar }}><Sidebar sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newSession} onDelete={deleteSess} onRename={renameSess} loadErr={loadErr} collapsed={sideCollapsed} onToggleCollapse={() => setSideCollapsed((c) => !c)} currentView={currentView} onViewChange={setCurrentView} /></div>
+        {!narrow && cols.sidebar > SIDEBAR_COLLAPSED && <ColHandle pos={cols.sidebar} onDrag={(dx) => setSideW(clamp(cols.sidebar + dx, SIDEBAR_MIN, SIDEBAR_MAX))} />}
+      </>
+    )}
+    <div className="centerCol" style={{ width: cols.center }}>
+      {currentView === "chat" ? (
+        <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} />
+      ) : (
+        <KbManager onBack={() => setCurrentView("chat")} />
+      )}
+    </div>
+    {currentView === "chat" && (
+      <>
+        <div className="detailsCol" style={{ width: cols.details }}><Details open={detailsOpen} activeSource={activeSource} onClose={() => setDetailsOpen(false)} /></div>
+        {cols.details > 0 && <ColHandle pos={cols.sidebar + cols.center} onDrag={(dx) => setDetW(clamp(cols.details - dx, 0, DETAILS_MAX))} />}
+        <button className="dt-expand" onClick={() => setDetailsOpen(!detailsOpen)} title={detailsOpen ? "收起右栏" : "展开右栏"}><I><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><line x1="16.5" y1="8" x2="16.5" y2="16"/></I></button>
+      </>
+    )}
     <ApproveCard req={pendingApproval} argsText={approvalArgsText} reason={approvalReason} err={approvalErr} busy={approvalBusy} setArgsText={setApprovalArgsText} setReason={setApprovalReason} onAct={actApproval} />
   </div>)
 }

@@ -4,7 +4,7 @@ const KEY = "api_token"
 const USER_KEY = "api_user"
 export const AUTH_CHANGE = "auth:change"
 
-export interface ApiUser { username: string; display_name: string }
+export interface ApiUser { username: string; display_name: string; role?: string }
 
 function safeSession(): Storage | null {
   try { return window.sessionStorage } catch { return null }
