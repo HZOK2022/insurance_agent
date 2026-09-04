@@ -403,3 +403,107 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .kb-form-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; font: inherit; font-size: 13px; line-height: 1.6; color: var(--dsw-text); background: var(--dsw-bg); outline: none; resize: vertical; transition: border-color .15s; }
 .kb-form-textarea:focus { border-color: var(--dsw-primary); box-shadow: 0 0 0 3px var(--dsw-primary-soft); }
 .kb-form-actions { display: flex; gap: 8px; margin-top: 4px; }
+/* ---- KB 文件上传 + 解析对比(D57 UI)---- */
+.kb-mode-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.kb-mode-row .kb-btn-primary { color: #fff; }
+.kb-form-input[type="file"] { padding-top: 4px; }
+select.kb-form-input { appearance: auto; height: 38px; padding: 0 8px; }
+.kb-hint { font-size: 12px; color: var(--dsw-text-3); margin-top: 6px; }
+.kb-note { font-size: 12px; color: var(--dsw-text-2); background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; line-height: 1.6; }
+.kb-cmp-divider { border-top: 1px dashed var(--dsw-border-l2); margin: 22px 0 16px; }
+.kb-cmp-card { background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l1); border-radius: 10px; padding: 14px; }
+.kb-cmp-title { font-size: 13.5px; font-weight: 600; color: var(--dsw-text); margin-bottom: 12px; }
+.kb-cmp-backends { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0 12px; }
+.kb-cmp-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--dsw-text-2); cursor: pointer; }
+.kb-cmp-check input { accent-color: var(--dsw-primary); }
+.kb-cmp-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 12.5px; background: var(--dsw-bg); border-radius: 8px; overflow: hidden; }
+.kb-cmp-table th, .kb-cmp-table td { border: 1px solid var(--dsw-border-l1); padding: 6px 8px; text-align: center; color: var(--dsw-text-2); }
+.kb-cmp-table th { background: var(--dsw-sidebar-fill); color: var(--dsw-text); font-weight: 600; }
+.kb-cmp-table td:first-child { font-weight: 600; color: var(--dsw-text); }
+.kb-cmp-table tr.kb-cmp-fail td { color: #e5484d; }
+.kb-cmp-excerpt { margin-top: 12px; }
+.kb-cmp-excerpt-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--dsw-text-2); line-height: 1.6; padding: 6px 0; border-top: 1px solid var(--dsw-border-l1); }
+.kb-cmp-excerpt-item .kb-tag { flex: none; margin-top: 1px; }
+
+/* ---- 独立解析对比页(CompareView)---- */
+.cmp-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.cmp-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--dsw-border-l1); flex-shrink: 0; gap: 12px; }
+.cmp-head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cmp-title { font-size: 16px; font-weight: 600; color: var(--dsw-text); white-space: nowrap; }
+.cmp-sub { font-size: 12px; color: var(--dsw-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-body { flex: 1; overflow-y: auto; padding: 14px 20px; }
+.cmp-pick { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; padding: 14px; border: 1px solid var(--dsw-border-l1); border-radius: 10px; background: var(--dsw-sidebar-fill); }
+.cmp-pick .kb-form-field { max-width: 420px; }
+.cmp-checks { display: flex; flex-wrap: wrap; gap: 14px; padding-bottom: 6px; }
+.cmp-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--dsw-text-2); cursor: pointer; }
+.cmp-check input { accent-color: var(--dsw-primary); }
+.cmp-note { color: var(--dsw-text-3); font-size: 12px; }
+.cmp-res { margin-top: 16px; }
+.cmp-tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.cmp-tab { padding: 5px 14px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-bg); color: var(--dsw-text-2); font-size: 13px; cursor: pointer; }
+.cmp-tab:hover { border-color: var(--dsw-primary); color: var(--dsw-primary); }
+.cmp-tab.active { background: var(--dsw-primary); border-color: var(--dsw-primary); color: #fff; }
+.cmp-tab.fail { color: #e5484d; }
+.cmp-tab.fail.active { background: #e5484d; border-color: #e5484d; color: #fff; }
+.cmp-summary { margin-bottom: 14px; }
+.cmp-detail { border: 1px solid var(--dsw-border-l1); border-radius: 10px; padding: 12px 14px; background: var(--dsw-bg); }
+.cmp-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.cmp-detail-title { font-size: 13px; font-weight: 600; color: var(--dsw-text); }
+.cmp-tree { max-height: 340px; overflow-y: auto; border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 6px; font-size: 13px; }
+.cmp-node { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 4px; line-height: 1.6; }
+.cmp-node:hover { background: var(--dsw-primary-soft); }
+.cmp-node-glyph { color: var(--dsw-primary); flex: none; }
+.cmp-node-title { color: var(--dsw-text); word-break: break-all; }
+.cmp-hint { font-size: 12.5px; color: var(--dsw-text-3); padding: 8px 0; }
+.cmp-text { max-height: 420px; overflow: auto; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--dsw-border-l1); border-radius: 8px; background: var(--dsw-sidebar-fill); font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--dsw-text-2); }
+.cmp-fails { margin-top: 12px; }
+.cmp-fail-line { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: #e5484d; padding: 5px 0; }
+
+/* ---- 知识管理「查看」:左目录树 / 右切块 ---- */
+/* 左右各自独立滚动(左树、右块互不联动),容器高度随视口,避免"树被固定小窗、滚块时树一起动" */
+.doc-split { display: flex; gap: 14px; align-items: stretch; height: max(440px, calc(100vh - 200px)); }
+.doc-structure { flex: 0 0 300px; display: flex; flex-direction: column; border: 1px solid var(--dsw-border-l1); border-radius: 10px; overflow: hidden; background: var(--dsw-bg); }
+.doc-structure .cmp-tree { max-height: none; flex: 1; overflow-y: auto; border: none; }
+.doc-chunks { flex: 1; min-width: 0; overflow-y: auto; }
+.cmp-page-tag { font-size: 10.5px; color: var(--dsw-text-3); border: 1px solid var(--dsw-border-l1); border-radius: 3px; padding: 0 4px; margin-left: 4px; flex: none; }
+.cmp-chunk-range-tag { font-size: 10.5px; color: var(--dsw-primary); border: 1px solid rgba(86,134,254,.25); background: var(--dsw-primary-soft); border-radius: 3px; padding: 0 4px; margin-left: 4px; flex: none; }
+
+/* ---- 解析对比:左树右切块 双栏 ---- */
+.cmp-split { display: flex; gap: 14px; align-items: stretch; height: min(640px, 74vh); }
+.cmp-upload-split { display: flex; gap: 14px; align-items: stretch; width: 100%; height: max(440px, calc(100vh - 200px)); margin-top: 14px; }
+.cmp-upload-split .cmp-tree-pane { flex: 0 0 300px; }
+.cmp-upload-split .cmp-chunk { flex: none; }
+.cmp-tree-pane, .cmp-chunk-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--dsw-border-l1); border-radius: 10px; overflow: hidden; background: var(--dsw-bg); }
+.cmp-tree-pane { flex: 0 0 300px; }
+.cmp-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-border-l1); font-size: 13px; font-weight: 600; color: var(--dsw-text); }
+.cmp-pane-sub { font-size: 11.5px; color: var(--dsw-text-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-tree { flex: 1; overflow-y: auto; max-height: none; border: none; border-radius: 0; padding: 8px 4px; }
+.cmp-node { cursor: pointer; }
+.cmp-node.sel { background: var(--dsw-primary-soft); color: var(--dsw-primary); }
+.cmp-chunks { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.cmp-chunk { padding: 8px 10px; border: 1px solid var(--dsw-border-l1); border-radius: 8px; margin-bottom: 8px; }
+.cmp-chunk:hover { border-color: var(--dsw-border-l2); }
+.cmp-chunk-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.cmp-chunk-idx { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--dsw-text-3); }
+.cmp-chunk-content { font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); white-space: pre-wrap; word-break: break-word; }
+
+/* 切块预览:默认折叠 4 行,点“展开全文”看整块 */
+.cmp-chunk-meta .cmp-chunk-toggle { margin-left: auto; }
+.cmp-chunk-content { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.cmp-chunk.open .cmp-chunk-content { display: block; -webkit-line-clamp: unset; overflow: visible; }
+
+/* 解析中(pending)行/页 + 上传嵌入进度条 */
+.cmp-tab.pending { color: var(--dsw-text-2); border-style: dashed; }
+.kb-cmp-table tr.kb-cmp-pending td { color: var(--dsw-text-3); }
+.kb-progress { margin-top: 14px; }
+.kb-progress-label { font-size: 12px; color: var(--dsw-text-2); margin-bottom: 6px; }
+.kb-progress-track { height: 6px; border-radius: 4px; background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l1); overflow: hidden; }
+.kb-progress-fill { height: 100%; background: var(--dsw-primary); border-radius: 4px; transition: width .25s ease; }
+
+/* 切块预览:折叠=行省略号(点内容展开),展开=末尾 < 收起 */
+.cmp-chunk-content.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.cmp-chunk-content.clamp:hover { color: var(--dsw-primary); }
+.cmp-chunk-content.open { display: block; white-space: pre-wrap; overflow: visible; }
+.cmp-fold { display: inline-block; color: var(--dsw-primary); font-weight: 700; cursor: pointer; margin-left: 4px; user-select: none; }
+.cmp-fold:hover { text-decoration: underline; }
+

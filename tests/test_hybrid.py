@@ -67,6 +67,21 @@ class HybridSearchTest(unittest.TestCase):
         ids = [c["chunk_id"] for c in out]
         self.assertNotIn("b1", ids)
 
+    def test_product_soft_bias(self):
+        # D72:点名产品时,该产品块被提到前面(软偏置,不排除其它产品);chunk 带 product_name
+        class MixedStore:
+            def search(self, vec, top_k):
+                return [
+                    {"chunk_id": "a1", "content": "产品A 条款", "score": 0.5, "meta": {"doc_id": "A", "product_name": "产品A"}},
+                    {"chunk_id": "b1", "content": "产品B 条款", "score": 0.4, "meta": {"doc_id": "B", "product_name": "产品B"}},
+                    {"chunk_id": "a2", "content": "产品A 条款2", "score": 0.3, "meta": {"doc_id": "A", "product_name": "产品A"}},
+                ][:top_k]
+        out = search_knowledge(FakeEmbedder(), MixedStore(), "问题", top_k=5, top_rerank=3, product="产品A")
+        ids = [c["chunk_id"] for c in out]
+        self.assertEqual(ids[:2], ["a1", "a2"], "点名产品的块应被提到前面")
+        self.assertIn("b1", ids, "软偏置不排除其它产品")
+        self.assertTrue(all(c.get("product_name") for c in out), "检索块应带产品名")
+
 
 if __name__ == "__main__":
     unittest.main()

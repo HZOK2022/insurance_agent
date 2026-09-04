@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import KbManager from "./KbManager"
+import CompareView from "./CompareView"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -99,7 +100,9 @@ function CopyBtn({ text }: { text: string }) {
   return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
-function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?: boolean; currentView?: "chat" | "knowledge"; onViewChange?: (v: "chat" | "knowledge") => void }) {
+type View = "chat" | "knowledge" | "compare"
+
+function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?: boolean; currentView?: View; onViewChange?: (v: View) => void }) {
   const [open, setOpen] = useState(false)
   const user = getUser()
   const name = user?.display_name || user?.username || "未登录"
@@ -135,7 +138,7 @@ function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?
   )
 }
 
-function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr, collapsed, onToggleCollapse, currentView, onViewChange }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string; collapsed: boolean; onToggleCollapse: () => void; currentView: "chat" | "knowledge"; onViewChange: (v: "chat" | "knowledge") => void }) {
+function Sidebar({ sessions, activeId, onSelect, onNew, onDelete, onRename, loadErr, collapsed, onToggleCollapse, currentView, onViewChange }: { sessions: Session[]; activeId: string | null; onSelect: (id: string) => void; onNew: () => void; onDelete: (id: string) => void; onRename: (id: string, title: string) => void; loadErr: string; collapsed: boolean; onToggleCollapse: () => void; currentView: View; onViewChange: (v: View) => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [editVal, setEditVal] = useState("")
   const [menu, setMenu] = useState<string | null>(null)
@@ -292,7 +295,7 @@ export default function App() {
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
-  const [currentView, setCurrentView] = useState<"chat" | "knowledge">("chat")
+  const [currentView, setCurrentView] = useState<View>("chat")
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
   const [cfgWindow, setCfgWindow] = useState(0)   // 后端当前配置的 context_window(前端"窗口"分母,取自 /api/config,不依赖可能过期的历史 request_context)
@@ -316,7 +319,7 @@ export default function App() {
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
   // 知识管理页隐藏左侧边栏
-  const sideWidth = currentView === "knowledge" ? 0 : (narrow ? 0 : (sideCollapsed ? 0 : sideW))
+  const sideWidth = currentView !== "chat" ? 0 : (narrow ? 0 : (sideCollapsed ? 0 : sideW))
   const cols = solve(vp, sideWidth, detailsOpen && currentView === "chat" ? detW : 0, narrow)
   // 激活的引用只属于"被点击的那条回答":按其自身的 sources 解析溯源,不在其它轮编号上高亮。
   const activeMsg = messages.find((m) => m.id === activeCite?.msgId)
@@ -536,8 +539,10 @@ export default function App() {
     <div className="centerCol" style={{ width: cols.center }}>
       {currentView === "chat" ? (
         <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} />
+      ) : currentView === "knowledge" ? (
+        <KbManager onBack={() => setCurrentView("chat")} onOpenCompare={() => setCurrentView("compare")} />
       ) : (
-        <KbManager onBack={() => setCurrentView("chat")} />
+        <CompareView onBack={() => setCurrentView("chat")} onOpenKb={() => setCurrentView("knowledge")} />
       )}
     </div>
     {currentView === "chat" && (

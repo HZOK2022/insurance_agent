@@ -47,3 +47,34 @@ class KnowledgeStoreTest(unittest.TestCase):
 
     def test_get_missing(self):
         self.assertIsNone(self.store.get_chunk("不存在"))
+
+    def test_documents_roundtrip_and_dedup(self):
+        # D72:documents 表存 doc 级元数据(product_name/content_hash),供同名判重+唯一性
+        self.store.upsert_chunks(self.chunks)
+        self.store.upsert_document({"doc_id": "尊享e生2025", "product_name": "尊享e生2025",
+                                    "product_category": "医疗险", "version": "v1", "title": "尊享e生2025",
+                                    "source": "x.pdf", "content_hash": "hash1"})
+        d = self.store.get_document("尊享e生2025")
+        self.assertEqual(d["product_name"], "尊享e生2025")
+        self.assertEqual(d["content_hash"], "hash1")
+        # 同名覆盖(update)替换 content_hash
+        self.store.upsert_document({"doc_id": "尊享e生2025", "product_name": "尊享e生2025",
+                                    "product_category": "医疗险", "version": "v2", "title": "尊享e生2025",
+                                    "source": "x.pdf", "content_hash": "hash2"})
+        self.assertEqual(self.store.get_document("尊享e生2025")["content_hash"], "hash2")
+        # delete_document 连带清理 documents 行
+        self.store.delete_document("尊享e生2025")
+        self.assertIsNone(self.store.get_document("尊享e生2025"))
+        self.assertEqual(self.store.count(), 0)
+
+    def test_backfill_documents_from_chunks(self):
+        # 旧库迁移:documents 缺行时按 chunks 回填(product_name=doc_id,content_hash=按内容算)
+        self.store.upsert_chunks(self.chunks)
+        self.store._backfill_documents()
+        d = self.store.get_document("尊享e生2025")
+        self.assertIsNotNone(d, "旧库应回填 documents 行")
+        self.assertEqual(d["product_name"], "尊享e生2025")
+        self.assertTrue(d["content_hash"], "content_hash 非空")
+        # 幂等:再跑不重复/不报错
+        self.store._backfill_documents()
+        self.assertEqual(self.store.get_document("尊享e生2025")["content_hash"], d["content_hash"])

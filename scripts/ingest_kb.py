@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import load
-from app.retrieval.embedder import Embedder
+from app.retrieval.embedder import build_embedder
 from app.retrieval.qdrant_store import QdrantStore
 from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.ingest import Ingester, is_supported, supported_extensions
@@ -23,6 +23,8 @@ def main():
     ap.add_argument("--clear", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="仅前 N 个文件(测试用)")
     ap.add_argument("--category", default="", help="保险类别(医疗险/重疾险/意外险/…);缺省按 doc_id 关键词判定")
+    ap.add_argument("--parser", default="auto",
+                    help="pdf/docx/xlsx 解析后端:auto(默认回退链)| mineru | markitdown | pdfplumber | native(docx/xlsx)")
     a = ap.parse_args()
 
     cfg = load()
@@ -38,7 +40,7 @@ def main():
         print("[clear] 已删除集合 + SQLite chunks 事实源")
 
     qstore = QdrantStore(cfg.qdrant_url, cfg.qdrant_collection, cfg.embedding_dim)
-    embedder = Embedder(cfg.embedding_model, cfg.embedding_device, cfg.embedding_batch_size)
+    embedder = build_embedder(cfg)
     ingester = Ingester(kstore, qstore, embedder)
 
     if os.path.isfile(a.path):
@@ -47,10 +49,10 @@ def main():
         if not is_supported(a.path):
             print(f"[skip] 不支持的文件格式: {a.path}")
             return
-        result = ingester.ingest_file(a.path, a.category)
+        result = ingester.ingest_file(a.path, a.category, a.parser)
         print(f"[done] ingested {result['doc_id']}: {result['chunks_written']} chunks -> SQLite + Qdrant")
     else:
-        result = ingester.ingest_directory(a.path, a.limit, a.category)
+        result = ingester.ingest_directory(a.path, a.limit, a.category, a.parser)
         print(f"[done] 目录 {a.path}: {result['total_files']} 文件 -> {result['total_chunks']} chunks")
 
 

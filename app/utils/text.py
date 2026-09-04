@@ -22,6 +22,27 @@ def estimate_tokens(text: str) -> int:
     return max(1, cjk + (other + 3) // 4)
 
 
+_TIK: object | None = None
+
+
+def embedding_tokens(text: str) -> int:
+    """嵌入侧 token 估算(bge-512 硬上限用):优先 tiktoken cl100k(实测中文≈1.1~1.3/字符),
+    不可用则回退 estimate_tokens×1.2(宁多估,防超 512 静默截断)。"""
+    global _TIK
+    if _TIK is None:
+        try:
+            import tiktoken
+            _TIK = tiktoken.get_encoding("cl100k_base")
+        except Exception:  # noqa: BLE001
+            _TIK = False
+    if _TIK:
+        try:
+            return max(1, len(_TIK.encode(text)))
+        except Exception:  # noqa: BLE001
+            pass
+    return max(1, int(estimate_tokens(text) * 1.2))
+
+
 def prune_tool_content(content: str, threshold_chars: int, head_chars: int,
                        tail_chars: int) -> str | None:
     """超 threshold 就保 head+tail、砍中间、插标记;不超或无法有效剪则返回 None。"""

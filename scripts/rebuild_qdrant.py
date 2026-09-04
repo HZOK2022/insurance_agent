@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import load
 from app.retrieval.knowledge_store import KnowledgeStore
-from app.retrieval.embedder import Embedder
+from app.retrieval.embedder import build_embedder
 from app.retrieval.qdrant_store import QdrantStore
 
 
@@ -32,7 +32,7 @@ def main():
         from qdrant_client import QdrantClient
         QdrantClient(url=cfg.qdrant_url).delete_collection(cfg.qdrant_collection)
     store = QdrantStore(cfg.qdrant_url, cfg.qdrant_collection, cfg.embedding_dim)
-    embedder = Embedder(cfg.embedding_model, cfg.embedding_device, cfg.embedding_batch_size)
+    embedder = build_embedder(cfg)
     B = 64
     for i in range(0, len(chunks), B):
         batch = chunks[i:i + B]

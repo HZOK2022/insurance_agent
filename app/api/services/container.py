@@ -3,7 +3,7 @@ from functools import lru_cache
 
 from app.config import load
 from app.llm.client import LLMClient
-from app.retrieval.embedder import Embedder
+from app.retrieval.embedder import Embedder, build_embedder
 from app.retrieval.qdrant_store import QdrantStore
 from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.ingest.ingester import Ingester
@@ -27,7 +27,7 @@ def get_store() -> SessionStore:
 
 @lru_cache(maxsize=1)
 def get_embedder() -> Embedder:
-    return Embedder(get_cfg().embedding_model, get_cfg().embedding_device, get_cfg().embedding_batch_size)
+    return build_embedder(get_cfg())
 
 
 @lru_cache(maxsize=1)

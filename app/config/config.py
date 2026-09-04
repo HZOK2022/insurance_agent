@@ -57,15 +57,25 @@ class Config:
     llm_retry_max_tries: int = 3           # 对瞬时错误(429/5xx/超时)最多重试次数
     llm_retry_base_delay_ms: int = 500    # 指数退避基数(毫秒):0.5s,1s,2s...
     llm_retry_max_delay_ms: int = 8000    # 单次最长等待(毫秒)
-    # 嵌入(本地 bge-large-zh-v1.5)
+    # 嵌入:local=本地 sentence-transformers bge;api=SiliconFlow /v1/embeddings(可配)
+    embedding_backend: str = "local"
     embedding_model: str = "bge-large-zh-v1.5"
     embedding_device: str = "cpu"
     embedding_batch_size: int = 32
     embedding_dim: int = 1024
-    # 切块
-    text_splitter: str = "character"
+    embedding_api_url: str = "https://api.siliconflow.cn/v1/embeddings"
+    embedding_api_model: str = "BAAI/bge-large-zh-v1.5"
+    embedding_api_key: str = ""            # 留空则复用 reranking_external_api_key(SiliconFlow 同一 key)
+    embedding_api_timeout_seconds: int = 30
+    # 切块:structured(结构层级,默认)| character(纯字符滑窗)| paragraph(段落)
+    text_splitter: str = "structured"
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    # 嵌入 token 预算(结构化切块合并/超长降级按"整串含前缀估算 token ≤ 此值"):
+    # bge-large-zh 上限 512,给 tokenizer 差异/前缀开销留余量默认 460(430 对边缘条目太紧易被劈两块);换 bge-m3(8192)改大即可
+    chunk_max_tokens: int = 460
+    # pdf/docx/xlsx 解析后端:auto(回退链)| mineru | markitdown | pdfplumber | native(docx/xlsx)
+    parser_backend: str = "auto"
     # 检索
     top_k: int = 20
     top_k_reranker: int = 3
@@ -146,13 +156,20 @@ _ENV = {
     "llm_retry_max_tries": "LLM_RETRY_MAX_TRIES",
     "llm_retry_base_delay_ms": "LLM_RETRY_BASE_DELAY_MS",
     "llm_retry_max_delay_ms": "LLM_RETRY_MAX_DELAY_MS",
+    "embedding_backend": "EMBEDDING_BACKEND",
     "embedding_model": "EMBEDDING_MODEL",
     "embedding_device": "EMBEDDING_DEVICE",
     "embedding_batch_size": "EMBEDDING_BATCH_SIZE",
     "embedding_dim": "EMBEDDING_DIM",
+    "embedding_api_url": "EMBEDDING_API_URL",
+    "embedding_api_model": "EMBEDDING_API_MODEL",
+    "embedding_api_key": "EMBEDDING_API_KEY",
+    "embedding_api_timeout_seconds": "EMBEDDING_API_TIMEOUT_SECONDS",
     "text_splitter": "TEXT_SPLITTER",
+    "parser_backend": "PARSER_BACKEND",
     "chunk_size": "CHUNK_SIZE",
     "chunk_overlap": "CHUNK_OVERLAP",
+    "chunk_max_tokens": "CHUNK_MAX_TOKENS",
     "top_k": "TOP_K",
     "top_k_reranker": "TOP_K_RERANKER",
     "relevance_threshold": "RELEVANCE_THRESHOLD",

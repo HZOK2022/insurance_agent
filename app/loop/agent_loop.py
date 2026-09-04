@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
@@ -23,6 +24,85 @@ from app.compaction.compactor import (
 )
 
 logger = logging.getLogger("insurance.agent")
+
+
+# ---- 工具参数校验(契约加固)----
+# 为什么需要:handler 里普遍是 `(args or {}).get("query") or ""` 这类兜底取值,模型把参数名
+# 写错(如 q/keyword)不会报错,而是带着空值**真的去执行** —— 检索空串照样 embedding、照样
+# 返回 top_k 最近邻,模型拿到格式完美但语义无关的结果,于是编出带 [idx] 引用的错误答案。
+# 这种"假成功"比崩溃危险得多(崩溃至少有 tool_error)。校验把它在进 handler 之前拦下来,
+# 并给出模型能照着改的诊断(错在哪个字段、期望什么),而不是一句"调用失败"让模型瞎猜。
+try:
+    import jsonschema as _jsonschema
+    from jsonschema import ValidationError as _JsonSchemaError
+except ImportError:      # 校验是加固不是门槛:缺依赖就跳过,绝不让工具集体失效
+    _jsonschema = None
+    _JsonSchemaError = None
+
+
+def _short(v: Any, n: int = 80) -> str:
+    """截断超长值,避免诊断文案把上下文撑爆。"""
+    s = str(v)
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def tool_parameters_schema(tool: dict) -> dict:
+    """从工具的 OpenAI function schema 里取出 parameters(JSON Schema)。
+
+    兼容两种形态:{"function": {"parameters": ...}}(OpenAI 原生)与裸 {"parameters": ...}。
+    没有声明 parameters 则返回空 dict(调用方据此放行)。
+    """
+    fn = (tool or {}).get("schema") or {}
+    if isinstance(fn, dict) and isinstance(fn.get("function"), dict):
+        fn = fn["function"]
+    params = (fn.get("parameters") if isinstance(fn, dict) else None)
+    return params if isinstance(params, dict) else {}
+
+
+def _describe_schema_error(e) -> str:
+    """把 jsonschema 的英文 ValidationError 翻成模型能照着改的中文诊断。
+
+    只翻译最高频的三种(required/type/enum),其余原样透出 message。
+    """
+    path = ".".join(str(p) for p in (e.absolute_path or [])) or "(参数根)"
+    if e.validator == "required":
+        m = re.search(r"'(.+?)' is a required property", e.message or "")
+        missing = m.group(1) if m else "(未知)"
+        return (f"参数不合契约:缺少必填字段 {missing}。"
+                f"请补齐后重新调用,不要用相近的字段名代替。")
+    if e.validator == "type":
+        got = type(e.instance).__name__
+        return (f"参数不合契约:字段 {path} 类型不对,期望 {e.validator_value},"
+                f"实际收到 {got}({_short(e.instance)!r})。请改用正确类型重新调用。")
+    if e.validator == "enum":
+        return (f"参数不合契约:字段 {path} 取值不在允许范围内;"
+                f"允许的值为 {_short(e.validator_value, 120)}。请从中选一个重新调用。")
+    return f"参数不合契约:字段 {path} {e.message}。请按工具说明修正后重新调用。"
+
+
+def validate_tool_arguments(tool: dict, args: Any) -> str | None:
+    """按工具的 JSON Schema 校验模型给出的参数。
+
+    返回 None = 通过;否则返回**喂给模型**的诊断文案(不抛异常、不泄漏内部细节)。
+    放行条件(校验是加固,不是门槛):缺 jsonschema 依赖 / 工具没声明 parameters /
+    校验过程自身出错 —— 一律放行,退化为改动前的行为。
+    """
+    if _jsonschema is None:
+        return None
+    params = tool_parameters_schema(tool)
+    if not params:
+        return None
+    if not isinstance(args, dict):
+        return (f"参数不合契约:参数必须是 JSON 对象,实际收到 {type(args).__name__};"
+                f"请按工具说明重新调用,不要省略参数名。")
+    try:
+        _jsonschema.validate(instance=args, schema=params)
+    except _JsonSchemaError as e:      # type: ignore[misc]
+        return _describe_schema_error(e)
+    except Exception:
+        logger.exception("工具参数校验自身异常,放行")
+        return None
+    return None
 
 
 # ---- 块模型(照 dsh ContentBlock)----
@@ -392,8 +472,12 @@ class AgentLoop:
                         yield self._emit("tool_result", {"tool": name, "ok": _tok,
                                                          "result_truncated": truncated,
                                                          "error": _terr})
+                        # ok / error_code 只进 tool_result 事件(UI 与审计可见),模型的 tool 消息
+                        # 里只有 content —— 不加标记的话它只能从文案字面猜"这算不算失败"。
+                        # 故失败时补一个结构化前缀,让模型明确知道:这是失败,不是一条普通结果。
+                        _feed = pruned if _tok else f"【工具调用失败】{pruned}"
                         conversation.append({"role": "tool", "tool_call_id": tc.id or f"call_{i}",
-                                             "name": name, "content": pruned})
+                                             "name": name, "content": _feed})
                         references.append(reference)
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
@@ -536,13 +620,21 @@ class AgentLoop:
     def _run_tool(self, name: str, args: Any, start_idx: int = 0, session_id: str | None = None) -> tuple[str, Any, bool, str | None]:
         """按名字查表执行工具;返回 (喂给 LLM 的 content, reference, ok, error_code)。
 
-        ok=False 表示工具未成功执行(未知/抛异常),error_code 区分 unknown_tool/tool_error/retrieval_unavailable。
+        ok=False 表示工具未成功执行(未知/参数不合契约/抛异常),
+        error_code 区分 unknown_tool/invalid_arguments/tool_error/retrieval_unavailable。
         照 dsh:失败是"一等错误结果"(isError + error.code),喂给模型/用户的 content 为脱敏可读
         文案,完整异常只进日志/logging,不泄漏内部细节。start_idx=本 turn 已返回 chunk 数,用于 [idx] 整轮编号。
+
+        执行前先按 schema 校验参数:不通过则不进 handler(避免"参数写错→空值→假成功")。
         """
         tool = self.tools.get(name)
         if not tool:
             return "（无此工具）", None, False, "unknown_tool"
+        _bad_args = validate_tool_arguments(tool, args)
+        if _bad_args:
+            # 参数不合契约:不执行,把可操作的诊断回给模型(它才知道该补哪个字段)。
+            logger.warning("工具参数不合契约 tool=%s args=%s → invalid_arguments", name, _short(args))
+            return _bad_args, None, False, "invalid_arguments"
         try:
             if _handler_accepts_session(tool["handler"]):
                 raw = tool["handler"](args, start_idx, session_id=session_id)

@@ -16,24 +16,27 @@ def to_chunk(hit: dict, score) -> dict:
             "version": m.get("version", ""), "section": m.get("section", ""),
             "source": m.get("source", ""), "doc_type": m.get("doc_type", ""),
             "title": m.get("title", ""), "product_category": m.get("product_category", ""),
+            "product_name": m.get("product_name", ""),
             "content": hit.get("content", "")}
 
 
 def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: int = 3,
                      rerank_fn=None, hybrid=None, hybrid_weight: float = 0.0,
-                     category: str | None = None) -> list[dict]:
+                     category: str | None = None, product: str | None = None) -> list[dict]:
     """检索:默认纯稠密;hybrid + hybrid_weight>0 时与 BM25 融合(recall 更大),再重排。
 
     hybrid: BM25Index(含 chunks_by_id);hybrid_weight: 0=纯稠密,1=纯 BM25。
     category: 可选保险类别(医疗险/重疾险/意外险/…)。软偏置:检索后把同类别块稳定提到前面,
     但不排除其它类别(top_k 不变,类别匹配优先,跨类别仍保留在低优先级)。
     用于用户明确指定险种时圈定检索范围。
+    product: 可选产品名(如"尊享e生2025")。软偏置:把该产品的块稳定提到前面(不排除其它),
+    使用户明确点名的产品优先命中。
     """
     qvec = embedder.embed([query])
     if not qvec:
         return []
     use_hybrid = hybrid is not None and hybrid_weight > 0
-    pool = top_k * 2 if (use_hybrid or category) else top_k          # 混合时扩大稠密候选池,避免融合后被截断丢回调
+    pool = top_k * 2 if (use_hybrid or category or product) else top_k          # 混合时扩大稠密候选池,避免融合后被截断丢回调
     try:
         dense_hits = store.search(qvec[0], pool)
     except RetrievalUnavailable:
@@ -65,6 +68,14 @@ def search_knowledge(embedder, store, query: str, top_k: int = 20, top_rerank: i
                     if int(i["index"]) < len(hits)]
             hits = hits[:top_rerank]
     chunks = [to_chunk(h, h.get("score")) for h in hits]
+    if product:
+        # 软偏置:该产品块稳定提到前面(用户点名产品优先命中)
+        same = [c for c in chunks if c.get("product_name") == product]
+        rest = [c for c in chunks if c.get("product_name") != product]
+        chunks = same + rest
+        if not same:
+            # 产品名未命中任何块(可能库中无该产品),退化为不按产品过滤,避免返回空
+            pass
     if category:
         # 软偏置:同类别块稳定提到前面,不排除其它类别(top_k 不变)
         same = [c for c in chunks if c.get("product_category") == category]

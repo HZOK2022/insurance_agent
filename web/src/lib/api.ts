@@ -115,8 +115,13 @@ export interface KbChunkListResp { doc_id: string; total: number; page: number; 
 export const listKbChunks = (docId: string, page: number = 1, pageSize: number = 100) =>
   json<KbChunkListResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/chunks?page=' + page + '&page_size=' + pageSize)
 
-export interface KbIngestTextReq { text: string; doc_id: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string }
-export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string }
+export interface KbStructNode { level: number; title: string; page: number | null; parent: string; chunk_ids?: number[] }
+export interface KbStructureResp { doc_id: string; nodes: KbStructNode[] }
+export const getKbStructure = (docId: string) =>
+  json<KbStructureResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/structure')
+
+export interface KbIngestTextReq { text: string; product_name: string; doc_id?: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string; text_splitter?: string; chunk_size?: number; overlap?: number; force?: boolean }
+export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string; conflict?: boolean }
 export const ingestKbText = (body: KbIngestTextReq) =>
   json<KbIngestResp>('/api/kb/ingest/text', { method: 'POST', body: JSON.stringify(body) })
 
@@ -127,3 +132,116 @@ export const deleteKbDocument = (docId: string) =>
 export interface KbReindexResp { ok: boolean; total_chunks: number; embedded: number; message: string }
 export const reindexKb = () =>
   json<KbReindexResp>('/api/kb/reindex', { method: 'POST' })
+
+// ---- KB 文件上传 + 三路解析对比(不落库)----
+export interface OutlineNode { level: number; title: string }
+export interface ChunkViewNode { i: number; section: string; title: string; content: string }
+export interface ParsePreviewItem {
+  backend: string; ok: boolean; err: string;
+  chars: number; lines: number; md_heads: number;
+  part: number; article: number; subitem: number; numbered: number;
+  chunks: number; section_fill_pct: number; avg_path_len: number; overlong: number;
+  excerpt: string; outline: OutlineNode[]; text: string; chunks_view: ChunkViewNode[]; elapsed_ms: number
+}
+export interface ParsePreviewResp { file_name: string; items: ParsePreviewItem[] }
+export interface KbIngestFileResp extends KbIngestResp { parser: string }
+
+async function formPost<T>(path: string, fd: FormData): Promise<T> {
+  const r = await fetch(BASE + path, { method: 'POST', headers: authHeaders(), body: fd })
+  if (r.status === 400) {
+    let detail: string | undefined
+    try { const d = await r.json(); detail = d?.detail } catch { /* noop */ }
+    throw new Error(detail || path + ' -> 400')
+  }
+  if (!r.ok) throw new Error(path + ' -> ' + r.status)
+  return r.json() as Promise<T>
+}
+
+export interface IngestProgress { stage: string; done: number; total: number }
+// 上传摄取 = SSE:逐帧推进度(chunked/embed/qdrant) → done|error
+export async function ingestKbFile(fd: FormData, onProgress?: (p: IngestProgress) => void): Promise<KbIngestFileResp> {
+  const r = await fetch(BASE + '/api/kb/ingest/file', { method: 'POST', headers: authHeaders(), body: fd })
+  if (!r.ok) {
+    let detail: string | undefined
+    try { const d = await r.json(); detail = d?.detail } catch { /* noop */ }
+    throw new Error(detail || '/api/kb/ingest/file -> ' + r.status)
+  }
+  if (!r.body) throw new Error('摄取失败: 无响应流')
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let i
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, i); buf = buf.slice(i + 2)
+      const line = frame.split('\n').find((l) => l.startsWith('data:'))
+      if (!line) continue
+      const ev = JSON.parse(line.slice(5))
+      if (ev.type === 'progress' && onProgress) onProgress(ev as IngestProgress)
+      else if (ev.type === 'done') return ev as KbIngestFileResp
+      else if (ev.type === 'error') throw new Error(ev.message || '摄取失败')
+    }
+  }
+  throw new Error('摄取中断: 连接结束未收到完成事件')
+}
+export const previewKbParse = (fd: FormData) => formPost<ParsePreviewResp>('/api/kb/parse/preview', fd)
+
+export const PARSER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'auto', label: 'auto · 自动回退链(MinerU→MarkItDown→pdfplumber)' },
+  { value: 'mineru', label: 'mineru · MinerU 在线(需 MINERU_API_KEY,耗每日额度)' },
+  { value: 'markitdown', label: 'markitdown · MarkItDown(本地)' },
+  { value: 'pdfplumber', label: 'pdfplumber · PDF 直抽(本地,仅 pdf)' },
+  { value: 'native', label: 'native · 原库直读(仅 docx/xlsx)' },
+]
+
+export const CHUNK_METHOD_OPTIONS: { value: string; label: string }[] = [
+  { value: 'structured', label: '结构层级(默认)' },
+  { value: 'character', label: '按字符数量' },
+  { value: 'paragraph', label: '按段落' },
+]
+
+// ---- 上传前"预览切块"→"确认索引"(D70):预览复用,避免二次解析 ----
+export interface UploadChunkNode { section: string; title: string; content: string }
+export interface UploadPreviewResp {
+  ok: boolean; err: string; doc_type: string; parser: string; text_splitter: string;
+  chunk_count: number; chunk_size: number; overlap: number;
+  outline: KbStructNode[]; chunks: UploadChunkNode[]
+}
+export interface IngestCommitReq {
+  product_name: string; doc_id?: string; title?: string; version?: string; product_category?: string;
+  doc_type?: string; source?: string; parser?: string; text_splitter?: string;
+  outline: KbStructNode[]; chunks: UploadChunkNode[]; force?: boolean
+}
+export const previewKbUpload = (fd: FormData) => formPost<UploadPreviewResp>('/api/kb/ingest/preview', fd)
+// commit = SSE:写库+嵌入进度逐帧
+export async function commitKbUpload(body: IngestCommitReq, onProgress?: (p: IngestProgress) => void): Promise<KbIngestResp> {
+  const r = await fetch(BASE + '/api/kb/ingest/commit', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!r.ok) {
+    let detail: string | undefined
+    try { const d = await r.json(); detail = d?.detail } catch { /* noop */ }
+    throw new Error(detail || '/api/kb/ingest/commit -> ' + r.status)
+  }
+  if (!r.body) throw new Error('索引失败: 无响应流')
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let i
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, i); buf = buf.slice(i + 2)
+      const line = frame.split('\n').find((l) => l.startsWith('data:'))
+      if (!line) continue
+      const ev = JSON.parse(line.slice(5))
+      if (ev.type === 'progress' && onProgress) onProgress(ev as IngestProgress)
+      else if (ev.type === 'done') return ev as KbIngestResp
+      else if (ev.type === 'error') throw new Error(ev.message || '索引失败')
+    }
+  }
+  throw new Error('索引中断: 连接结束未收到完成事件')
+}
