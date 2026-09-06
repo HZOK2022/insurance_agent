@@ -51,7 +51,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uChunkSize, setUChunkSize] = useState(1000)
   const [uOverlap, setUOverlap] = useState(200)
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
-  const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -135,61 +134,51 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     }
   }
 
-  // D70:预览切块(不写库、不发嵌入)——用所选解析+切块方式,先看目录/切块内容
-  const handlePreview = async () => {
+  // D70/72:一键「上传到知识库」——解析+切块(展示目录/切块)→ 写库+索引(SSE 进度)。
+  // 同名产品内容不同且未 force → 先弹"是否覆盖"确认;force=确认后覆盖写入。
+  const handleUploadFile = async (opts?: { force?: boolean }) => {
     if (!uFile) { flash("请选择文件", false); return }
-    setUPreviewBusy(true); setUPreview(null)
+    if (!uProductName.trim()) { flash("请填产品名称", false); return }
+    setUBusy(true); setUPreview(null)
     try {
+      // 1. 解析 + 切块(不写库):返回目录树 + 切块内容,供展示 + 写库复用(不二次解析)
       const fd = new FormData()
       fd.append("file", uFile)
       fd.append("parser", uParser)
       fd.append("text_splitter", uMethod)
       if (uChunkSize > 0) fd.append("chunk_size", String(uChunkSize))
       if (uOverlap >= 0) fd.append("overlap", String(uOverlap))
-      const r = await previewKbUpload(fd)
-      if (r.ok) {
-        setUPreview(r)
-        flash(`预览完成: ${r.chunk_count} 块 · ${r.text_splitter} · ${r.parser}`)
-      } else flash("预览失败: " + (r.err || "解析失败"), false)
-    } catch (e: any) {
-      flash("预览失败: " + (e?.message || ""), false)
-    } finally { setUPreviewBusy(false) }
-  }
-
-  // D70:确认索引——把预览得到的 chunks/outline 提交写库(不再解析);force:同名产品内容不同时强制覆盖
-  const handleCommit = async (opts?: { force?: boolean }) => {
-    if (!uPreview) { flash("请先预览切块", false); return }
-    if (!uPreview.chunks.length) { flash("预览为空,无法索引", false); return }
-    if (!uProductName.trim()) { flash("请先填产品名称", false); return }
-    setUBusy(true)
-    try {
+      const pv = await previewKbUpload(fd)
+      if (!pv.ok) { flash("解析失败: " + (pv.err || "解析失败"), false); return }
+      setUPreview(pv)
+      // 2. 写库 + 嵌入 + 索引(SSE 进度)
       setUProg({ stage: "chunked", done: 0, total: 1 })
       const r = await commitKbUpload({
         product_name: uProductName.trim(),
         title: uTitle || uProductName.trim(),
         version: uVersion || "v1",
         product_category: uCategory || undefined,
-        doc_type: uPreview.doc_type || "policy_pdf",
+        doc_type: pv.doc_type || "policy_pdf",
         source: "upload-preview/" + uProductName.trim(),
         parser: uParser,
-        text_splitter: uPreview.text_splitter,
-        outline: uPreview.outline,
-        chunks: uPreview.chunks,
+        text_splitter: pv.text_splitter,
+        outline: pv.outline,
+        chunks: pv.chunks,
         force: opts?.force,
       }, (p) => setUProg(p))
       setUProg(null)
       if (r.ok) {
-        flash(`成功摄取: ${r.doc_id} (${r.chunks_written} chunks)`)
+        flash(`已上传到知识库: ${r.doc_id} (${r.chunks_written} 块)`)
         setUFile(null); setUPreview(null); setUTitle(""); setUCategory("")
-        setView("list"); loadDocs(1)
+        openChunks(r.doc_id)   // 直接打开该文档「查看」:看目录+切块
       } else if (r.conflict && !opts?.force) {
         const go = window.confirm(r.message + "\n\n确定覆盖该产品的旧文档？")
-        if (go) { await handleCommit({ force: true }); return }
+        if (go) { await handleUploadFile({ force: true }); return }
         flash("已取消")
       } else flash(r.message, false)
     } catch (e: any) {
       setUProg(null)
-      flash("索引失败: " + (e?.message || ""), false)
+      flash("上传失败: " + (e?.message || ""), false)
     } finally { setUBusy(false) }
   }
 
@@ -437,13 +426,12 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             <div className="kb-form-actions">
               {uMode === "file" ? (
                 <>
-                  <button className="kb-btn" onClick={handlePreview} disabled={uPreviewBusy || uBusy}>{uPreviewBusy ? "预览中…" : "预览切块"}</button>
-                  <button className="kb-btn kb-btn-primary" onClick={() => handleCommit()} disabled={uBusy || !uPreview || !uProductName.trim()}>{uBusy ? "索引中…" : "确认并索引"}</button>
+                  <button className="kb-btn kb-btn-primary" onClick={() => handleUploadFile()} disabled={uBusy || !uProductName.trim() || !uFile}>{uBusy ? "上传中…" : "上传到知识库"}</button>
                   <button className="kb-btn" onClick={resetUpload}>取消</button>
                 </>
               ) : (
                 <>
-                  <button className="kb-btn kb-btn-primary" onClick={() => handleUpload()} disabled={uBusy || !uProductName.trim()}>{uBusy ? "处理中…" : "上传并索引"}</button>
+                  <button className="kb-btn kb-btn-primary" onClick={() => handleUpload()} disabled={uBusy || !uProductName.trim()}>{uBusy ? "上传中…" : "上传到知识库"}</button>
                   <button className="kb-btn" onClick={resetUpload}>取消</button>
                 </>
               )}
@@ -460,12 +448,12 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             <div className="cmp-upload-split">
               <div className="cmp-tree-pane">
                 <div className="cmp-pane-head">
-                  <span>结构树 · {uPreview.chunk_count} 块 ({uPreview.text_splitter})</span>
+                  <span>目录 · {uPreview.chunk_count} 块 ({uPreview.text_splitter})</span>
                   <span className="cmp-pane-sub">{prevTree.length} 节点</span>
                 </div>
                 <div className="cmp-tree">
                   {uPreview.text_splitter !== "structured"
-                    ? <div className="cmp-hint">非结构切分(字符/段落),无结构树</div>
+                    ? <div className="cmp-hint">非结构切分(字符/段落),无目录</div>
                     : prevTree.length > 0 ? prevTree.map(({ node, path }, i) => {
                         const ids = prevNodeChunks[path] || []
                         return (
@@ -480,7 +468,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               </div>
               <div className="cmp-chunk-pane">
                 <div className="cmp-pane-head">
-                  <span>切块内容(预览)</span>
+                  <span>内容预览</span>
                   <span className="cmp-pane-sub">{uPreview.chunk_count} 块</span>
                 </div>
                 <div className="cmp-chunks">
