@@ -103,7 +103,10 @@ def ingest_text(
             return False, result, f"文档 {doc_id} 切块后为空，未写入"
         # 标记BM25为脏，下次检索懒重建
         mark_bm25_dirty()
-        return True, result, f"成功摄取文档 {doc_id}: {chunks_written} chunks"
+        msg = f"成功摄取文档 {doc_id}: {chunks_written} chunks"
+        if result.get("index_skipped"):
+            msg += " · " + result.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
+        return True, result, msg
     except Exception as e:
         msg = f"摄取失败: {e}"
         logger.error(msg, exc_info=True)
@@ -187,7 +190,10 @@ def ingest_file(
         if not doc_id or chunks_written == 0:
             return False, result, f"解析为空/不支持(parser={parser}): {file_path}", parser
         mark_bm25_dirty()
-        return True, result, f"成功摄取 {doc_id}(parser={parser}): {chunks_written} chunks", parser
+        msg = f"成功摄取 {doc_id}(parser={parser}): {chunks_written} chunks"
+        if result.get("index_skipped"):
+            msg += " · " + result.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
+        return True, result, msg, parser
     except Exception as e:
         msg = f"摄取失败: {e}"
         logger.error(msg, exc_info=True)
@@ -283,7 +289,10 @@ def commit_upload(
         if not resp.get("chunks_written", 0):
             return False, resp, "切块后为空,未写入"
         mark_bm25_dirty()
-        return True, resp, f"成功摄取 {doc_id}: {resp.get('chunks_written', 0)} chunks"
+        msg = f"成功摄取 {doc_id}: {resp.get('chunks_written', 0)} chunks"
+        if resp.get("index_skipped"):
+            msg += " · " + resp.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
+        return True, resp, msg
     except Exception as e:
         msg = f"摄取失败: {e}"
         logger.error(msg, exc_info=True)

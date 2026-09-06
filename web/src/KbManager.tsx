@@ -225,7 +225,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       }, (p) => setUProg(p))
       setUProg(null)
       if (r.ok) {
-        flash(`已上传到知识库: ${r.doc_id} (${r.chunks_written} 块)`)
+        flash(r.message || `已上传到知识库: ${r.doc_id} (${r.chunks_written} 块)`)
         setUFile(null); setUPreview(null); setUTitle(""); setUCategory("")
         openChunks(r.doc_id)   // 直接打开该文档「查看」:看目录+切块
       } else if (r.conflict && !opts?.force) {
@@ -259,7 +259,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         force: opts?.force,
       })
       if (r.ok) {
-        flash(`成功摄取: ${r.doc_id} (${r.chunks_written} chunks)`)
+        flash(r.message || `成功摄取: ${r.doc_id} (${r.chunks_written} chunks)`)
         setUText(""); setUProductName(""); setUVersion("v1"); setUCategory(""); setUTitle("")
         setView("list"); loadDocs(1)
       } else if (r.conflict && !opts?.force) {
