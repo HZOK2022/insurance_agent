@@ -388,9 +388,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       {view === "upload" && (
         <div className="kb-body">
           <div className="kb-form">
-            <datalist id="kb-product-names">
-              {Array.from(new Set([...docs.map((d) => d.doc_id), recentGet("product_name")].filter(Boolean))).map((n) => <option key={n} value={n} />)}
-            </datalist>
             <datalist id="kb-recent-version">{recentGet("version") && <option value={recentGet("version")} />}</datalist>
             <datalist id="kb-recent-title">{recentGet("title") && <option value={recentGet("title")} />}</datalist>
             <div className="kb-mode-row">
@@ -402,7 +399,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -430,7 +427,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
