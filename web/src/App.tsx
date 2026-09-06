@@ -295,7 +295,11 @@ export default function App() {
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [narrow, setNarrow] = useState(false)
-  const [currentView, setCurrentView] = useState<View>("chat")
+  // 顶层视图持久化:刷新后停留在当前页(对话/知识管理/解析对比),不强制跳回对话
+  const [currentView, setCurrentView] = useState<View>(() => {
+    const v = localStorage.getItem("ins-view")
+    return v === "chat" || v === "knowledge" || v === "compare" ? v : "chat"
+  })
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
   const [cfgWindow, setCfgWindow] = useState(0)   // 后端当前配置的 context_window(前端"窗口"分母,取自 /api/config,不依赖可能过期的历史 request_context)
@@ -318,6 +322,7 @@ export default function App() {
 
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
+  useEffect(() => { localStorage.setItem("ins-view", currentView) }, [currentView])   // 记住当前页,刷新不跳回对话
   // 知识管理页隐藏左侧边栏
   const sideWidth = currentView !== "chat" ? 0 : (narrow ? 0 : (sideCollapsed ? 0 : sideW))
   const cols = solve(vp, sideWidth, detailsOpen && currentView === "chat" ? detW : 0, narrow)
