@@ -35,6 +35,26 @@ def _summarize_args(args: Any, cap: int = 200) -> str:
     return s if len(s) <= cap else s[:cap] + f"…(+{len(s) - cap}字)"
 
 
+def _summarize_chunks(chunks: Any, limit: int = 5, snippet: int = 80) -> str:
+    """检索召回摘要:每个命中 chunk 的 score/文档/章节/前 snippet 字(日志用,不落全文)。
+    RAG 问题多出在检索——让日志一眼看清"召回了什么、分数多高、来自哪"。"""
+    if not chunks or not isinstance(chunks, list):
+        return ""
+    parts: list[str] = []
+    for c in chunks[:limit]:
+        if not isinstance(c, dict):
+            continue
+        score = c.get("score")
+        doc = c.get("doc_id") or c.get("product_name") or ""
+        sec = (c.get("section") or "").strip()
+        body = (c.get("content") or "").strip().replace("\n", " ")
+        body = body[:snippet]
+        sc = f"{float(score):.2f}" if isinstance(score, (int, float)) else "?"
+        tag = doc + (f" §{sec}" if sec else "") + (f" {body}" if body else "")
+        parts.append(f"[{sc} {tag}]")
+    return " ".join(parts)
+
+
 # ---- 工具参数校验(契约加固)----
 # 为什么需要:handler 里普遍是 `(args or {}).get("query") or ""` 这类兜底取值,模型把参数名
 # 写错(如 q/keyword)不会报错,而是带着空值**真的去执行** —— 检索空串照样 embedding、照样
@@ -386,6 +406,9 @@ class AgentLoop:
                 if n_retrieve >= max_retrieve:
                     msgs.append({"role": "system", "content": "检索次数已达上限,请立即基于已有资料输出最终回答,不要继续调用工具;资料不全请明确说明。"})
                 assembler = BlockAssembler()
+                _pt_before = _prompt_tokens
+                _ct_before = _completion_tokens
+                _step_ttft: float | None = None
 
                 for chunk in self._stream_blocks(msgs):
                     if chunk.get("type") == "usage":
@@ -393,8 +416,11 @@ class AgentLoop:
                         _prompt_tokens += int(u.get("prompt_tokens") or 0)
                         _completion_tokens += int(u.get("completion_tokens") or 0)
                         continue
-                    if chunk.get("ttft_ms") is not None and _ttft is None:
-                        _ttft = chunk.get("ttft_ms")   # 首 token 时延(照 loop.py 口径)
+                    if chunk.get("ttft_ms") is not None:
+                        if _ttft is None:
+                            _ttft = chunk.get("ttft_ms")   # 首 token 时延(照 loop.py 口径)
+                        if _step_ttft is None:
+                            _step_ttft = chunk.get("ttft_ms")
                     yield self._emit("assistant_chunk", {"kind": chunk["type"].replace("-delta", ""),
                                                          "delta": chunk.get("text") or chunk.get("argumentsDelta", ""),
                                                          "ttft_ms": chunk.get("ttft_ms")})
@@ -408,6 +434,17 @@ class AgentLoop:
                         break
                 if _stopped:
                     break
+
+                # 每次 LLM 调用落一行日志(本步 token 增量/首 token 时延/步耗时/吞吐),便于定位"哪步贵/哪步慢"
+                _step_ms = int((time.time() - (_step_t0 or time.time())) * 1000)
+                _llm_pt = _prompt_tokens - _pt_before
+                _llm_ct = _completion_tokens - _ct_before
+                _llm_tps = (_llm_ct / (_step_ms / 1000)) if (_llm_ct > 0 and _step_ms > 0) else None
+                logger.info("llm step=%s model=%s ptokens=%s ctokens=%s ttft=%s run_ms=%s tps=%s",
+                            n_steps, self._effective_model, _llm_pt, _llm_ct,
+                            _step_ttft, _step_ms, _llm_tps,
+                            extra={"session_id": session_id, "trace_id": session_id,
+                                   "model": self._effective_model})
 
                 tool_calls = assembler.tool_calls()
                 # D52 知识检索达上限:仅当本轮还调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
@@ -466,11 +503,14 @@ class AgentLoop:
                                 content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
-                        # 排查摘要:每个工具调用落一行日志(参数/命中块数/ok/错误码),全文进 events
+                        # 排查摘要:每个工具调用落一行日志(参数/命中块数/ok/错误码/结果头),全文进 events
+                        _res_head = (content or "").strip().replace("\n", " ") if isinstance(content, str) else ""
+                        _res_log = _res_head[:120] + (f"…(+{len(_res_head) - 120}字)" if len(_res_head) > 120 else "")
                         logger.info(
-                            "step tool sid=%s tool=%s ok=%s code=%s args=%s out=%d块",
+                            "step tool sid=%s tool=%s ok=%s code=%s args=%s out=%d块 res=%s",
                             session_id, name, _tok, _terr, _summarize_args(args),
                             len(reference) if isinstance(reference, list) else 0,
+                            _res_log,
                             extra={"session_id": session_id, "trace_id": session_id, "tool": name})
                         # D55:引用编号每轮 turn-local —— 检索内容保持 handler 的当轮编号
                         # (search_knowledge 用 start_idx 从 1 连续编号),不再用会话全局编号重排(D35 取消)。
@@ -499,9 +539,10 @@ class AgentLoop:
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
                         if isinstance(reference, list) and reference and isinstance(reference[0], dict):
-                            logger.info("检索 sid=%s query=%s hits=%d", session_id,
+                            logger.info("检索 sid=%s query=%s hits=%d %s", session_id,
                                         str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
                                         len(reference),
+                                        _summarize_chunks(reference),
                                         extra={"session_id": session_id, "trace_id": session_id})
                             yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
                     if _stopped:
@@ -513,9 +554,10 @@ class AgentLoop:
                 # D55:回答引用按当轮 references 顺序解析(present_answer 平铺编号 1..N)——
                 # 模型只见过当轮编号(检索内容当轮从 1 起),上下文回答(无检索)无块可解析 → 无角标。
                 blocks, citations = self.present_answer(answer_text or "（无回答）", references)
-                logger.info("回答 sid=%s chars=%d cites=%d head=%s", session_id,
-                            len(answer_text or ""), len(citations or []),
-                            (answer_text or "").strip().replace("\n", " ")[:60],
+                _cids = [c.get("idx") for c in (citations or []) if isinstance(c, dict) and c.get("idx") is not None]
+                logger.info("回答 sid=%s chars=%d cites=%s head=%s", session_id,
+                            len(answer_text or ""), _cids or len(citations or []),
+                            (answer_text or "").strip().replace("\n", " ")[:200],
                             extra={"session_id": session_id, "trace_id": session_id})
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})

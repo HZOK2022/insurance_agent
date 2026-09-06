@@ -111,7 +111,9 @@ async def _auth_and_ratelimit(request: Request, call_next):
 
 
 def create_app() -> FastAPI:
-    setup_logging(getattr(container.get_cfg(), "log_level", "INFO"), getattr(container.get_cfg(), "log_dir", "data/logs"))
+    _c = container.get_cfg()
+    setup_logging(getattr(_c, "log_level", "INFO"), getattr(_c, "log_dir", "data/logs"),
+                  file_format=getattr(_c, "log_file_format", "text"))
     app = FastAPI(title="insurance-agent", version="0.1")
     app.include_router(health.router)
     app.include_router(config.router)

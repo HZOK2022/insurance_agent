@@ -136,6 +136,7 @@ class Config:
     # 日志/可观测
     log_level: str = "INFO"
     log_dir: str = "data/logs"
+    log_file_format: str = "text"   # 日志文件格式:text=人读(开发,默认), json=机器可解析(生产);.env LOG_FILE_FORMAT
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
@@ -237,6 +238,7 @@ _ENV = {
     "api_rate_window_seconds": "API_RATE_WINDOW_SECONDS",
     "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",
     "llm_price_output_per_1m": "LLM_PRICE_OUTPUT_PER_1M",
+    "log_file_format": "LOG_FILE_FORMAT",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",
