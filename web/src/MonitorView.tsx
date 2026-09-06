@@ -32,7 +32,7 @@ function card(cls: "ok" | "warn" | "bad", label: string, val: string, hint?: str
   )
 }
 
-export default function MonitorView({ onOpenSession }: { onOpenSession: (sid: string) => void }) {
+export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: (sid: string) => void; onBack: () => void }) {
   const [m, setM] = useState<GlobalMetrics | null>(null)
   const [rows, setRows] = useState<any[]>([])
   const [err, setErr] = useState("")
@@ -55,6 +55,7 @@ export default function MonitorView({ onOpenSession }: { onOpenSession: (sid: st
   return (
     <div className="mon-view">
       <div className="mon-head">
+        <button className="mon-back" onClick={onBack}>← 返回对话</button>
         <span className="mon-title">观测总览</span>
         <span className="mon-sub">{m ? `共 ${fmt(m.turns.total)} 轮 · ${fmt(rows.length)} 会话` : "加载中…"}</span>
         <button className="audit-btn" onClick={() => setTick((x) => x + 1)}>刷新</button>

@@ -322,6 +322,8 @@ export default function App() {
     const q = new URLSearchParams(window.location.search).get("view") as View | null
     if (q && valid.includes(q)) return q
     const v = localStorage.getItem("ins-view")
+    // 检查类页(观测/诊断)不做刷新默认落地:上次若是它们,加载回到对话;`?view=x` 深链仍可用
+    if (v === "monitor" || v === "diagnose") return "chat"
     return valid.includes(v as View) ? (v as View) : "chat"
   })
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
@@ -346,7 +348,7 @@ export default function App() {
 
   useEffect(() => { const el = frameRef.current; if (!el) return; const ro = new ResizeObserver(() => setVp(el.getBoundingClientRect().width)); ro.observe(el); return () => ro.disconnect() }, [])
   useEffect(() => { setNarrow(vp < SIDEBAR_AUTO_COLLAPSE) }, [vp])
-  useEffect(() => { localStorage.setItem("ins-view", currentView) }, [currentView])   // 记住当前页,刷新不跳回对话
+  useEffect(() => { if (currentView !== "monitor" && currentView !== "diagnose") localStorage.setItem("ins-view", currentView) }, [currentView])   // 记住工作区页;检查类页不入记忆,刷新回对话
   // 知识管理页隐藏左侧边栏
   const sideWidth = currentView !== "chat" ? 0 : (narrow ? 0 : (sideCollapsed ? 0 : sideW))
   const cols = solve(vp, sideWidth, detailsOpen && currentView === "chat" ? detW : 0, narrow)
@@ -581,7 +583,7 @@ export default function App() {
       ) : currentView === "memory" ? (
         <MemoryView sessionId={activeId} onBack={() => setCurrentView("chat")} />
       ) : currentView === "monitor" ? (
-        <MonitorView onOpenSession={(sid) => { selectSession(sid); setActiveTab("trace"); setCurrentView("chat") }} />
+        <MonitorView onOpenSession={(sid) => { selectSession(sid); setActiveTab("trace"); setCurrentView("chat") }} onBack={() => { setCurrentView("chat"); localStorage.setItem("ins-view", "chat") }} />
       ) : (
         <CompareView onBack={() => setCurrentView("chat")} onOpenKb={() => setCurrentView("knowledge")} />
       )}
