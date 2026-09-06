@@ -366,26 +366,24 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   <label className="kb-form-label">产品名称 *</label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
                 </div>
-                <div className="kb-form-row">
-                  <div className="kb-form-field">
-                    <label className="kb-form-label">版本</label>
-                    <input className="kb-form-input" value={uVersion} onChange={(e) => setUVersion(e.target.value)} placeholder="v1" />
-                  </div>
-                  <div className="kb-form-field">
-                    <label className="kb-form-label">保险类型 *</label>
-                    <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
-                      <option value="">请选择保险类型</option>
-                      {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">保险类型 *</label>
+                  <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
+                    <option value="">请选择保险类型</option>
+                    {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">版本</label>
+                  <input className="kb-form-input" value={uVersion} onChange={(e) => setUVersion(e.target.value)} placeholder="v1" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">标题</label>
                   <input className="kb-form-input" value={uTitle} onChange={(e) => setUTitle(e.target.value)} placeholder="文档显示标题(可选)" />
                 </div>
-                <div className="kb-form-field">
+                <div className="kb-form-field kb-span-full kb-field-block">
                   <label className="kb-form-label">文档内容 *</label>
-                  <textarea className="kb-form-textarea" value={uText} onChange={(e) => setUText(e.target.value)} placeholder="粘贴文档内容(文本)…" rows={12} />
+                  <textarea className="kb-form-textarea" value={uText} onChange={(e) => setUText(e.target.value)} placeholder="粘贴文档内容(文本)…" rows={10} />
                 </div>
               </>
             )}
@@ -395,52 +393,48 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *</label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
-                  {uFile && <div className="kb-hint">doc_id = 产品名称(唯一);同名产品内容不同会提示"是否覆盖",需确认</div>}
+                </div>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">保险类型 *</label>
+                  <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
+                    <option value="">请选择保险类型</option>
+                    {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">解析后端</label>
+                  <select className="kb-form-input" value={uParser} onChange={(e) => { setUParser(e.target.value); setUPreview(null) }}>
+                    {PARSER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">选择文件 *</label>
                   <input className="kb-form-input" type="file" accept=".pdf,.docx,.xlsx,.md,.txt"
                          onChange={(e) => { setUFile(e.target.files?.[0] || null); setUPreview(null) }} />
                 </div>
-                <div className="kb-form-row">
-                  <div className="kb-form-field">
-                    <label className="kb-form-label">解析后端</label>
-                    <select className="kb-form-input" value={uParser} onChange={(e) => { setUParser(e.target.value); setUPreview(null) }}>
-                      {PARSER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="kb-form-field">
-                    <label className="kb-form-label">保险类型 *</label>
-                    <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
-                      <option value="">请选择保险类型</option>
-                      {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                </div>
+                {uFile && <div className="kb-hint">doc_id = 产品名称(唯一);同名产品内容不同会提示"是否覆盖",需确认</div>}
                 <div className="kb-note">提示:MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown 即可。想看同一文件三路解析对比,点右上「解析对比」或用户菜单里的「解析对比」。</div>
               </>
             )}
 
-            <div className="kb-form-row">
-              <div className="kb-form-field">
-                <label className="kb-form-label">切分方式</label>
-                <select className="kb-form-input" value={uMethod}
-                        onChange={(e) => { setUMethod(e.target.value); if (e.target.value === "structured") setUOverlap(0); setUPreview(null) }}>
-                  {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
-              <div className="kb-form-field">
-                <label className="kb-form-label">chunk_size(字符)</label>
-                <input className="kb-form-input" type="number" value={uChunkSize} min={1}
-                       onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
-              </div>
-              <div className="kb-form-field">
-                <label className="kb-form-label">overlap(字符)</label>
-                <input className="kb-form-input" type="number" value={uOverlap} min={0}
-                       disabled={uMethod === "structured"}
-                       title={uMethod === "structured" ? "结构层级不使用 overlap(已置0)" : undefined}
-                       onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
-              </div>
+            <div className="kb-form-field">
+              <label className="kb-form-label">切分方式</label>
+              <select className="kb-form-input" value={uMethod}
+                      onChange={(e) => { setUMethod(e.target.value); if (e.target.value === "structured") setUOverlap(0); setUPreview(null) }}>
+                {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="kb-form-field">
+              <label className="kb-form-label">chunk_size(字符)</label>
+              <input className="kb-form-input" type="number" value={uChunkSize} min={1}
+                     onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
+            </div>
+            <div className="kb-form-field">
+              <label className="kb-form-label">overlap(字符)</label>
+              <input className="kb-form-input" type="number" value={uOverlap} min={0}
+                     disabled={uMethod === "structured"}
+                     title={uMethod === "structured" ? "结构层级不使用 overlap(已置0)" : undefined}
+                     onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
             </div>
             <div className="kb-note">{uMethod === "structured"
               ? "结构层级按语义单元切(节/条/一、/1./(1)),上下文经 section 路径保留,不使用 overlap(已置 0 且不可改);token 预算约460控制块大小。"
