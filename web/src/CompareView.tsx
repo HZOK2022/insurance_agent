@@ -204,8 +204,8 @@ const shownChunks = filterPath ? chunks.filter((c) => normS(c.section).startsWit
                           {c.section ? <span className="kb-tag">{c.section}</span> : <span className="kb-tag">(无结构)</span>}
                         </div>
                         <div className={"cmp-chunk-content" + (open ? " open" : " clamp")}
-                             onClick={open ? undefined : () => setExpanded((e) => ({ ...e, [c.i]: true }))}
-                             title={open ? undefined : "点击省略号展开全文"}>
+                             onClick={() => setExpanded((e) => ({ ...e, [c.i]: !open }))}
+                             title="点击展开/收起">
                           {c.content}
                           {open && <span className="cmp-fold" title="点击收起"
                                          onClick={(ev) => { ev.stopPropagation(); setExpanded((e) => ({ ...e, [c.i]: false })) }}>&lt;</span>}
