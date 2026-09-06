@@ -610,4 +610,16 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mem-event-reason { font-size: 12px; color: #f59e0b; }
 .mem-event-time { font-size: 11px; color: var(--dsw-text-3); white-space: nowrap; }
 
+/* 会话内"记忆生效"条 */
+.mem-strip { border-bottom: 1px solid var(--dsw-border-l1); background: var(--dsw-primary-soft); flex-shrink: 0; }
+.mem-strip-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 16px; background: transparent; border: none; cursor: pointer; font: inherit; color: var(--dsw-text); text-align: left; }
+.mem-strip-title { font-size: 13px; font-weight: 600; }
+.mem-strip-meta { font-size: 12px; color: var(--dsw-primary); }
+.mem-strip-hint { font-size: 12px; color: var(--dsw-text-2); }
+.mem-strip-chev { margin-left: auto; font-size: 12px; color: var(--dsw-text-3); }
+.mem-strip-body { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+.mem-strip-bucket { display: flex; flex-direction: column; gap: 4px; }
+.mem-strip-bucket-title { font-size: 12px; color: var(--dsw-text-2); }
+.mem-strip-frame { background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 7px; padding: 8px 10px; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; color: var(--dsw-text-2); margin: 0; }
+
 

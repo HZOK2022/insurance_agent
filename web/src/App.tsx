@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
+import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, getMemory, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import KbManager from "./KbManager"
 import CompareView from "./CompareView"
@@ -240,7 +240,37 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
   )
 }
 
-function Center({ messages, input, setInput, busy, send, onStop, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onStop: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void }) {
+interface MemInfo { frames: Record<string, string>; counts: Record<string, number> }
+// 记忆生效条:展示当前会话被注入到模型的记忆帧(user/跨会话/会话),可展开看原文
+function MemoryStrip({ mem }: { mem: MemInfo | null }) {
+  const [open, setOpen] = useState(false)
+  const order = [{ k: "user", l: "用户" }, { k: "cross_session", l: "跨会话" }, { k: "session", l: "会话" }]
+  const entries = order.filter((b) => mem && mem.frames[b.k])
+  const total = entries.reduce((a, b) => a + (mem?.counts[b.k] || 0), 0)
+  if (!entries.length) return null
+  return (
+    <div className="mem-strip">
+      <button className="mem-strip-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="mem-strip-title">🧠 记忆生效</span>
+        <span className="mem-strip-meta">{total} 字 · {entries.length} 段</span>
+        <span className="mem-strip-hint">(已注入模型,点开看原文)</span>
+        <span className="mem-strip-chev">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="mem-strip-body">
+          {entries.map((b) => (
+            <div key={b.k} className="mem-strip-bucket">
+              <div className="mem-strip-bucket-title">{b.l}记忆</div>
+              <pre className="mem-strip-frame">{mem!.frames[b.k]}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Center({ messages, input, setInput, busy, send, onStop, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit, mem }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onStop: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void; mem: MemInfo | null }) {
   const win = cfgWindow || ctxUsage?.window || 0   // cfgWindow(实时 /api/config)优先,避免历史 request_context 固化的旧窗口盖过新配置
   const ctxPct = ctxUsage && win > 0 ? Math.min(100, Math.round((ctxUsage.used / win) * 100)) : 0
   const [modelMenu, setModelMenu] = useState(false)
@@ -271,6 +301,7 @@ function Center({ messages, input, setInput, busy, send, onStop, onCite, activeC
       <div className={"tab" + (activeTab === "trace" ? " active" : "")} onClick={() => setActiveTab("trace")}>轨迹</div>
       <div className={"tab" + (activeTab === "audit" ? " active" : "")} onClick={() => setActiveTab("audit")}>审计</div>
     </div></div>
+    {activeTab === "chat" && <MemoryStrip mem={mem} />}
     {activeTab === "chat"
       ? <div className="messages" ref={listRef} onScroll={onScroll}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{(() => { const rows: ReactNode[] = []; let i = 0; while (i < messages.length) { const m = messages[i]; if (m.role === "user" || m.role === "answer" || m.role === "note") { rows.push(<div key={m.id} className={"message " + (m.role === "answer" ? "assistant" : m.role)} data-time-hover-root>{renderRow(m)}</div>); i += 1; continue } const grp: Msg[] = []; let j = i; while (j < messages.length && (messages[j].role === "think" || messages[j].role === "text" || messages[j].role === "tool")) { grp.push(messages[j]); j += 1 } const hasAnswer = j < messages.length && messages[j].role === "answer"; const ansRun = hasAnswer ? messages[j].runMs : undefined; const label = hasAnswer ? (ansRun != null ? ("任务耗时 " + fmtElapsed(ansRun)) : (busy ? "任务进行中…" : "会话中断")) : (busy ? "任务进行中…" : "会话中断"); rows.push(<div key={"g" + i} className="message assistant" data-time-hover-root><div className="ans-wrap"><details className="process-group" open={!hasAnswer}><summary className="process-summary"><span className="process-label">{label}</span></summary><div className="process-body">{grp.map((g) => (<div key={g.id} className="message assistant" data-time-hover-root>{renderRow(g)}</div>))}</div></details></div></div>); i = j } return rows })()}{!atBottom && messages.length > 0 && (<button className="jump-bottom" onClick={jumpToBottom} aria-label="回到底部" title="回到底部">↓</button>)}</div>
       : activeTab === "trace"
@@ -295,6 +326,9 @@ export default function App() {
   const [audit, setAudit] = useState<{ items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null>(null)
   const loadAudit = async () => { if (!activeId) { setAudit(null); return }; try { const [a, m, o] = await Promise.all([getAudit(activeId), getSessionMetrics(activeId), getObservability()]); setAudit({ items: a.items, sessionMetrics: m, overall: o }) } catch { setAudit({ items: [], sessionMetrics: null, overall: null }) } }
   useEffect(() => { if (activeTab === "audit") loadAudit() }, [activeTab, activeId]) // eslint-disable-line
+  const [mem, setMem] = useState<MemInfo | null>(null)   // 当前会话被注入的记忆帧/字数(记忆生效条)
+  const loadMem = async (sid: string | null) => { if (!sid) { setMem(null); return }; try { const d = await getMemory(sid); setMem({ frames: d.frames || {}, counts: d.counts || {} }) } catch { setMem(null) } }
+  useEffect(() => { if (activeId) loadMem(activeId) }, [activeId]) // eslint-disable-line  # 会话切换/新建即刷新记忆生效条
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
   const [sideCollapsed, setSideCollapsed] = useState(false)
   const [detW, setDetW] = useState(DETAILS_DEFAULT)
@@ -411,7 +445,7 @@ export default function App() {
     setTrace(turns)
   }
   // 切换会话:加载目标会话后,清掉"没发过消息"的占位会话(keep=当前激活 sid,豁免不删)
-  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveCite(null); setCtxUsage(null); retrievalRef.current = []; try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setLoadErr("加载会话失败,请稍后重试") } try { await pruneEmptySessions(sid); setSessions(await listSessions()) } catch { } }
+  const selectSession = async (sid: string) => { activeIdRef.current = sid; setActiveId(sid); setActiveCite(null); setCtxUsage(null); retrievalRef.current = []; try { await loadEvents(sid); setLoadErr("") } catch { setMessages([]); setLoadErr("加载会话失败,请稍后重试") } try { await pruneEmptySessions(sid); setSessions(await listSessions()) } catch { } try { await loadMem(sid) } catch { } }
   // 后端重启有启动窗口(~12s):失败不显示"暂无会话",自动重试并提示
   useEffect(() => {
     let alive = true; let timer: number | undefined
@@ -516,7 +550,7 @@ export default function App() {
         else if (e.type === "approval_request") { const ap = e.payload || {}; setPendingApproval({ sid, ...ap, status: "pending" }); setApprovalArgsText(JSON.stringify(ap.args ?? {}, null, 2)); setApprovalReason("") }
         else if (e.type === "request_context") { const p = e.payload || {}; setCtxUsage({ used: p.prompt_tokens ?? 0, window: p.context_window ?? 0, system: p.system_tokens ?? 0, tools: p.tools_tokens ?? 0, messages: p.messages_tokens ?? 0, compression: !!p.compression_triggered }) }
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
-        else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setBusy(false); listSessions().then(setSessions).catch(() => {}) }
+        else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setBusy(false); listSessions().then(setSessions).catch(() => {}); loadMem(activeIdRef.current) }
       }, model, ctl.signal)
     } catch { } finally { setBusy(false); if (abortTimerRef.current) { window.clearTimeout(abortTimerRef.current); abortTimerRef.current = null } abortRef.current = null; try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (lt.turn && !lt.turn.reason) { lt.turn.reason = "interrupted"; setTrace((prev) => [...prev]) } if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString() }]) } } }
   }
@@ -553,7 +587,7 @@ export default function App() {
     )}
     <div className="centerCol" style={{ width: cols.center }}>
       {currentView === "chat" ? (
-        <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} />
+        <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} mem={mem} />
       ) : currentView === "knowledge" ? (
         <KbManager onBack={() => setCurrentView("chat")} onOpenCompare={() => setCurrentView("compare")} />
       ) : currentView === "diagnose" ? (
