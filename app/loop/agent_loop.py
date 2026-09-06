@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -626,8 +627,12 @@ class AgentLoop:
                 yield use_ev
                 # 坏例快照:错误/中断/工具失败/检索弱轮才落完整 prompt/completion(好轮不存,省费用/PII)。
                 # 放在 turn_end 之前,保持 turn_end 是本轮终结事件(测试/回放据此判定轮末)。
+                # 另外 badcase_snapshot_sample_rate>0 时,对"正常但可能质量差"的好轮也按该概率采样存全文(人工质检用)。
                 _snap_enabled = bool(getattr(self.cfg, "badcase_snapshot_enabled", True))
-                if _snap_enabled and (_snap_bad or reason in ("error", "interrupted")):
+                _snap_bad_cond = bool(_snap_bad) or reason in ("error", "interrupted")
+                _sample_rate = float(getattr(self.cfg, "badcase_snapshot_sample_rate", 0.0) or 0.0)
+                _sampled = _sample_rate > 0 and random.random() < _sample_rate
+                if _snap_enabled and (_snap_bad_cond or _sampled):
                     yield self._emit("badcase_snapshot", {
                         "reason": reason, "model": self._effective_model,
                         "system": self.system, "conversation": conversation,

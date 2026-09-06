@@ -136,6 +136,14 @@ class LoopTerminalTest(_Base):
         snap_types = [r["type"] for r in self.store.read("s1") if r["type"] == "badcase_snapshot"]
         self.assertEqual(snap_types, [])
 
+    def test_sample_rate_1_snapshots_good_turn(self):
+        """好轮 + 采样率=1 → 按采样落快照(人工质检用);默认无采样率(0)→ 不落(见上一条)。"""
+        cfg = make_cfg()
+        cfg.badcase_snapshot_sample_rate = 1.0   # random.random()<1.0 恒真,deterministic
+        self.run_turn(FakeAnswerLLM(), cfg=cfg)
+        snap_types = [r["type"] for r in self.store.read("s1") if r["type"] == "badcase_snapshot"]
+        self.assertEqual(snap_types, ["badcase_snapshot"])
+
     def test_badcase_snapshot_on_empty_retrieval(self):
         """检索空结果 → badcase 快照(RAG 大问题)。"""
         self.run_turn(FakeRetrieveLLM(), text="100种", chunks=[])

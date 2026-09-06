@@ -140,6 +140,7 @@ class Config:
     log_api_bodies: bool = True     # 接口出入参日志:记请求 body(打码+截断)+ 仅错误(>=400)响应 body;0=只记元数据
     log_api_body_chars: int = 300   # 接口 body 截断长度
     badcase_snapshot_enabled: bool = True  # 坏例快照:仅错误/中断/工具失败/检索弱轮把完整 prompt/completion 落一条事件;好轮不存(省费用/PII)
+    badcase_snapshot_sample_rate: float = 0.0  # 好轮按需采样率(0~1):除坏例外,对"正常但仍可能质量差"的轮也按此概率存完整 prompt/completion(供人工质检/抽样复盘);0=只存坏例
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
@@ -245,6 +246,7 @@ _ENV = {
     "log_api_bodies": "LOG_API_BODIES",
     "log_api_body_chars": "LOG_API_BODY_CHARS",
     "badcase_snapshot_enabled": "BADCASE_SNAPSHOT_ENABLED",
+    "badcase_snapshot_sample_rate": "BADCASE_SNAPSHOT_SAMPLE_RATE",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",
@@ -278,7 +280,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user", "log_api_body_chars")
 _NONNEG_INTS = ("chunk_overlap",)
-_FLOATS_01 = ("hybrid_bm25_weight",)
+_FLOATS_01 = ("hybrid_bm25_weight", "badcase_snapshot_sample_rate")
 
 _DEFAULT = Config()
 
