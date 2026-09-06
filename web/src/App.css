@@ -396,20 +396,20 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 /* 上传表单:紧凑网格(一屏放下多字段一行) + 标签与输入框同一行 */
 .kb-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 18px; align-items: center; }
 .kb-mode-row { grid-column: 1 / -1; display: flex; gap: 8px; }
-.kb-form-field { position: relative; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-bg); }
+.kb-form-field { display: flex; align-items: center; gap: 8px; }
 .kb-form-label { flex: 0 0 92px; text-align: right; font-size: 12.5px; color: var(--dsw-text-2); font-weight: 500; }
-.help-dot-wrap { position: absolute; top: -7px; right: 4px; }
-.help-dot { width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--dsw-border-l2); background: var(--dsw-bg); color: var(--dsw-text-3); font-size: 11px; line-height: 15px; text-align: center; cursor: pointer; padding: 0; }
+.help-dot-wrap { position: relative; display: inline-flex; margin-left: 2px; vertical-align: super; font-size: 0; }
+.help-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--dsw-border-l2); background: var(--dsw-bg); color: var(--dsw-text-3); font-size: 10px; line-height: 12px; text-align: center; cursor: pointer; padding: 0; }
 .help-dot:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); }
-.help-dot-pop { position: absolute; top: 20px; right: 0; width: 250px; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); z-index: 30; box-shadow: 0 6px 20px rgba(0,0,0,.12); text-align: left; }
+.help-dot-pop { position: absolute; top: 16px; left: -8px; width: 250px; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); z-index: 30; box-shadow: 0 6px 20px rgba(0,0,0,.12); text-align: left; white-space: normal; }
 .kb-form-input { flex: 1; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; font: inherit; font-size: 13px; color: var(--dsw-text); background: var(--dsw-bg); outline: none; transition: border-color .15s; }
 .kb-form-input:focus { border-color: var(--dsw-primary); box-shadow: 0 0 0 3px var(--dsw-primary-soft); }
 .kb-form-row { display: flex; gap: 12px; }
 .kb-form-textarea { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; font: inherit; font-size: 13px; line-height: 1.6; color: var(--dsw-text); background: var(--dsw-bg); outline: none; resize: vertical; transition: border-color .15s; }
 .kb-form-textarea:focus { border-color: var(--dsw-primary); box-shadow: 0 0 0 3px var(--dsw-primary-soft); }
 .kb-span-full { grid-column: 1 / -1; }
-.kb-field-block { display: block; border: none; background: none; padding: 0; }
-.kb-field-block .kb-form-label { margin-bottom: 5px; text-align: left; }
+.kb-field-block { display: block; }
+.kb-field-block .kb-form-label { margin-bottom: 5px; text-align: left; flex: none; }
 .kb-field-block .kb-form-textarea { display: block; width: 100%; }
 .kb-note { grid-column: 1 / -1; margin: 2px 0 0; }
 .kb-hint { grid-column: 1 / -1; }

@@ -17,7 +17,7 @@ function HelpDot({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
     <span className="help-dot-wrap">
-      <button className="help-dot" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} title="提示" aria-label="提示">?</button>
+      <button type="button" className="help-dot" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} title="提示" aria-label="提示">!</button>
       {open && <span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span>}
     </span>
   )
@@ -374,9 +374,8 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             {uMode === "text" && (
               <>
                 <div className="kb-form-field">
-                  <label className="kb-form-label">产品名称 *</label>
+                  <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
-                  <HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -403,9 +402,8 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             {uMode === "file" && (
               <>
                 <div className="kb-form-field">
-                  <label className="kb-form-label">产品名称 *</label>
+                  <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
-                  <HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -415,11 +413,10 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   </select>
                 </div>
                 <div className="kb-form-field">
-                  <label className="kb-form-label">解析后端</label>
+                  <label className="kb-form-label">解析后端<HelpDot text="MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown。想看同一文件三路解析对比,点右上「解析对比」。" /></label>
                   <select className="kb-form-input" value={uParser} onChange={(e) => { setUParser(e.target.value); setUPreview(null) }}>
                     {PARSER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                  <HelpDot text="MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown。想看同一文件三路解析对比,点右上「解析对比」。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">选择文件 *</label>
@@ -430,18 +427,16 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             )}
 
             <div className="kb-form-field">
-              <label className="kb-form-label">切分方式</label>
+              <label className="kb-form-label">切分方式<HelpDot text="结构层级按语义单元切(节/条/一、/1./(1)),不使用 overlap(已置0);字符/段落按 chunk_size 分块,overlap 生效(相邻重叠)。" /></label>
               <select className="kb-form-input" value={uMethod}
                       onChange={(e) => { setUMethod(e.target.value); if (e.target.value === "structured") setUOverlap(0); setUPreview(null) }}>
                 {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
-              <HelpDot text="结构层级按语义单元切(节/条/一、/1./(1)),不使用 overlap(已置0);字符/段落按 chunk_size 分块,overlap 生效(相邻重叠)。" />
             </div>
             <div className="kb-form-field">
-              <label className="kb-form-label">chunk_size(字符)</label>
+              <label className="kb-form-label">chunk_size(字符)<HelpDot text="bge 嵌入上限约 512 token(≈400字),超过会被截断(结构层级由 token 预算约460控制)。" /></label>
               <input className="kb-form-input" type="number" value={uChunkSize} min={1}
                      onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
-              <HelpDot text="bge 嵌入上限约 512 token(≈400字),超过会被截断(结构层级由 token 预算约460控制)。" />
             </div>
             <div className="kb-form-field">
               <label className="kb-form-label">overlap(字符)</label>
