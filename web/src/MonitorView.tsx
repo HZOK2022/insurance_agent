@@ -37,6 +37,10 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
   const [rows, setRows] = useState<any[]>([])
   const [err, setErr] = useState("")
   const [tick, setTick] = useState(0)
+  const [q, setQ] = useState("")   // trace_id / 标题 检索
+  const copy = (t: string) => { try { navigator.clipboard?.writeText(t) } catch { /* noop */ } }
+  const openExact = () => { const s = q.trim(); if (!s) return; const hit = rows.find((r) => r.session_id === s); if (hit) onOpenSession(hit.session_id) }
+  const filtered = rows.filter((r) => !q.trim() || (r.session_id || "").includes(q.trim()) || String(r.title || "").toLowerCase().includes(q.trim().toLowerCase()))
 
   useEffect(() => {
     let alive = true
@@ -113,14 +117,22 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
         </>
       )}
 
-      {/* 按会话明细 */}
-      <div className="mon-sec-head">按会话</div>
-      {rows.length === 0 && !err && <div className="hint">暂无会话数据(先跑一轮问答再来)</div>}
+      {/* 按会话明细 + trace_id 检索 */}
+      <div className="mon-sec-head">按会话(trace_id 即会话 id,点行进该会话轨迹)</div>
+      <div className="mon-search-row">
+        <input className="mon-search" placeholder="按 trace_id / 标题 检索…" value={q} onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") openExact() }} />
+        <button className="audit-btn" onClick={openExact}>打开该 trace_id</button>
+      </div>
+      {filtered.length === 0 && !err && <div className="hint">暂无会话数据(先跑一轮问答再来)</div>}
       <div className="mon-table">
-        <div className="mon-tr mon-tr-head"><span>会话</span><span>轮</span><span>token</span><span>成本</span><span>错误</span><span>重试</span><span>平均TTFT</span></div>
-        {rows.map((r, i) => (
+        <div className="mon-tr mon-tr-head"><span>会话(trace_id)</span><span>轮</span><span>token</span><span>成本</span><span>错误</span><span>重试</span><span>平均TTFT</span></div>
+        {filtered.map((r, i) => (
           <div key={i} className="mon-tr" onClick={() => onOpenSession(r.session_id)} title={"trace " + r.session_id}>
-            <span className="mon-td-title">{(r.title || r.session_id || "—").slice(0, 24)}{r.title ? "" : ""}</span>
+            <span className="mon-td-title">
+              <span className={"mon-tid" + (r.errors > 0 ? " bad" : "")} title={"trace_id " + r.session_id + "(点击复制)"} onClick={(e) => { e.stopPropagation(); copy(r.session_id) }}>trace:{String(r.session_id).slice(0, 8)}</span>
+              <span className="mon-td-name">{r.title || "—"}</span>
+            </span>
             <span>{fmt(r.turns)}</span>
             <span>{fmtTok(r.total_tokens)}</span>
             <span>{fmtCost(r.cost)}</span>

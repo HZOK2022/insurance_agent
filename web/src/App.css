@@ -644,6 +644,13 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mon-card-val { font-size: 20px; font-weight: 600; margin: 2px 0; font-variant-numeric: tabular-nums; }
 .mon-card-hint { font-size: 11px; color: var(--dsw-text-3); }
 .mon-sec-head { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--dsw-text-2); }
+.mon-search-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.mon-search { flex: 1; max-width: 360px; padding: 6px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-bg); color: var(--dsw-text); font-size: 12px; }
+.mon-td-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mon-tid { display: inline-block; width: fit-content; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; color: #5686fe; cursor: pointer; }
+.mon-tid:hover { text-decoration: underline; }
+.mon-tid.bad { color: #e5484d; }
+.mon-td-name { color: var(--dsw-text-2); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .mon-trace { cursor: pointer; }
 .mon-table { border: 1px solid var(--dsw-border-l2); border-radius: 8px; overflow: hidden; }
