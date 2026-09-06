@@ -80,6 +80,9 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [dragOver, setDragOver] = useState(false)   // 文件投递区:是否拖拽悬停
   const uFileRef = useRef<HTMLInputElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)   // 预览面板,切块完成后滚动到它
+  // 记住上一次输入(localStorage):产品名/版本/标题做自动补全,文本内容下次自动恢复;textarea 浏览器不会自动填充,故自建
+  const recentGet = (k: string) => localStorage.getItem("kb-recent-" + k) || ""
+  const recentSet = (k: string, v: string) => { try { localStorage.setItem("kb-recent-" + k, v) } catch {} }
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -97,6 +100,8 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   }
 
   useEffect(() => { loadDocs() }, []) // eslint-disable-line
+  // 恢复上一次输入的文档内容(textarea 浏览器不自动填充,应用内自建持久化)
+  useEffect(() => { if (!uText) setUText(recentGet("text")) }, []) // eslint-disable-line
 
   // 「查看」右栏一次载入全部 chunks(结构树过滤按 section 匹配,须跨全量而非仅当前页)
   const loadChunks = async (docId: string, p: number = 1) => {
@@ -384,8 +389,10 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         <div className="kb-body">
           <div className="kb-form">
             <datalist id="kb-product-names">
-              {Array.from(new Set(docs.map((d) => d.doc_id).filter(Boolean))).map((n) => <option key={n} value={n} />)}
+              {Array.from(new Set([...docs.map((d) => d.doc_id), recentGet("product_name")].filter(Boolean))).map((n) => <option key={n} value={n} />)}
             </datalist>
+            <datalist id="kb-recent-version">{recentGet("version") && <option value={recentGet("version")} />}</datalist>
+            <datalist id="kb-recent-title">{recentGet("title") && <option value={recentGet("title")} />}</datalist>
             <div className="kb-mode-row">
               <button className={"kb-btn" + (uMode === "text" ? " kb-btn-primary" : "")} onClick={() => { setUMode("text"); setUPreview(null) }}>粘贴文本</button>
               <button className={"kb-btn" + (uMode === "file" ? " kb-btn-primary" : "")} onClick={() => { setUMode("file"); setUPreview(null) }}>上传文件(PDF/DOCX/XLSX/MD/TXT)</button>
@@ -395,7 +402,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -406,15 +413,15 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">版本</label>
-                  <input className="kb-form-input" value={uVersion} onChange={(e) => setUVersion(e.target.value)} placeholder="v1" />
+                  <input className="kb-form-input" list="kb-recent-version" value={uVersion} onChange={(e) => { setUVersion(e.target.value); recentSet("version", e.target.value) }} placeholder="v1" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">标题</label>
-                  <input className="kb-form-input" value={uTitle} onChange={(e) => setUTitle(e.target.value)} placeholder="文档显示标题(可选)" />
+                  <input className="kb-form-input" list="kb-recent-title" value={uTitle} onChange={(e) => { setUTitle(e.target.value); recentSet("title", e.target.value) }} placeholder="文档显示标题(可选)" />
                 </div>
                 <div className="kb-form-field kb-span-full kb-field-block">
                   <label className="kb-form-label">文档内容 *</label>
-                  <textarea className="kb-form-textarea" value={uText} onChange={(e) => setUText(e.target.value)} placeholder="粘贴文档内容(文本)…" rows={10} />
+                  <textarea className="kb-form-textarea" value={uText} onChange={(e) => { setUText(e.target.value); recentSet("text", e.target.value) }} placeholder="粘贴文档内容(文本)…" rows={10} />
                 </div>
               </>
             )}
@@ -423,7 +430,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null); recentSet("product_name", e.target.value) }} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
