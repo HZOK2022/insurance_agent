@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+import app.db as dbmod
+
 logger = logging.getLogger("startup.deps")
 
 
@@ -25,9 +27,10 @@ def report_startup_dependencies(cfg, qstore=None) -> list[dict]:
     """体检并打日志。cfg 需含 sqlite_path / knowledge_db_path / premium_db_path 等;
     qstore=已构造的 QdrantStore(为 None 则记为"未检查")。本函数绝不抛异常。"""
     out: list[dict] = []
+    prefix = "sqlite" if dbmod.dial(cfg) != "mysql" else "mysql"   # 探测名带方言,避免生产误标 sqlite
 
     # 1) agent.db(会话事实源):能被调到这里说明 SessionStore 已打开且 schema fail-closed 通过
-    _add(out, "sqlite:agent.db", True, "ok(SessionStore 已打开, schema fail-closed 通过)")
+    _add(out, f"{prefix}:agent.db", True, "ok(SessionStore 已打开, schema fail-closed 通过)")
 
     # 2) qdrant(派生向量索引):构造是否成功由调用方先行验证;这里据 is_down 出状态行
     if qstore is None:
@@ -40,28 +43,28 @@ def report_startup_dependencies(cfg, qstore=None) -> list[dict]:
         else:
             _add(out, "qdrant", True, f"ok(collection={coll})")
 
-    # 3) knowledge.db(chunks 事实源,BM25/重建来源)
+    # 3) knowledge.db / MySQL knowledge 库(chunks 事实源,BM25/重建来源)
     try:
         from app.retrieval.knowledge_store import KnowledgeStore
-        k = KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+        k = KnowledgeStore(cfg=cfg)
         try:
             n = k.count()
         finally:
             k.close()
-        _add(out, "sqlite:knowledge.db", True, f"ok(chunks={n})")
+        _add(out, f"{prefix}:knowledge.db", True, f"ok(chunks={n})")
     except Exception as e:
-        _add(out, "sqlite:knowledge.db", False, f"不可用: {type(e).__name__}: {e}")
+        _add(out, f"{prefix}:knowledge.db", False, f"不可用: {type(e).__name__}: {e}")
 
-    # 4) premium.db(费率事实源):轻探 sqlite 可打开即可(不 import 业务模块,避免重副作用)
+    # 4) premium.db / MySQL premium 库(费率事实源):轻探可打开即可(不 import 除法器外的业务副作用)
     try:
-        import sqlite3
-        conn = sqlite3.connect(getattr(cfg, "premium_db_path", "data/premium.db"))
+        from app.businesses.premium import PremiumStore
+        p = PremiumStore(cfg=cfg)
         try:
-            conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
-        finally:
-            conn.close()
-        _add(out, "sqlite:premium.db", True, "ok")
+            p.close()
+        except Exception:
+            pass
+        _add(out, f"{prefix}:premium.db", True, "ok")
     except Exception as e:
-        _add(out, "sqlite:premium.db", False, f"不可用: {type(e).__name__}: {e}")
+        _add(out, f"{prefix}:premium.db", False, f"不可用: {type(e).__name__}: {e}")
 
     return out

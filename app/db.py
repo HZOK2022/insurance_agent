@@ -42,8 +42,17 @@ def db_name(cfg, db_kind: str = "session") -> str:
     return (getattr(cfg, "db_name", "") or "").strip()
 
 
-def get_conn(cfg) -> Any:
-    """生产:返回 pymysql 连接(应用服务器连数据库服务器);开发/测试:返回 sqlite3 连接(data/agent.db)。"""
+def _sqlite_path(cfg, db_kind: str = "session") -> str:
+    """开发/测试 SQLite 文件路径:会话用 sqlite_path,知识用 knowledge_db_path,费率用 premium_db_path。"""
+    if db_kind == "knowledge":
+        return (getattr(cfg, "knowledge_db_path", "") or "").strip() or "data/knowledge.db"
+    if db_kind == "premium":
+        return (getattr(cfg, "premium_db_path", "") or "").strip() or "data/premium.db"
+    return (getattr(cfg, "sqlite_path", "") or "").strip() or "data/agent.db"
+
+
+def get_conn(cfg, db_kind: str = "session") -> Any:
+    """生产:返回 pymysql 连接(应用服务器连数据库服务器);开发/测试:返回 sqlite3 连接(对应 *.db)。"""
     if dial(cfg) == "mysql":
         try:
             import pymysql
@@ -54,15 +63,91 @@ def get_conn(cfg) -> Any:
             port=int(getattr(cfg, "db_port", 3306) or 3306),
             user=(getattr(cfg, "db_user", "") or "").strip(),
             password=(getattr(cfg, "db_pass", "") or ""),
-            database=db_name(cfg, "session"),
+            database=db_name(cfg, db_kind),
             charset="utf8mb4",
             autocommit=True,
+            cursorclass=pymysql.cursors.DictCursor,
         )
     # 开发/测试:SQLite
     import sqlite3
-    conn = sqlite3.connect(getattr(cfg, "sqlite_path", "data/agent.db"), check_same_thread=False)
+    conn = sqlite3.connect(_sqlite_path(cfg, db_kind), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def get_db(cfg, db_kind: str = "session") -> "DB":
+    """统一入口:按方言/库类返回 DB 包装(store 用它建连接)。配了 db_host 走 MySQL,否则 SQLite 兜底。"""
+    return DB(get_conn(cfg, db_kind), cfg)
+
+
+def columns(db: "DB", table: str) -> set[str]:
+    """列出某表当前列名(SQLite:PRAGMA table_info;MySQL:information_schema),供增量加列迁移。"""
+    if db._dialect == "mysql":
+        rows = db.execute(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",
+            (table,)).fetchall()
+        return {r["COLUMN_NAME"].lower() for r in rows}
+    rows = db.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] for r in rows}
+
+
+class DB:
+    """统一连接适配器:让 store 用同一种 `_conn.execute(sql, params)` 同时支持 sqlite/mysql。
+
+    - sql:一律写 `?` 占位符,执行时按方言 translate(mysql `?`→`%s`)。
+    - 行:sqlite3.Row / pymysql DictCursor 都支持 `row["col"]`。
+    - mysql autocommit=True;sqlite 靠显式 commit(兼容原逻辑)。
+    """
+
+    def __init__(self, conn, cfg):
+        self._conn = conn
+        self._cfg = cfg
+        self._dialect = dial(cfg)
+        # pymysql 用 cursor;sqlite3.Connection.execute 也内建 cursor
+        self._cursor = conn.cursor() if self._dialect == "mysql" else None
+
+    def translate(self, sql: str) -> str:
+        return translate(sql, self._cfg)
+
+    def execute(self, sql: str, params: Any = ()):
+        sql2 = translate(sql, self._cfg)
+        if self._dialect == "mysql":
+            cur = self._conn.cursor()
+            cur.execute(sql2, params)
+            return cur
+        return self._conn.execute(sql2, params)
+
+    def executemany(self, sql: str, seq: Any):
+        sql2 = translate(sql, self._cfg)
+        if self._dialect == "mysql":
+            cur = self._conn.cursor()
+            cur.executemany(sql2, seq)
+            return cur
+        return self._conn.executemany(sql2, seq)
+
+    def commit(self):
+        if self._dialect != "mysql":  # mysql autocommit,无谓 commit
+            try:
+                self._conn.commit()
+            except Exception:
+                pass
+
+    def rollback(self):
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
+    def close(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    def __getattr__(self, name: str):
+        # 透传给底层连接(sqlite3 常用 attr 如 rowcount/lastrowid 走 cursor;这里兜底)
+        return getattr(self._conn, name)
+

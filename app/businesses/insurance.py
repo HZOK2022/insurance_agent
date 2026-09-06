@@ -202,7 +202,7 @@ def build_tools(embedder, qstore, cfg, store=None) -> dict[str, dict]:
             if getattr(cfg, "hybrid_bm25_weight", 0.0) > 0:
                 try:
                     from app.retrieval.knowledge_store import KnowledgeStore
-                    kstore = KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+                    kstore = KnowledgeStore(cfg=cfg)
                     try:
                         _chunks = kstore.all_chunks()
                     finally:
@@ -231,7 +231,7 @@ def build_tools(embedder, qstore, cfg, store=None) -> dict[str, dict]:
     # 保费计算(查表确定性,不靠 LLM 手算):费率事实源 PremiumStore(SQLite);费率库缺失则降级不加该工具。
     try:
         from app.businesses.premium import PremiumStore, build_premium_tool
-        _pstore = PremiumStore(getattr(cfg, "premium_db_path", "data/premium.db"))
+        _pstore = PremiumStore(cfg=cfg)
         tools["calculate_premium"] = build_premium_tool(_pstore)
     except Exception:
         pass

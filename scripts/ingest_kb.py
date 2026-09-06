@@ -30,7 +30,7 @@ def main():
     cfg = load()
     print(f"[cfg] collection={cfg.qdrant_collection} embedding={cfg.embedding_model} chunk={cfg.chunk_size}/{cfg.chunk_overlap}")
 
-    kstore = KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+    kstore = KnowledgeStore(cfg=cfg)
 
     # 先删(若 --clear) —— Qdrant 集合 + SQLite 事实源都清,重建
     if a.clear:

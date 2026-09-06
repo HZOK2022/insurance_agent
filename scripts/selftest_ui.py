@@ -52,7 +52,7 @@ def delete_session(sid: str) -> None:
         sys.path.insert(0, ROOT)
         from app.session.store import SessionStore
         from app.config import load
-        st = SessionStore(load().sqlite_path)
+        st = SessionStore(cfg=load())
         st.delete_sessions_meta([sid])
         print("      cleanup: 已删除自测会话", sid)
     except Exception as e:

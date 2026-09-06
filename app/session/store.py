@@ -1,16 +1,18 @@
-"""SQLite append-only 会话事件存储 + 会话元数据。参照 dsh core/session + session-persistence-sqlite。
+"""会话事件存储 + 会话元数据。参照 dsh core/session + session-persistence-sqlite。
 
+事实源:生产=数据库服务器的 MySQL(app/db 连接),开发/测试=SQLite(未配 db_host)。
 规则(AGENTS.md):
-- WAL + busy_timeout;单写者
-- events 只 INSERT,绝不 UPDATE / DELETE 历史(不暴露改写方法)
-- schema 版本 fail-closed;未注册事件类型 → 拒绝
+- 单写者;events 只 INSERT,绝不 UPDATE / DELETE 历史(不暴露改写方法)
+- schema 版本 fail-closed;未注册事件类型 → 拒绝;`?` 占位符由 app/db.DB 按方言 translate
 """
 from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from types import SimpleNamespace
 
 from . import events, title
+import app.db as dbmod
 
 SCHEMA_VERSION = 1
 
@@ -24,14 +26,46 @@ def _connect(path: str) -> sqlite3.Connection:
     return conn
 
 
-class SessionStore:
-    """SQLite 事实源。events(append-only)+ sessions(元数据)。"""
+def _mysql_ddl() -> list[tuple[str, bool]]:
+    """MySQL DDL(语句, is_index):建表 + 建索引。索引不支持 IF NOT EXISTS,靠调用处容错重复。"""
+    return [
+        ("CREATE TABLE IF NOT EXISTS `meta` (`key` VARCHAR(128) PRIMARY KEY, `value` TEXT)", False),
+        ("INSERT IGNORE INTO `meta` (`key`,`value`) VALUES ('schema_version', '1')", False),
+        ("CREATE TABLE IF NOT EXISTS events (seq BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(64) NOT NULL, `type` VARCHAR(64) NOT NULL, ts VARCHAR(40) NOT NULL, payload MEDIUMTEXT)", False),
+        ("CREATE INDEX idx_events_session ON events(session_id, seq)", True),
+        ("CREATE TABLE IF NOT EXISTS sessions (id VARCHAR(64) PRIMARY KEY, title TEXT, user_id VARCHAR(128), created_at VARCHAR(40), status VARCHAR(16) DEFAULT 'active', deleted INT DEFAULT 0)", False),
+        ("CREATE TABLE IF NOT EXISTS users (id VARCHAR(64) PRIMARY KEY, username VARCHAR(128) NOT NULL UNIQUE, password_hash VARCHAR(128) NOT NULL, salt VARCHAR(64) NOT NULL, display_name VARCHAR(128) NOT NULL DEFAULT '', created_at VARCHAR(40) NOT NULL, disabled INT NOT NULL DEFAULT 0, `role` VARCHAR(16) NOT NULL DEFAULT 'agent')", False),
+        ("CREATE TABLE IF NOT EXISTS auth_tokens (`token` VARCHAR(128) PRIMARY KEY, username VARCHAR(128) NOT NULL, created_at VARCHAR(40) NOT NULL, expires_at VARCHAR(40) NOT NULL)", False),
+        ("CREATE INDEX idx_auth_tokens_username ON auth_tokens(username)", True),
+        ("CREATE TABLE IF NOT EXISTS memory_entries (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(128) NOT NULL, bucket VARCHAR(32) NOT NULL DEFAULT 'cross_session', `scope` VARCHAR(64) NOT NULL, `type` VARCHAR(32) NOT NULL, `key` VARCHAR(160) NOT NULL, content TEXT NOT NULL, status VARCHAR(16) DEFAULT 'active', confidence VARCHAR(16) DEFAULT 'auto', source_session_id VARCHAR(64), source_event_seq BIGINT, created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL, UNIQUE(user_id, `scope`, `type`, `key`))", False),
+        ("CREATE INDEX idx_mem_user_scope ON memory_entries(user_id, `scope`, status)", True),
+        ("CREATE INDEX idx_mem_type_status ON memory_entries(`type`, status)", True),
+    ]
 
-    def __init__(self, path: str):
+
+class SessionStore:
+    """会话/事件/记忆/用户 事实源(session 库)。sqlite 或 MySQL,由 cfg.db_host 决定。"""
+
+    def __init__(self, path: str | None = None, cfg=None):
         self.path = path
-        self._conn = _connect(path)
-        self._ensure_schema()
-        self._check_schema()
+        self._cfg = cfg or SimpleNamespace(db_host="", sqlite_path=path or "data/agent.db")
+        self._dialect = dbmod.dial(self._cfg)
+        if self._dialect == "mysql":
+            self._conn = dbmod.DB(dbmod.get_conn(self._cfg), self._cfg)
+            for stmt, is_index in _mysql_ddl():
+                try:
+                    self._conn.execute(stmt)
+                except Exception as e:
+                    # 索引重复(1061)等 := 已存在,可忽略;其它抛出
+                    if is_index and getattr(e, "args", [None])[0] == 1061:
+                        continue
+                    raise
+            self._check_schema()
+        else:
+            self._conn = dbmod.DB(_connect(path or getattr(self._cfg, "sqlite_path", "data/agent.db")),
+                                  SimpleNamespace(db_host=""))
+            self._ensure_schema()
+            self._check_schema()
 
     def _ddl(self) -> str:
         return f"""
@@ -101,7 +135,7 @@ class SessionStore:
         self._conn.commit()
 
     def _check_schema(self) -> None:
-        row = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        row = self._conn.execute("SELECT value FROM meta WHERE `key`='schema_version'").fetchone()
         if row is None or int(row["value"]) != SCHEMA_VERSION:
             have = row["value"] if row else "?"
             raise RuntimeError(f"schema 版本不匹配: 库={have} 代码={SCHEMA_VERSION} —— 拒绝启动")

@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import app.db as dbmod
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -50,7 +52,13 @@ def prune_memory_content(content: str, head_chars: int, tail_chars: int) -> str 
 class MemoryStore:
     """memory_entries 表读写。每个操作都 commit(WAL 单写者)。"""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str | None = None, cfg=None):
+        self._is_mysql = cfg is not None and dbmod.dial(cfg) == "mysql"
+        if self._is_mysql:
+            # MySQL:memory_entries 表由 SessionStore 建(同一 session 库),本模块只读写
+            self._conn = dbmod.DB(dbmod.get_conn(cfg, "session"), cfg)
+            return
+        path = path or (getattr(cfg, "sqlite_path", "data/agent.db") if cfg else "data/agent.db")
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -75,7 +83,7 @@ class MemoryStore:
         now = utcnow()
         sc = self._scope_for(bucket, scope, source_session_id)
         row = self._conn.execute(
-            "SELECT id, content FROM memory_entries WHERE user_id=? AND bucket=? AND type=? AND key=? AND scope=?",
+            "SELECT id, content FROM memory_entries WHERE user_id=? AND bucket=? AND `type`=? AND `key`=? AND `scope`=?",
             (user_id, bucket, type_, key, sc)).fetchone()
         if row:
             old = row["content"]
@@ -86,7 +94,7 @@ class MemoryStore:
             return {"entry_id": row["id"], "is_new": False, "old_text": old, "key": key, "type": type_, "bucket": bucket}
         eid = uuid.uuid4().hex[:12]
         self._conn.execute(
-            "INSERT INTO memory_entries (id,user_id,bucket,scope,type,key,content,status,confidence,"
+            "INSERT INTO memory_entries (id,user_id,bucket,`scope`,`type`,`key`,content,status,confidence,"
             "source_session_id,source_event_seq,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (eid, user_id, bucket, sc, type_, key, content, "active", confidence,
              source_session_id, source_event_seq, now, now))
@@ -96,8 +104,8 @@ class MemoryStore:
     # ---- 检索 ----
     def search(self, user_id: str, query: str, top_k: int = 4, bucket: str | None = None,
                session_id: str | None = None) -> list[dict]:
-        q = "SELECT id,user_id,bucket,scope,type,key,content,status,confidence,updated_at FROM memory_entries " \
-            "WHERE status='active' AND (scope='global' OR user_id=?)"
+        q = "SELECT id,user_id,bucket,`scope`,`type`,`key`,content,status,confidence,updated_at FROM memory_entries " \
+            "WHERE status='active' AND (`scope`='global' OR user_id=?)"
         params: list[Any] = [user_id]
         if bucket == "session":
             q += " AND bucket='session' AND source_session_id=?"
@@ -122,7 +130,7 @@ class MemoryStore:
     def forget(self, user_id: str, key: str, reason: str | None = None, bucket: str | None = None,
                session_id: str | None = None) -> bool:
         now = utcnow()
-        q = "UPDATE memory_entries SET status='archived', updated_at=? WHERE user_id=? AND key=? AND status='active'"
+        q = "UPDATE memory_entries SET status='archived', updated_at=? WHERE user_id=? AND `key`=? AND status='active'"
         params: list[Any] = [now, user_id, key]
         if bucket == "session":
             q += " AND bucket='session' AND source_session_id=?"
@@ -137,8 +145,8 @@ class MemoryStore:
     # ---- 读(bucket 维度)----
     def list_active(self, user_id: str, bucket: str | None = None, type_: str | None = None,
                     session_id: str | None = None) -> list[dict]:
-        q = "SELECT id,user_id,bucket,scope,type,key,content,status,confidence,updated_at FROM memory_entries " \
-            "WHERE status='active' AND (scope='global' OR user_id=?)"
+        q = "SELECT id,user_id,bucket,`scope`,`type`,`key`,content,status,confidence,updated_at FROM memory_entries " \
+            "WHERE status='active' AND (`scope`='global' OR user_id=?)"
         params: list[Any] = [user_id]
         if bucket == "session":
             q += " AND bucket='session' AND source_session_id=?"
@@ -147,13 +155,13 @@ class MemoryStore:
             q += " AND bucket=?"
             params.append(bucket)
         if type_:
-            q += " AND type=?"
+            q += " AND `type`=?"
             params.append(type_)
         q += " ORDER BY updated_at DESC"
         return [dict(r) for r in self._conn.execute(q, params).fetchall()]
 
     def count_chars(self, user_id: str, bucket: str | None = None, session_id: str | None = None) -> int:
-        q = "SELECT content FROM memory_entries WHERE status='active' AND (scope='global' OR user_id=?)"
+        q = "SELECT content FROM memory_entries WHERE status='active' AND (`scope`='global' OR user_id=?)"
         params: list[Any] = [user_id]
         if bucket == "session":
             q += " AND bucket='session' AND source_session_id=?"
@@ -216,8 +224,8 @@ class MemoryStore:
     # global 由主管维护,不程序归档;redline 永不压(安全底线)。
     def consolidate(self, user_id: str, target_chars: int) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id,type,key,content FROM memory_entries WHERE status='active' "
-            "AND user_id=? AND scope='user' AND type!='redline'", (user_id,)).fetchall()
+            "SELECT id,`type`,`key`,content FROM memory_entries WHERE status='active' "
+            "AND user_id=? AND `scope`='user' AND `type`!='redline'", (user_id,)).fetchall()
         # 归档顺序 = 优先级从低到高(pending/lesson/fact/preference/policy),同档长条先用
         rows = sorted(rows, key=lambda r: (_PRIORITY_ORDER.get(r["type"], 0), -len(r["content"])))
         total = self.count_chars(user_id)
@@ -236,9 +244,9 @@ class MemoryStore:
     def inject_frames(self, user_id: str, inject_tokens: int, entry_max: int,
                       prune_head: int, prune_tail: int) -> str | None:
         rows = self._conn.execute(
-            "SELECT type,key,content FROM memory_entries WHERE status='active' "
-            "AND (scope='global' OR user_id=?) AND type IN ('redline','preference','policy') "
-            "ORDER BY CASE type WHEN 'redline' THEN 0 WHEN 'policy' THEN 1 ELSE 2 END, updated_at DESC",
+            "SELECT `type`,`key`,content FROM memory_entries WHERE status='active' "
+            "AND (`scope`='global' OR user_id=?) AND `type` IN ('redline','preference','policy') "
+            "ORDER BY CASE `type` WHEN 'redline' THEN 0 WHEN 'policy' THEN 1 ELSE 2 END, updated_at DESC",
             (user_id,)).fetchall()
         parts: list[str] = []
         used = 0

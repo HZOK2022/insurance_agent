@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
-"""知识库事实源(KnowledgeStore):chunks 存 SQLite,Qdrant 是派生的向量索引(可从本表重建)。
+"""知识库事实源(KnowledgeStore):chunks 存 SQLite/MySQL,Qdrant 是派生的向量索引(可从本表重建)。
 
-黄金法则:SQLite = 事实源;Qdrant = 可重建的派生索引。
+黄金法则:MySQL(数据库服务器)= 事实源;Qdrant = 可重建的派生索引。SQLite 仅开发/测试回退。
 - search_knowledge 仍查 Qdrant(向量检索,快、语义)。
 - 本表(chunks)是 canon:重启/丢 Qdrant 时用 scripts/rebuild_qdrant.py 从它重建 Qdrant;
   也承载版本(条款更新=新增 version 行,旧版不失效,铁律 3)。
+- 生产(配 db_host)走 MySQL 的 knowledge 库;开发/测试(未配)回退 SQLite(knowledge.db)。
 """
 from __future__ import annotations
 import json
@@ -13,14 +13,25 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+import app.db as dbmod
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 class KnowledgeStore:
-    def __init__(self, path: str):
-        d = os.path.dirname(path)
+    def __init__(self, path: str | None = None, cfg=None):
+        self._is_mysql = cfg is not None and dbmod.dial(cfg) == "mysql"
+        if self._is_mysql:
+            self.path = None
+            self.conn = dbmod.DB(dbmod.get_conn(cfg, "knowledge"), cfg)
+            self._init_schema()
+            return
+        # SQLite(开发/测试/未配 db_host)
+        if path is None:
+            path = dbmod._sqlite_path(cfg, "knowledge") if cfg else "data/knowledge.db"
+        d = os.path.dirname(path) if path else None
         if d:
             os.makedirs(d, exist_ok=True)
         self.path = path
@@ -29,8 +40,8 @@ class KnowledgeStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
 
-    def _init_schema(self) -> None:
-        self.conn.executescript("""
+    def _ddl(self) -> str:
+        return """
         CREATE TABLE IF NOT EXISTS chunks (
           chunk_id   TEXT PRIMARY KEY,
           doc_id     TEXT,
@@ -66,8 +77,66 @@ class KnowledgeStore:
           normalized TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_doc_structure ON doc_structure(doc_id);
-        """)
-        # 增量迁移:既有库若缺 product_category / product_name 列,补上
+        """
+
+    def _mysql_ddl(self) -> None:
+        """MySQL DDL(建表 + 建索引)。索引不支持 IF NOT EXISTS,靠调用处容错重复(1061)。"""
+        stmts = [
+            "CREATE TABLE IF NOT EXISTS chunks ("
+            "  chunk_id VARCHAR(191) PRIMARY KEY,"
+            "  doc_id VARCHAR(191),"
+            "  version VARCHAR(64),"
+            "  section TEXT,"
+            "  doc_type VARCHAR(64),"
+            "  source TEXT,"
+            "  title TEXT,"
+            "  product_category VARCHAR(64),"
+            "  product_name VARCHAR(191),"
+            "  content LONGTEXT,"
+            "  updated_at VARCHAR(40))",
+            "CREATE INDEX idx_chunks_doc ON chunks(doc_id, version)",
+            "CREATE TABLE IF NOT EXISTS documents ("
+            "  doc_id VARCHAR(191) PRIMARY KEY,"
+            "  product_name VARCHAR(191),"
+            "  product_category VARCHAR(64),"
+            "  version VARCHAR(64),"
+            "  title TEXT,"
+            "  source TEXT,"
+            "  content_hash VARCHAR(64),"
+            "  created_at VARCHAR(40),"
+            "  updated_at VARCHAR(40))",
+            "CREATE TABLE IF NOT EXISTS doc_structure ("
+            "  doc_id VARCHAR(191),"
+            "  seq INT,"
+            "  level INT,"
+            "  title TEXT,"
+            "  page INT,"
+            "  parent TEXT,"
+            "  normalized TEXT)",
+            "CREATE INDEX idx_doc_structure ON doc_structure(doc_id)",
+        ]
+        for stmt in stmts:
+            try:
+                self.conn.execute(stmt)
+            except Exception as e:
+                if getattr(e, "args", [None])[0] == 1061:
+                    continue  # 索引已存在
+                raise
+        # 增量加列(既有 MySQL 库缺列时补上;全新库已含,幂等)
+        cols = dbmod.columns(self.conn, "chunks")
+        if "product_category" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN product_category VARCHAR(64)")
+        if "product_name" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN product_name VARCHAR(191)")
+        if "updated_at" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN updated_at VARCHAR(40)")
+        try:
+            self.conn.execute("CREATE INDEX idx_chunks_product ON chunks(product_name)")
+        except Exception as e:
+            if getattr(e, "args", [None])[0] != 1061:
+                raise
+
+    def _sqlite_ensure_columns(self) -> None:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(chunks)").fetchall()}
         if "product_category" not in cols:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN product_category TEXT")
@@ -75,20 +144,31 @@ class KnowledgeStore:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN product_name TEXT")
         if "updated_at" not in cols:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN updated_at TEXT")
-        # product_name 列确保存在后再建索引(既有库靠上方迁移补列)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_product ON chunks(product_name)")
+
+    def _init_schema(self) -> None:
+        if self._is_mysql:
+            self._mysql_ddl()
+        else:
+            self.conn.executescript(self._ddl())
+            self._sqlite_ensure_columns()
         self.conn.commit()
         # 回填/重归类:按 doc_id(产品名)判定 product_category(类别规则集中在 categories.py)。
-        # 幂等:每次 init 都对 DISTINCT doc_id 重算,规则变更后下次打开本表即生效。
+        self._reclassify()
+        # 回填 documents 表(旧库无 product_name 时以 doc_id 充当;content_hash 按内容计算)。
+        self._backfill_documents()
+        self.conn.commit()
+
+    def _reclassify(self) -> None:
+        """按 DISTINCT doc_id(产品名)重算 product_category;幂等(每次 init 对每个 doc 重算)。"""
         from app.retrieval.categories import classify_product_category
         for row in self.conn.execute("SELECT DISTINCT doc_id FROM chunks").fetchall():
             did = row["doc_id"] or ""
             cat = classify_product_category(did)
-            self.conn.execute("UPDATE chunks SET product_category=? WHERE doc_id=? AND product_category IS NOT ?", (cat, did, cat))
-            self.conn.execute("UPDATE chunks SET product_name=? WHERE doc_id=? AND (product_name IS NULL OR product_name='')", (did, did))
-        # 回填 documents 表(旧库无 product_name 时以 doc_id 充当;content_hash 由各 doc 的 chunks 计算)
-        self._backfill_documents()
-        self.conn.commit()
+            self.conn.execute("UPDATE chunks SET product_category=? WHERE doc_id=?", (cat, did))
+            self.conn.execute(
+                "UPDATE chunks SET product_name=? WHERE doc_id=? AND (product_name IS NULL OR product_name='')",
+                (did, did))
 
     def _backfill_documents(self) -> None:
         """旧库迁移:documents 缺行时按 chunks 回填(product_name=doc_id,content_hash=按内容计算)。幂等。"""
@@ -118,17 +198,30 @@ class KnowledgeStore:
             if not cid:
                 continue
             m = c.get("meta") or {}
-            self.conn.execute(
-                """INSERT INTO chunks(chunk_id, doc_id, version, section, doc_type, source, title, product_category, product_name, content, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(chunk_id) DO UPDATE SET
-                     doc_id=excluded.doc_id, version=excluded.version, section=excluded.section,
-                     doc_type=excluded.doc_type, source=excluded.source, title=excluded.title,
-                     product_category=excluded.product_category, product_name=excluded.product_name,
-                     content=excluded.content, updated_at=excluded.updated_at""",
-                (cid, m.get("doc_id", ""), m.get("version", ""), m.get("section", ""),
-                 m.get("doc_type", ""), m.get("source", ""), m.get("title", ""),
-                 m.get("product_category", ""), m.get("product_name", ""), c.get("content", ""), now))
+            args = (cid, m.get("doc_id", ""), m.get("version", ""), m.get("section", ""),
+                    m.get("doc_type", ""), m.get("source", ""), m.get("title", ""),
+                    m.get("product_category", ""), m.get("product_name", ""), c.get("content", ""), now)
+            if self._is_mysql:
+                self.conn.execute(
+                    """INSERT INTO chunks(chunk_id, doc_id, version, section, doc_type, source, title,
+                       product_category, product_name, content, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                       ON DUPLICATE KEY UPDATE
+                         doc_id=VALUES(doc_id), version=VALUES(version), section=VALUES(section),
+                         doc_type=VALUES(doc_type), source=VALUES(source), title=VALUES(title),
+                         product_category=VALUES(product_category), product_name=VALUES(product_name),
+                         content=VALUES(content), updated_at=VALUES(updated_at)""",
+                    args)
+            else:
+                self.conn.execute(
+                    """INSERT INTO chunks(chunk_id, doc_id, version, section, doc_type, source, title, product_category, product_name, content, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(chunk_id) DO UPDATE SET
+                         doc_id=excluded.doc_id, version=excluded.version, section=excluded.section,
+                         doc_type=excluded.doc_type, source=excluded.source, title=excluded.title,
+                         product_category=excluded.product_category, product_name=excluded.product_name,
+                         content=excluded.content, updated_at=excluded.updated_at""",
+                    args)
             n += 1
         self.conn.commit()
         return n
@@ -140,16 +233,27 @@ class KnowledgeStore:
     def upsert_document(self, doc: dict) -> None:
         """doc: {doc_id, product_name, product_category, version, title, source, content_hash}。整行替换。"""
         now = _utcnow()
-        self.conn.execute(
-            """INSERT INTO documents(doc_id, product_name, product_category, version, title, source, content_hash, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(doc_id) DO UPDATE SET
-                 product_name=excluded.product_name, product_category=excluded.product_category,
-                 version=excluded.version, title=excluded.title, source=excluded.source,
-                 content_hash=excluded.content_hash, updated_at=excluded.updated_at""",
-            (doc.get("doc_id", ""), doc.get("product_name", ""), doc.get("product_category", ""),
-             doc.get("version", ""), doc.get("title", ""), doc.get("source", ""),
-             doc.get("content_hash", ""), now, now))
+        args = (doc.get("doc_id", ""), doc.get("product_name", ""), doc.get("product_category", ""),
+                doc.get("version", ""), doc.get("title", ""), doc.get("source", ""),
+                doc.get("content_hash", ""), now, now)
+        if self._is_mysql:
+            self.conn.execute(
+                """INSERT INTO documents(doc_id, product_name, product_category, version, title, source, content_hash, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON DUPLICATE KEY UPDATE
+                     product_name=VALUES(product_name), product_category=VALUES(product_category),
+                     version=VALUES(version), title=VALUES(title), source=VALUES(source),
+                     content_hash=VALUES(content_hash), updated_at=VALUES(updated_at)""",
+                args)
+        else:
+            self.conn.execute(
+                """INSERT INTO documents(doc_id, product_name, product_category, version, title, source, content_hash, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(doc_id) DO UPDATE SET
+                     product_name=excluded.product_name, product_category=excluded.product_category,
+                     version=excluded.version, title=excluded.title, source=excluded.source,
+                     content_hash=excluded.content_hash, updated_at=excluded.updated_at""",
+                args)
         self.conn.commit()
 
     def all_chunks(self) -> list[dict]:
@@ -170,15 +274,15 @@ class KnowledgeStore:
         return {"chunk_id": d["chunk_id"], "content": content, "meta": d}
 
     def count(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        r = self.conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()
+        return int(r["c"] or 0)
 
     def list_documents(self, page: int = 1, page_size: int = 50) -> dict:
         """分页列出所有文档，按doc_id聚合，返回每个文档的统计信息。
         Returns: {total, page, page_size, items: [{doc_id, doc_type, product_category, chunk_count, last_updated}]}
         """
-        # 先count total
-        total_row = self.conn.execute("SELECT COUNT(DISTINCT doc_id) FROM chunks WHERE doc_id IS NOT NULL AND doc_id != ''").fetchone()
-        total = total_row[0] if total_row else 0
+        total_row = self.conn.execute("SELECT COUNT(DISTINCT doc_id) AS c FROM chunks WHERE doc_id IS NOT NULL AND doc_id != ''").fetchone()
+        total = total_row["c"] if total_row else 0
         if total == 0:
             return {"total": 0, "page": page, "page_size": page_size, "items": []}
 
@@ -215,8 +319,8 @@ class KnowledgeStore:
         """分页列出指定文档的所有chunks。
         Returns: {doc_id, total, page, page_size, items: [{chunk_id, version, section, title, product_category, content_preview}]}
         """
-        total_row = self.conn.execute("SELECT COUNT(*) FROM chunks WHERE doc_id = ?", (doc_id,)).fetchone()
-        total = total_row[0] if total_row else 0
+        total_row = self.conn.execute("SELECT COUNT(*) AS c FROM chunks WHERE doc_id = ?", (doc_id,)).fetchone()
+        total = total_row["c"] if total_row else 0
         if total == 0:
             return {"doc_id": doc_id, "total": 0, "page": page, "page_size": page_size, "items": []}
 
@@ -242,7 +346,6 @@ class KnowledgeStore:
                 "product_category": r["product_category"],
                 "content": content,   # 全文:供「查看」展开/收起
                 "content_preview": content_preview,
-                "content": content
             })
 
         return {

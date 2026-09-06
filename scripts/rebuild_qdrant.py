@@ -23,7 +23,7 @@ def main():
     a = ap.parse_args()
     cfg = load()
 
-    kstore = KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+    kstore = KnowledgeStore(cfg=cfg)
     chunks = kstore.all_chunks()
     if not chunks:
         print("[rebuild] 事实源(knowledge.db)为空,无可重建")

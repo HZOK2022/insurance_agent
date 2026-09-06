@@ -23,15 +23,15 @@ def main():
     a = ap.parse_args()
 
     cfg = load()
-    db = a.db or getattr(cfg, "premium_db_path", "data/premium.db")
-    store = PremiumStore(db)
+    store = PremiumStore(db) if a.db else PremiumStore(cfg=cfg)
     n = load_xx2025_xlsx(store, a.xlsx)
     if a.ax_xlsx:
         from app.businesses.premium_ax import load_ax2025_xlsx
         n += load_ax2025_xlsx(store, a.ax_xlsx)
-    cnt = store.conn.execute("SELECT COUNT(*) FROM premium_rates").fetchone()[0]
-    prod = store.conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-    print(f"[seed_premium] loaded {n} rate rows;premium_rates={cnt}, products={prod} → {db}")
+    cnt = store.conn.execute("SELECT COUNT(*) AS c FROM premium_rates").fetchone()["c"]
+    prod = store.conn.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"]
+    print(f"[seed_premium] loaded {n} rate rows;premium_rates={cnt}, products={prod} → "
+          f"{a.db or getattr(cfg, 'premium_db_name', '') or getattr(cfg, 'premium_db_path', 'data/premium.db')}")
     store.close()
 
 

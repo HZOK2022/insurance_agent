@@ -165,7 +165,7 @@ def _make_memory_tools(mstore: MemoryStore, sstore, cfg) -> dict:
 
 def attach_memory(bundle: dict, sstore, cfg) -> dict:
     """非侵入接入:返回叠加了记忆工具 + 指令帧 + 存储的 bundle;由 container 在 memory_enabled 时调用。"""
-    mstore = MemoryStore(getattr(cfg, "sqlite_path", "data/agent.db"))
+    mstore = MemoryStore(cfg=cfg)
     tools = _make_memory_tools(mstore, sstore, cfg)
     return {**bundle, "tools": {**bundle.get("tools", {}), **tools},
             "memory_system": MEMORY_SYSTEM, "memory_store": mstore}

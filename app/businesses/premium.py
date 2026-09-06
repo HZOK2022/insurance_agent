@@ -16,6 +16,8 @@ import re
 import sqlite3
 from typing import Any
 
+import app.db as dbmod
+
 PRODUCT_XX = "尊享e生2025"                        # key(稳定业务键,LLM 引用)
 PRODUCT_XX_NAME = "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）"
 VERSION_XX = "v2025"
@@ -61,10 +63,20 @@ def _fmt_dims(dims):
 
 
 class PremiumStore:
-    """费率事实源(SQLite)。单写者;只 INSERT/UPSERT。"""
+    """费率事实源(生产 MySQL / 开发 SQLite)。单写者;只 INSERT/UPSERT。"""
 
-    def __init__(self, path):
-        d = os.path.dirname(path)
+    def __init__(self, path=None, cfg=None):
+        self._is_mysql = cfg is not None and dbmod.dial(cfg) == "mysql"
+        # MySQL 里 key 是保留字,需反引号(SQLite 也接受反引号,但保持各自风格)
+        self._q = (lambda n: f"`{n}`") if self._is_mysql else (lambda n: n)
+        if self._is_mysql:
+            self.path = None
+            self.conn = dbmod.DB(dbmod.get_conn(cfg, "premium"), cfg)
+            self._init_schema()
+            return
+        if path is None:
+            path = dbmod._sqlite_path(cfg, "premium") if cfg else "data/premium.db"
+        d = os.path.dirname(path) if path else None
         if d:
             os.makedirs(d, exist_ok=True)
         self.path = path
@@ -73,8 +85,8 @@ class PremiumStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
 
-    def _init_schema(self):
-        self.conn.executescript("""
+    def _ddl(self) -> str:
+        return """
         CREATE TABLE IF NOT EXISTS products (
           id         INTEGER PRIMARY KEY AUTOINCREMENT,
           key        TEXT NOT NULL UNIQUE,
@@ -101,29 +113,91 @@ class PremiumStore:
           UNIQUE(product_key, item_key, dims, age_min, age_max)
         );
         CREATE INDEX IF NOT EXISTS idx_rate_lookup ON premium_rates(product_key, item_key, age_min, age_max);
-        """)
+        """
+
+    def _mysql_ddl(self) -> None:
+        """MySQL DDL:key 保留字反引号;唯一的 (product_key,item_key,dims,age_min,age_max) 要求各列够短
+        (utf8mb4 索引前缀上限 3072 字节,故 product_key/item_key/dims 用短的 VARCHAR)。"""
+        pk = self._q("key")
+        stmts = [
+            f"CREATE TABLE IF NOT EXISTS products ("
+            f"  id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+            f"  {pk} VARCHAR(191) NOT NULL UNIQUE,"
+            f"  name TEXT NOT NULL,"
+            f"  kb_doc_id VARCHAR(191),"
+            f"  version VARCHAR(64),"
+            f"  coverage TEXT,"
+            f"  rules TEXT,"
+            f"  calc_config TEXT,"
+            f"  source TEXT)",
+            f"CREATE TABLE IF NOT EXISTS premium_rates ("
+            f"  id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+            f"  product_key VARCHAR(64) NOT NULL,"
+            f"  item_key VARCHAR(64) NOT NULL,"
+            f"  item_name TEXT,"
+            f"  dims VARCHAR(300) NOT NULL,"
+            f"  age_min INT NOT NULL,"
+            f"  age_max INT NOT NULL,"
+            f"  premium DOUBLE,"
+            f"  unit VARCHAR(64),"
+            f"  source TEXT,"
+            f"  section TEXT,"
+            f"  UNIQUE(product_key, item_key, dims, age_min, age_max))",
+            "CREATE INDEX idx_rate_lookup ON premium_rates(product_key, item_key, age_min, age_max)",
+        ]
+        for stmt in stmts:
+            try:
+                self.conn.execute(stmt)
+            except Exception as e:
+                if getattr(e, "args", [None])[0] == 1061:
+                    continue
+                raise
+
+    def _init_schema(self):
+        if self._is_mysql:
+            self._mysql_ddl()
+        else:
+            self.conn.executescript(self._ddl())
         self.conn.commit()
 
     def upsert_product(self, key, name, kb_doc_id, version, coverage, rules, calc_config, source):
-        self.conn.execute(
-            """INSERT INTO products(key, name, kb_doc_id, version, coverage, rules, calc_config, source)
-               VALUES(?,?,?,?,?,?,?,?)
-               ON CONFLICT(key) DO UPDATE SET name=excluded.name, kb_doc_id=excluded.kb_doc_id,
-                 coverage=excluded.coverage, rules=excluded.rules, calc_config=excluded.calc_config""",
-            (key, name, kb_doc_id, version, coverage, rules,
-             json.dumps(calc_config, ensure_ascii=False).replace("\n", ""), source))
+        pk = self._q("key")
+        if self._is_mysql:
+            self.conn.execute(
+                f"""INSERT INTO products({pk}, name, kb_doc_id, version, coverage, rules, calc_config, source)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON DUPLICATE KEY UPDATE name=VALUES(name), kb_doc_id=VALUES(kb_doc_id),
+                     coverage=VALUES(coverage), rules=VALUES(rules), calc_config=VALUES(calc_config)""",
+                (key, name, kb_doc_id, version, coverage, rules,
+                 json.dumps(calc_config, ensure_ascii=False).replace("\n", ""), source))
+        else:
+            self.conn.execute(
+                """INSERT INTO products(key, name, kb_doc_id, version, coverage, rules, calc_config, source)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET name=excluded.name, kb_doc_id=excluded.kb_doc_id,
+                     coverage=excluded.coverage, rules=excluded.rules, calc_config=excluded.calc_config""",
+                (key, name, kb_doc_id, version, coverage, rules,
+                 json.dumps(calc_config, ensure_ascii=False).replace("\n", ""), source))
         self.conn.commit()
 
     def upsert_rate(self, product_key, item_key, item_name, dims, age_min, age_max,
                     premium, unit, source, section):
         d = json.dumps(dims, sort_keys=True, ensure_ascii=False)
-        self.conn.execute(
-            """INSERT INTO premium_rates(product_key, item_key, item_name, dims, age_min, age_max,
-                 premium, unit, source, section)
-               VALUES(?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(product_key, item_key, dims, age_min, age_max)
-               DO UPDATE SET premium=excluded.premium, item_name=excluded.item_name, unit=excluded.unit""",
-            (product_key, item_key, item_name, d, age_min, age_max, premium, unit, source, section))
+        if self._is_mysql:
+            self.conn.execute(
+                """INSERT INTO premium_rates(product_key, item_key, item_name, dims, age_min, age_max,
+                     premium, unit, source, section)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON DUPLICATE KEY UPDATE premium=VALUES(premium), item_name=VALUES(item_name), unit=VALUES(unit)""",
+                (product_key, item_key, item_name, d, age_min, age_max, premium, unit, source, section))
+        else:
+            self.conn.execute(
+                """INSERT INTO premium_rates(product_key, item_key, item_name, dims, age_min, age_max,
+                     premium, unit, source, section)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(product_key, item_key, dims, age_min, age_max)
+                   DO UPDATE SET premium=excluded.premium, item_name=excluded.item_name, unit=excluded.unit""",
+                (product_key, item_key, item_name, d, age_min, age_max, premium, unit, source, section))
         self.conn.commit()
         row = self.conn.execute(
             """SELECT * FROM premium_rates WHERE product_key=? AND item_key=? AND dims=? AND age_min=? AND age_max=?""",
@@ -148,7 +222,8 @@ class PremiumStore:
         ref = (ref or "").strip()
         if not ref:
             return None
-        row = self.conn.execute("SELECT * FROM products WHERE key=? OR name=?", (ref, ref)).fetchone()
+        pk = self._q("key")
+        row = self.conn.execute(f"SELECT * FROM products WHERE {pk}=? OR name=?", (ref, ref)).fetchone()
         if not row:
             return None
         d = dict(row)

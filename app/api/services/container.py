@@ -23,7 +23,7 @@ def get_cfg():
 
 @lru_cache(maxsize=1)
 def get_store() -> SessionStore:
-    return SessionStore(get_cfg().sqlite_path)
+    return SessionStore(cfg=get_cfg())
 
 
 @lru_cache(maxsize=1)
@@ -57,8 +57,7 @@ def get_approval() -> ApprovalCenter:
 
 @lru_cache(maxsize=1)
 def get_knowledge_store() -> KnowledgeStore:
-    cfg = get_cfg()
-    return KnowledgeStore(getattr(cfg, "knowledge_db_path", "data/knowledge.db"))
+    return KnowledgeStore(cfg=get_cfg())
 
 
 def get_ingester() -> Ingester:
@@ -67,8 +66,8 @@ def get_ingester() -> Ingester:
 
 @lru_cache(maxsize=1)
 def get_memory_store() -> MemoryStore:
-    """记忆存储(与 agent 运行时同一 agent.db,SQLite 单写者 / WAL)。供记忆管理面板读写。"""
-    return MemoryStore(getattr(get_cfg(), "sqlite_path", "data/agent.db"))
+    """记忆存储(与 agent 运行时同一事实源,SQLite 单写者 / WAL,生产=MySQL session 库)。供记忆管理面板读写。"""
+    return MemoryStore(cfg=get_cfg())
 
 
 @lru_cache(maxsize=1)
