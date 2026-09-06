@@ -565,9 +565,9 @@ class AgentLoop:
                 # 模型只见过当轮编号(检索内容当轮从 1 起),上下文回答(无检索)无块可解析 → 无角标。
                 blocks, citations = self.present_answer(answer_text or "（无回答）", references)
                 _cids = [c.get("idx") for c in (citations or []) if isinstance(c, dict) and c.get("idx") is not None]
-                logger.info("回答 sid=%s chars=%d cites=%s head=%s", session_id,
+                logger.info("回答 sid=%s chars=%d cites=%s msg=%s", session_id,
                             len(answer_text or ""), _cids or len(citations or []),
-                            (answer_text or "").strip().replace("\n", " ")[:200],
+                            (answer_text or "").strip().replace("\n", " ")[:300],
                             extra={"session_id": session_id, "trace_id": session_id})
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 _last_completion = answer_text or ""
