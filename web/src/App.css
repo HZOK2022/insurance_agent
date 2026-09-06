@@ -127,6 +127,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .message-text { font-size: 14.5px; line-height: 1.7; color: var(--dsw-text); white-space: pre-wrap; }
 .msg-chrome { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; color: var(--dsw-text-3); margin-top: 2px; }
 .msg-chrome .msg-metrics { color: var(--dsw-text-3); font-variant-numeric: tabular-nums; }
+.msg-chrome .msg-trace { color: var(--dsw-text-3); font-variant-numeric: tabular-nums; }
 @media (hover: hover) {
   [data-time-hover-root] .msg-chrome { opacity: 0; transition: opacity 80ms; }
   [data-time-hover-root]:hover .msg-chrome, [data-time-hover-root]:focus-within .msg-chrome { opacity: 1; }
