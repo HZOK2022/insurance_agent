@@ -15,31 +15,37 @@ from app.memory.system import MEMORY_SYSTEM
 
 SAVE_SCHEMA = {"type": "function", "function": {
     "name": "memory_save",
-    "description": "写入/更新一条跨会话记忆(必须:通用/知识库外/未来会用;同 key 覆盖,非新增)。"
-                   "仅当坐席内容满足通用性判据且知识库没有时才调;本会话限定/客户信息/单次答案一律不调。",
+    "description": "保存/更新一条记忆。仅当用户明确要求「记住/保存/以后都这样/忘掉/改成」时才调用;由 target 判定存到哪个桶。"
+                   "同 key 覆盖更新(留历史)。agent 不要主动保存(除非用户要求)。",
     "parameters": {"type": "object", "properties": {
-        "key":     {"type": "string", "description": "语义标识,如 product:尊享e生:免赔额、lesson:等待期vs犹豫期"},
-        "type":    {"type": "string", "enum": ["fact", "policy", "preference", "lesson", "pending"],
-                    "description": "fact(知识结论)| policy(口径)| preference(偏好)| lesson(经验)| pending(知识缺口)"},
-        "scope":   {"type": "string", "enum": ["global", "user"], "description": "global=全员(需主管维护);user=个人"},
+        "target":  {"type": "string", "enum": ["user", "cross_session", "session"],
+                    "description": "存到哪个桶:user=当前用户偏好/画像/使用习惯(叫我大哥/先给结论/关注险种);"
+                                   "cross_session=跨会话可复用经验/口径/知识结论/踩坑/缺口;"
+                                   "session=仅当前会话(本会话窗口,如'本会话基于X产品')"},
+        "category":{"type": "string",
+                    "enum": ["profile", "preference", "habit", "fact", "policy", "lesson", "pending", "instruction", "context"],
+                    "description": "按 target 选:user→profile/preference/habit;cross_session→fact/policy/lesson/pending;session→instruction/context"},
+        "key":     {"type": "string", "description": "语义标识,如 称呼、风格、product:尊享e生:免赔额、instruction:产品范围"},
         "content": {"type": "string", "description": "自包含的一句话要点,带关键数字/产品/版本"}},
-        "required": ["key", "content"]}}}
+        "required": ["target", "category", "key", "content"]}}}
 
 SEARCH_SCHEMA = {"type": "function", "function": {
     "name": "memory_search",
-    "description": "检索跨会话记忆(历史经验/口径/踩坑/知识缺口;不是知识库条款)。"
-                   "当问题涉及之前处理过的类似情况、某产品之前的口径、你踩过的坑时用,基于命中回答,别让坐席重复问。",
+    "description": "检索持久记忆(用户偏好+跨会话经验/口径/踩坑/知识缺口;不是知识库条款/会话记忆)。"
+                   "当问题涉及你或该用户之前记录的经验/口径/偏好时用,基于命中回答,别让坐席重复问。",
     "parameters": {"type": "object", "properties": {
         "query": {"type": "string", "description": "要检索的记忆主题/关键词"}},
         "required": ["query"]}}}
 
 FORGET_SCHEMA = {"type": "function", "function": {
     "name": "memory_forget",
-    "description": "遗忘一条跨会话记忆(标记已遗忘,历史保留)。当记忆被证明错误/过时、pending 已被补进知识库、或坐席明确说不用记时用。",
+    "description": "遗忘一条记忆(标记已遗忘,历史保留)。当用户明确说忘掉、或记忆被证明错误/过时、pending 已补进知识库时用;"
+                   "target 决定去哪个桶找(与保存一一对应)。",
     "parameters": {"type": "object", "properties": {
+        "target": {"type": "string", "enum": ["user", "cross_session", "session"], "description": "要去哪个桶遗忘(user/cross_session/session)"},
         "key":    {"type": "string", "description": "要遗忘的记忆 key"},
         "reason": {"type": "string", "description": "遗忘原因(可审计)"}},
-        "required": ["key"]}}}
+        "required": ["target", "key"]}}}
 
 
 def _user_of(sstore, session_id: str | None) -> str:
@@ -50,50 +56,70 @@ def _user_of(sstore, session_id: str | None) -> str:
     return (sess.get("user_id") if sess else "") or ""
 
 
+# target → 桶名/标签/允许的 category
+_TARGETS = {
+    "user":          {"label": "用户记忆", "cat": {"profile", "preference", "habit"}},
+    "cross_session": {"label": "跨会话记忆", "cat": {"fact", "policy", "lesson", "pending"}},
+    "session":       {"label": "会话记忆", "cat": {"instruction", "context"}},
+}
+
+
 def _make_save_handler(mstore: MemoryStore, sstore, cfg):
     entry_max = int(getattr(cfg, "memory_entry_max_chars", 500) or 500)
     head = int(getattr(cfg, "memory_prune_head_chars", 200) or 200)
     tail = int(getattr(cfg, "memory_prune_tail_chars", 100) or 100)
+    bucket_limit = int(getattr(cfg, "memory_bucket_limit_chars", 2000) or 2000)
 
     def handler(args: Any, start_idx: int = 0, session_id: str | None = None) -> dict:
         key = (args or {}).get("key") or ""
-        if not key:
-            return {"content": "memory_save 缺 key。", "reference": None}
+        target = (args or {}).get("target") or ""
+        category = (args or {}).get("category") or ""
+        if not key or not target:
+            return {"content": "memory_save 缺 key/target。", "reference": None}
+        spec = _TARGETS.get(target)
+        if not spec:
+            return {"content": f"未知 target: {target}", "reference": None}
+        if category not in spec["cat"]:
+            return {"content": f"category={category} 不适用于 {target}(应为 {sorted(spec['cat'])})", "reference": None}
         user_id = _user_of(sstore, session_id)
         if not user_id:
             return {"content": "无法解析当前用户,已跳过记忆写入。", "reference": None}
-        type_ = (args or {}).get("type") or "fact"
-        scope = (args or {}).get("scope") or "user"
         content = (args or {}).get("content") or ""
         if len(content) > entry_max:
             content = prune_memory_content(content, head, tail) or content
-        res = mstore.save(user_id, scope, type_, key, content,
-                          confidence="explicit", source_session_id=session_id)
+        # session 桶必须有会话上下文
+        if target == "session":
+            sid = session_id or ""
+            if not sid:
+                return {"content": "会话记忆需要当前会话(无法绑定会话)。", "reference": None}
+            res = mstore.save(user_id, target, category, key, content, scope=None,
+                              confidence="explicit", source_session_id=sid)
+        else:
+            res = mstore.save(user_id, target, category, key, content, scope="user",
+                              confidence="explicit", source_session_id=session_id)
         if sstore and session_id:
             try:
                 sstore.append(session_id, "memory_upsert", {
-                    "entry_id": res["entry_id"], "user_id": user_id, "key": key,
-                    "type": type_, "scope": scope, "content": content,
+                    "entry_id": res["entry_id"], "user_id": user_id, "bucket": target,
+                    "key": key, "type": category, "content": content,
                     "confidence": "explicit", "old_text": res["old_text"],
                     "source_session_id": session_id})
             except Exception:
                 pass   # 事件写入失败不阻断工具(审计 best-effort)
-        # D53 写入后总量超限触发程序级保守压实(保 redline、按优先级归档 user 级、压回 target)
-        budget = int(getattr(cfg, "memory_total_budget_chars", 0) or 0)
-        target = int(getattr(cfg, "memory_total_budget_target_chars", 0) or 0)
-        consolidated = []
-        if budget > 0 and target > 0 and mstore.count_chars(user_id) > budget:
-            consolidated = mstore.consolidate(user_id, target)
-            for a in consolidated:
+        # 该桶总量超 bucket_limit → 规则压缩(优先归档低优先级、单条头尾剪枝)到 30%
+        archived = []
+        if mstore.count_chars(user_id, bucket=target, session_id=session_id) > bucket_limit:
+            archived = mstore.compact_bucket(user_id, target, int(bucket_limit * 0.3), session_id)
+            for a in archived:
                 if sstore and session_id:
                     try:
                         sstore.append(session_id, "memory_archive", {
-                            "key": a["key"], "reason": "压实自动归档(超总量预算)", "user_id": user_id})
+                            "key": a["key"], "reason": "桶超上限自动压实", "user_id": user_id, "bucket": target})
                     except Exception:
                         pass
         verb = "更新" if not res["is_new"] else "新增"
-        note = f";压实归档{len(consolidated)}条" if consolidated else ""
-        return {"content": f"已{verb}跨会话记忆:key={key}{note}", "reference": res}
+        note = f";压实归档{len(archived)}条" if archived else ""
+        return {"content": f"已{verb}【{spec['label']}】:key={key}{note}", "reference": res}
     return handler
 
 
@@ -101,17 +127,19 @@ def _make_forget_handler(mstore: MemoryStore, sstore, cfg):
     def handler(args: Any, start_idx: int = 0, session_id: str | None = None) -> dict:
         key = (args or {}).get("key") or ""
         reason = (args or {}).get("reason")
+        target = (args or {}).get("target") or "cross_session"
         if not key:
             return {"content": "memory_forget 缺 key。", "reference": None}
         user_id = _user_of(sstore, session_id)
-        ok = mstore.forget(user_id, key, reason=reason, scope=(args or {}).get("scope"))
+        ok = mstore.forget(user_id, key, reason=reason, bucket=target, session_id=session_id)
         if sstore and session_id and ok:
             try:
                 sstore.append(session_id, "memory_archive", {
-                    "key": key, "reason": reason, "user_id": user_id})
+                    "key": key, "reason": reason, "user_id": user_id, "bucket": target})
             except Exception:
                 pass
-        return {"content": (f"已遗忘记忆:key={key}" if ok else f"未找到要遗忘的记忆:key={key}"),
+        return {"content": (f"已遗忘【{_TARGETS.get(target, {}).get('label', target)}】:key={key}" if ok
+                            else f"未找到要遗忘的记忆:key={key}"),
                 "reference": None}
     return handler
 
@@ -144,18 +172,27 @@ def attach_memory(bundle: dict, sstore, cfg) -> dict:
 
 
 def build_memory_frame(bundle: dict, sstore, session_id: str | None, cfg) -> str | None:
-    """run_prompt 用:memory_enabled 时拼"指令 + 常驻记忆帧",供追加到 system。关/未接入返回 None。"""
+    """run_prompt 用:memory_enabled 时拼"指令 + 三类记忆帧"(user/cross_session/session),供追加到 system。
+    记忆帧从会话第一个问题起就注入,和 system/tool schema 一样不参与上下文压缩(由压缩器跳过)。
+    每桶总长 ≤ memory_bucket_limit_chars(2000),超则压缩到 30%。"""
     if not bundle.get("memory_system"):
         return None
     frame = bundle["memory_system"]
     mstore = bundle.get("memory_store")
     if mstore:
         user_id = _user_of(sstore, session_id)
-        inj = mstore.inject_frames(user_id,
-                                   int(getattr(cfg, "memory_inject_max_tokens", 800) or 800),
-                                   int(getattr(cfg, "memory_entry_max_chars", 500) or 500),
-                                   int(getattr(cfg, "memory_prune_head_chars", 200) or 200),
-                                   int(getattr(cfg, "memory_prune_tail_chars", 100) or 100))
-        if inj:
-            frame = frame + "\n\n" + inj
+        limit = int(getattr(cfg, "memory_bucket_limit_chars", 2000) or 2000)
+        frames: list[str] = []
+        if user_id:
+            for b in ("user", "cross_session"):
+                f = mstore.bucket_frame(user_id, b, session_id=None, limit_chars=limit)
+                if f:
+                    frames.append(f)
+        if user_id and session_id:
+            fs = mstore.bucket_frame(user_id, "session", session_id, limit_chars=limit)
+            if fs:
+                frames.append(fs)
+        if frames:
+            header = "【当前已存记忆(直接遵守,勿向坐席复述)】\n" + "\n\n".join(frames)
+            frame = frame + "\n\n" + header
     return frame

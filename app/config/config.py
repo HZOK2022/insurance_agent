@@ -103,6 +103,7 @@ class Config:
     memory_total_budget_chars: int = 3000    # 某客服 active 记忆总字符,超限触发压实
     memory_total_budget_target_chars: int = 2000  # 压实压回目标(留缓冲)
     memory_inject_max_tokens: int = 800      # 常驻记忆注入 system 的 token 预算(取高优)
+    memory_bucket_limit_chars: int = 2000    # 每桶(用户/跨会话/会话)注入帧总长上限,超则压缩到 30%
     memory_search_top_k: int = 4             # memory_search 返回条数
     memory_prune_head_chars: int = 200       # 单条记忆剪枝保留头(主题)
     memory_prune_tail_chars: int = 100       # 单条记忆剪枝保留尾(关键数字/结论)
@@ -196,6 +197,7 @@ _ENV = {
     "memory_search_top_k": "MEMORY_SEARCH_TOP_K",
     "memory_prune_head_chars": "MEMORY_PRUNE_HEAD_CHARS",
     "memory_prune_tail_chars": "MEMORY_PRUNE_TAIL_CHARS",
+    "memory_bucket_limit_chars": "MEMORY_BUCKET_LIMIT_CHARS",
     "memory_consolidate_min_interval": "MEMORY_CONSOLIDATE_MIN_INTERVAL",
     "mineru_api_key": "MINERU_API_KEY",
     "mineru_model_version": "MINERU_MODEL_VERSION",
@@ -233,6 +235,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_history_search_per_turn", "history_search_top_k", "max_tokens_per_turn", "tool_timeout_seconds",
                   "memory_entry_max_chars", "memory_total_budget_chars", "memory_total_budget_target_chars",
                   "memory_inject_max_tokens", "memory_search_top_k", "memory_prune_head_chars", "memory_prune_tail_chars",
+                  "memory_bucket_limit_chars",
                   "memory_consolidate_min_interval",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",

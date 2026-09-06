@@ -67,6 +67,7 @@ class SessionStore:
         CREATE TABLE IF NOT EXISTS memory_entries (
           id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL,
+          bucket TEXT NOT NULL DEFAULT 'cross_session',
           scope TEXT NOT NULL,
           type TEXT NOT NULL,
           key TEXT NOT NULL,
@@ -93,6 +94,10 @@ class SessionStore:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
         if "role" not in cols:
             self._conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'agent'")
+        # 增量迁移:既有库的 memory_entries 若缺 bucket 列,补上(三桶:user/cross_session/session;旧记忆=跨会话)
+        mem_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(memory_entries)").fetchall()}
+        if "bucket" not in mem_cols:
+            self._conn.execute("ALTER TABLE memory_entries ADD COLUMN bucket TEXT NOT NULL DEFAULT 'cross_session'")
         self._conn.commit()
 
     def _check_schema(self) -> None:

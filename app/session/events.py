@@ -150,6 +150,7 @@ def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
 # ---- 跨会话记忆事件(D52,可插拔增强)----
 def _validate_memory_upsert(p):
     return {"entry_id": p.get("entry_id"), "user_id": p.get("user_id"),
+            "bucket": p.get("bucket"),
             "key": _req(p, "key", str), "type": p.get("type"), "scope": p.get("scope"),
             "content": _req(p, "content", str), "confidence": p.get("confidence"),
             "reason": p.get("reason"), "old_text": p.get("old_text"),
@@ -158,6 +159,7 @@ def _validate_memory_upsert(p):
 
 def _validate_memory_archive(p):
     return {"entry_id": p.get("entry_id"), "user_id": p.get("user_id"),
+            "bucket": p.get("bucket"),
             "key": p.get("key"), "reason": p.get("reason")}
 
 
