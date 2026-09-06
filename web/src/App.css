@@ -593,6 +593,8 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mem-entry-key { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .mem-entry-content { font-size: 13px; color: var(--dsw-text-2); flex: 1; overflow-wrap: anywhere; }
 .mem-entry-meta { font-size: 11px; color: var(--dsw-text-3); white-space: nowrap; }
+.mem-entry-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.mem-entry-actions .mem-btn { padding: 2px 8px; font-size: 11px; }
 .mem-entry-archived { font-size: 11px; color: #94a3b8; background: var(--dsw-sidebar-fill); padding: 1px 6px; border-radius: 4px; }
 .mem-empty { padding: 14px; color: var(--dsw-text-3); font-size: 13px; text-align: center; }
 .mem-frame { margin: 10px 14px 12px; }

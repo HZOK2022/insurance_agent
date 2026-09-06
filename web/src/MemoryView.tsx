@@ -1,6 +1,6 @@
 // -*- coding: utf-8 -*-
-// 记忆管理面板(P2.3):三桶(用户/跨会话/会话)的查看/新增/遗忘/压实 + 注入帧预览。
-// 数据来自 /api/memory(会话 token 鉴权,只操作自己)。
+// 记忆管理面板(P2.3):三桶(用户/跨会话/会话)的查看/新增/编辑/遗忘/压实 + 注入帧预览。
+// 数据来自 /api/memory(会话 token 鉴权,只操作自己);编辑=同 key 覆盖(留历史)。
 import { useEffect, useState } from "react"
 import { getMemory, saveMemory, forgetMemory, compactMemory, type MemoryEntry, type MemoryListResp } from "./lib/api"
 
@@ -25,8 +25,10 @@ function TypeTag({ t }: { t: string }) {
   return <span className="mem-type" style={{ background: TYPE_COLOR[t] || "#64748b" }}>{t}</span>
 }
 
-// 新增/编辑记忆的表单(target 切换时联动 category 选项)
-function SaveForm({ sessionId, onDone, readOnly }: { sessionId: string | null; onDone: () => void; readOnly: boolean }) {
+interface EditState { target: string; category: string; key: string; content: string }
+
+// 新增/编辑记忆表单(编辑时 target 锁定为该条目的桶,保存=同 key 覆盖)
+function SaveForm({ sessionId, onDone, editing, onCancelEdit }: { sessionId: string | null; onDone: () => void; editing: EditState | null; onCancelEdit: () => void }) {
   const [target, setTarget] = useState("cross_session")
   const [category, setCategory] = useState("fact")
   const [key, setKey] = useState("")
@@ -34,30 +36,38 @@ function SaveForm({ sessionId, onDone, readOnly }: { sessionId: string | null; o
   const [msg, setMsg] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
+  const isEdit = !!editing
 
-  useEffect(() => { setCategory(TARGET_TO_CATS[target][0] || "fact") }, [target])
+  // 点击某条"编辑"→ 预填表单(target 锁定为该桶)
+  useEffect(() => {
+    if (editing) {
+      setTarget(editing.target); setCategory(editing.category)
+      setKey(editing.key); setContent(editing.content)
+    }
+  }, [editing])
+
+  useEffect(() => { if (!isEdit) setCategory(TARGET_TO_CATS[target][0] || "fact") }, [target, isEdit])
 
   const submit = async () => {
     if (!key.trim() || !content.trim()) { setErr("key 与 content 必填"); return }
     setBusy(true); setErr("")
     try {
       const r = await saveMemory({ target, category, key: key.trim(), content: content.trim(), session_id: target === "session" ? (sessionId || undefined) : undefined })
-      setMsg(r.message); setKey(""); setContent(""); onDone()
+      setMsg(r.message); setKey(""); setContent(""); onDone(); onCancelEdit()
     } catch (e: any) { setErr(String(e.message || e)) }
     finally { setBusy(false) }
   }
 
-  if (readOnly) return null
   return (
     <div className="mem-form">
       <div className="mem-form-row">
         <label className="mem-label">存到</label>
-        <select className="mem-input" value={target} onChange={(e) => setTarget(e.target.value)}>
+        <select className="mem-input" value={target} disabled={isEdit} onChange={(e) => setTarget(e.target.value)}>
           {BUCKET_ORDER.filter((b) => b.key !== "session" || !!sessionId).map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
         </select>
         <label className="mem-label">类型</label>
         <select className="mem-input" value={category} onChange={(e) => setCategory(e.target.value)}>
-          {TARGET_TO_CATS[target].map((c) => <option key={c} value={c}>{c}</option>)}
+          {(TARGET_TO_CATS[target] || []).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
       <div className="mem-form-row">
@@ -68,7 +78,8 @@ function SaveForm({ sessionId, onDone, readOnly }: { sessionId: string | null; o
       </div>
       <div className="mem-form-row mem-form-actions">
         {msg && <span className="mem-ok">{msg}</span>}{err && <span className="mem-err">{err}</span>}
-        <button className="mem-btn mem-primary" disabled={busy} onClick={submit}>保存</button>
+        {isEdit && <button className="mem-btn" onClick={() => { onCancelEdit(); setMsg(""); setErr("") }}>取消</button>}
+        <button className="mem-btn mem-primary" disabled={busy} onClick={submit}>{isEdit ? "更新" : "保存"}</button>
       </div>
     </div>
   )
@@ -78,13 +89,14 @@ export default function MemoryView({ sessionId, onBack }: { sessionId: string | 
   const [data, setData] = useState<MemoryListResp | null>(null)
   const [err, setErr] = useState("")
   const [loadErr, setLoadErr] = useState("")
+  const [editing, setEditing] = useState<EditState | null>(null)
 
   const load = async () => {
     setLoadErr("")
     try { setData(await getMemory(sessionId || undefined)) }
     catch (e: any) { setLoadErr(String(e.message || e)); setData(null) }
   }
-  useEffect(() => { load() }, [sessionId]) // eslint-disable-line
+  useEffect(() => { load(); setEditing(null) }, [sessionId]) // eslint-disable-line
 
   const del = async (target: string, key: string) => {
     if (!window.confirm("确定遗忘「" + key + "」?(历史保留,标记已遗忘)")) return
@@ -116,6 +128,10 @@ export default function MemoryView({ sessionId, onBack }: { sessionId: string | 
 
   const frames = data.frames || {}
   const counts = data.counts || {}
+  const startEdit = (bucket: string, e: MemoryEntry) => {
+    if (e.scope === "global") return
+    setEditing({ target: bucket, category: e.type, key: e.key, content: e.content })
+  }
   return (
     <div className="kb-manager">
       <div className="kb-head">
@@ -131,8 +147,8 @@ export default function MemoryView({ sessionId, onBack }: { sessionId: string | 
       </div>
       <div className="kb-body">
         <div className="mem-save-wrap">
-          <div className="kb-head"><span className="kb-subtitle">新增 / 覆盖一条记忆</span></div>
-          <SaveForm sessionId={sessionId} onDone={load} readOnly={false} />
+          <div className="kb-head"><span className="kb-subtitle">{editing ? "编辑记忆(同 key 覆盖,留历史)" : "新增一条记忆"}</span></div>
+          <SaveForm sessionId={sessionId} onDone={load} editing={editing} onCancelEdit={() => setEditing(null)} />
         </div>
         <div className="mem-buckets">
           {BUCKET_ORDER.filter((b) => b.key !== "session" || sessionId).map((b) => {
@@ -158,7 +174,12 @@ export default function MemoryView({ sessionId, onBack }: { sessionId: string | 
                       {e.status === "archived" && <span className="mem-entry-archived">已归档</span>}
                       <span className="mem-entry-content">{e.content}</span>
                       <span className="mem-entry-meta">{e.confidence || ""}{e.updated_at ? " · " + e.updated_at.slice(0, 16).replace("T", " ") : ""}</span>
-                      <button className="mem-btn mem-danger" onClick={() => del(b.key, e.key)}>遗忘</button>
+                      {e.scope !== "global" && (
+                        <span className="mem-entry-actions">
+                          <button className="mem-btn" onClick={() => startEdit(b.key, e)}>编辑</button>
+                          <button className="mem-btn mem-danger" onClick={() => del(b.key, e.key)}>遗忘</button>
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

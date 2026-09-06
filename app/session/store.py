@@ -273,7 +273,7 @@ class SessionStore:
         uid = uuid.uuid4().hex[:12]
         now = events.utcnow()
         self._conn.execute(
-            "INSERT INTO users (id,username,password_hash,salt,display_name,created_at,role) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO users (id,username,password_hash,salt,display_name,created_at,role) VALUES (?,?,?,?,?,?,?)",
             (uid, username, password_hash, salt, display_name or username, now, role))
         self._conn.commit()
         return {"id": uid, "username": username, "display_name": display_name or username, "role": role, "created_at": now}

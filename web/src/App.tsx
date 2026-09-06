@@ -302,8 +302,12 @@ export default function App() {
   const [narrow, setNarrow] = useState(false)
   // 顶层视图持久化:刷新后停留在当前页(对话/知识管理/解析对比),不强制跳回对话
   const [currentView, setCurrentView] = useState<View>(() => {
+    const valid: View[] = ["chat", "knowledge", "compare", "diagnose", "memory"]
+    // 支持 ?view=memory 等深链(便于直达/自测);无则回退到 localStorage 记住的页
+    const q = new URLSearchParams(window.location.search).get("view") as View | null
+    if (q && valid.includes(q)) return q
     const v = localStorage.getItem("ins-view")
-    return v === "chat" || v === "knowledge" || v === "compare" || v === "diagnose" ? v : "chat"
+    return valid.includes(v as View) ? (v as View) : "chat"
   })
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)

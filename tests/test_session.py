@@ -34,6 +34,15 @@ class StoreTest(unittest.TestCase):
     def tearDown(self):
         self.s.close()
 
+    def test_create_user_on_fresh_db(self):
+        # 回归:create_user 的 INSERT 曾"7 列 8 值"(缺口列 disabled),新库播种必炸,旧库因已播种被掩盖
+        self.s.create_user("alias", "hash", "salt", "展示名", "admin")
+        u = self.s.get_user("alias")
+        self.assertIsNotNone(u)
+        self.assertEqual(u["role"], "admin")
+        self.assertEqual(u["disabled"], 0)
+        self.assertEqual(u["display_name"], "展示名")
+
     def test_append_and_read_roundtrip(self):
         seq = self.s.append("s1", "user_message", {"text": "你好", "client_time": None})
         self.assertEqual(seq, 1)  # 首个事件 seq=1
