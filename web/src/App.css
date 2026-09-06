@@ -396,6 +396,12 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 /* 上传表单:紧凑网格(一屏放下多字段一行) + 标签与输入框同一行 */
 .kb-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 14px; align-items: center; }
 .kb-mode-row { grid-column: 1 / -1; display: flex; gap: 8px; }
+.kb-form-head { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.kb-help-btn { padding: 3px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-bg); color: var(--dsw-text-2); font-size: 12.5px; cursor: pointer; }
+.kb-help-btn:hover { border-color: var(--dsw-primary); color: var(--dsw-primary); }
+.kb-help-pop { grid-column: 1 / -1; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; line-height: 1.7; color: var(--dsw-text-2); }
+.kb-help-pop ul { margin: 0; padding-left: 18px; }
+.kb-help-pop li { margin-bottom: 4px; }
 .kb-form-field { display: flex; align-items: center; gap: 8px; }
 .kb-form-label { flex: 0 0 auto; min-width: 86px; font-size: 12.5px; color: var(--dsw-text-2); font-weight: 500; }
 .kb-form-input { flex: 1; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; font: inherit; font-size: 13px; color: var(--dsw-text); background: var(--dsw-bg); outline: none; transition: border-color .15s; }

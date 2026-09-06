@@ -56,6 +56,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
+  const [uHelp, setUHelp] = useState(false)   // 上传页右上角「提示」是否展开(默认隐藏)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -355,6 +356,19 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       {view === "upload" && (
         <div className="kb-body">
           <div className="kb-form">
+            <div className="kb-form-head">
+              <button className="kb-help-btn" onClick={() => setUHelp((h) => !h)} title="查看提示" aria-label="查看提示">？ 提示</button>
+            </div>
+            {uHelp && (
+              <div className="kb-help-pop">
+                <ul>
+                  <li>产品名称唯一;同名产品内容不同会提示"是否覆盖",需确认后覆盖旧文档。</li>
+                  <li>解析后端:MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown 即可。想看同一文件三路解析对比,点右上「解析对比」。</li>
+                  <li>切分方式:结构层级按语义单元切(节/条/一、/1./(1)),不使用 overlap(已置0);字符/段落按 chunk_size 分块,overlap 生效(相邻重叠)。</li>
+                  <li>bge 嵌入上限约 512 token(≈400字),chunk 过大嵌入会截断。</li>
+                </ul>
+              </div>
+            )}
             <div className="kb-mode-row">
               <button className={"kb-btn" + (uMode === "text" ? " kb-btn-primary" : "")} onClick={() => { setUMode("text"); setUPreview(null) }}>粘贴文本</button>
               <button className={"kb-btn" + (uMode === "file" ? " kb-btn-primary" : "")} onClick={() => { setUMode("file"); setUPreview(null) }}>上传文件(PDF/DOCX/XLSX/MD/TXT)</button>
@@ -412,8 +426,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   <input className="kb-form-input" type="file" accept=".pdf,.docx,.xlsx,.md,.txt"
                          onChange={(e) => { setUFile(e.target.files?.[0] || null); setUPreview(null) }} />
                 </div>
-                {uFile && <div className="kb-hint">doc_id = 产品名称(唯一);同名产品内容不同会提示"是否覆盖",需确认</div>}
-                <div className="kb-note">提示:MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown 即可。想看同一文件三路解析对比,点右上「解析对比」或用户菜单里的「解析对比」。</div>
               </>
             )}
 
@@ -436,10 +448,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                      title={uMethod === "structured" ? "结构层级不使用 overlap(已置0)" : undefined}
                      onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
             </div>
-            <div className="kb-note">{uMethod === "structured"
-              ? "结构层级按语义单元切(节/条/一、/1./(1)),上下文经 section 路径保留,不使用 overlap(已置 0 且不可改);token 预算约460控制块大小。"
-              : "字符/段落模式按 chunk_size 字符数分块,overlap 生效(相邻块重叠);选非结构(字符/段落)时无目录树关联。"} bge 嵌入上限约 512 token(≈400字),过大嵌入会截断。</div>
-
             <div className="kb-form-actions">
               {uMode === "file" ? (
                 uPreview ? (
