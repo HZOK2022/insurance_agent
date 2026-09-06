@@ -71,10 +71,10 @@ function SaveForm({ sessionId, onDone, editing, onCancelEdit }: { sessionId: str
         </select>
       </div>
       <div className="mem-form-row">
-        <input className="mem-input" style={{ flex: 1 }} placeholder="key,如 称呼 / product:尊享e生:免赔额" value={key} onChange={(e) => setKey(e.target.value)} />
+        <input className="mem-input" placeholder="key,如 称呼 / product:尊享e生:免赔额" value={key} onChange={(e) => setKey(e.target.value)} />
       </div>
       <div className="mem-form-row">
-        <textarea className="mem-textarea" placeholder="content,如 回答前叫我大哥 / 尊享e生免赔额1万" value={content} onChange={(e) => setContent(e.target.value)} rows={2} />
+        <textarea className="mem-textarea" placeholder="content,如 回答前叫我大哥 / 尊享e生免赔额1万" value={content} onChange={(e) => setContent(e.target.value)} rows={3} />
       </div>
       <div className="mem-form-row mem-form-actions">
         {msg && <span className="mem-ok">{msg}</span>}{err && <span className="mem-err">{err}</span>}

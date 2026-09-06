@@ -568,8 +568,9 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mem-form-row { display: flex; align-items: center; gap: 8px; }
 .mem-label { font-size: 12px; color: var(--dsw-text-2); white-space: nowrap; }
 .mem-input, .mem-textarea { font-family: var(--dsw-font-family); font-size: 13px; padding: 6px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 7px; background: var(--dsw-bg); color: var(--dsw-text); outline: none; }
+.mem-input, .mem-textarea { flex: 1; min-width: 0; }   /* 在 flex 行内铺满可用宽度,不再按内容缩小成小框 */
 .mem-input:focus, .mem-textarea:focus { border-color: var(--dsw-primary); }
-.mem-textarea { resize: vertical; min-height: 40px; }
+.mem-textarea { resize: vertical; min-height: 72px; }
 .mem-form-actions { justify-content: flex-end; gap: 10px; }
 .mem-ok { color: var(--dsw-green); font-size: 12px; margin-right: auto; }
 .mem-err { color: #ef4444; font-size: 12px; margin-right: auto; max-width: 60%; }
