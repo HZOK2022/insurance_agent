@@ -36,6 +36,7 @@ class ChunkItem(BaseModel):
     section: Optional[str]
     title: Optional[str]
     product_category: Optional[str]
+    content: str = ""
     content_preview: str
 
 

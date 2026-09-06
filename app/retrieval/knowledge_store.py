@@ -240,6 +240,7 @@ class KnowledgeStore:
                 "section": r["section"],
                 "title": r["title"],
                 "product_category": r["product_category"],
+                "content": content,   # 全文:供「查看」展开/收起
                 "content_preview": content_preview,
                 "content": content
             })

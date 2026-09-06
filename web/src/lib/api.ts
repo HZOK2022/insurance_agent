@@ -109,7 +109,7 @@ export const listKbDocuments = (page: number = 1, pageSize: number = 50) =>
 
 export interface KbChunk {
   chunk_id: string; doc_id: string; version: string; section: string | null;
-  title: string | null; product_category: string | null; content_preview: string
+  title: string | null; product_category: string | null; content: string; content_preview: string
 }
 export interface KbChunkListResp { doc_id: string; total: number; page: number; page_size: number; items: KbChunk[] }
 export const listKbChunks = (docId: string, page: number = 1, pageSize: number = 100) =>

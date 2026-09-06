@@ -56,6 +56,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [selectedDoc, setSelectedDoc] = useState<string>("")
   const [chunks, setChunks] = useState<KbChunk[]>([])
   const [chunkTotal, setChunkTotal] = useState(0)
+  const [docChunkOpen, setDocChunkOpen] = useState<Record<string, boolean>>({})   // 「查看」块展开/收起
   const [, setChunkPage] = useState(1)
   const [msg, setMsg] = useState("")
   const [msgOk, setMsgOk] = useState(true)
@@ -379,17 +380,24 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               </div>
             </div>
             <div className="doc-chunks">
-              {shownChunks.map((c) => (
-                <div key={c.chunk_id} className="kb-chunk-row">
-                  <div className="kb-chunk-id">{c.chunk_id}</div>
-                  <div className="kb-chunk-meta">
-                    {c.version && <span className="kb-tag">v{c.version}</span>}
-                    {c.section && <span className="kb-tag">{c.section}</span>}
-                    {c.title && <span className="kb-tag">{c.title}</span>}
+              {shownChunks.map((c) => {
+                const open = !!docChunkOpen[c.chunk_id]
+                return (
+                  <div key={c.chunk_id} className="kb-chunk-row">
+                    <div className="kb-chunk-id">{c.chunk_id}</div>
+                    <div className="kb-chunk-meta">
+                      {c.version && <span className="kb-tag">v{c.version}</span>}
+                      {c.section && <span className="kb-tag">{c.section}</span>}
+                      {c.title && <span className="kb-tag">{c.title}</span>}
+                    </div>
+                    <div className={"cmp-chunk-content" + (open ? " open" : " clamp")}
+                         onClick={() => setDocChunkOpen((e) => ({ ...e, [c.chunk_id]: !open }))}
+                         title="点击展开/收起">
+                      {c.content}
+                    </div>
                   </div>
-                  <div className="kb-chunk-preview">{c.content_preview}</div>
-                </div>
-              ))}
+                )
+              })}
               {shownChunks.length === 0 && <div className="kb-empty">该目录项下暂无切块</div>}
             </div>
           </div>
