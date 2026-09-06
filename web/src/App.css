@@ -561,3 +561,50 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .cmp-fold { display: inline-block; color: var(--dsw-primary); font-weight: 700; cursor: pointer; margin-left: 4px; user-select: none; }
 .cmp-fold:hover { text-decoration: underline; }
 
+/* ---- 记忆管理面板(P2.3) ---- */
+.mem-save-wrap { background: var(--dsw-bg); border: 1px solid var(--dsw-border-l2); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.mem-save-wrap .kb-head { padding: 0 0 8px; border-bottom: 1px solid var(--dsw-border-l1); }
+.mem-form { display: flex; flex-direction: column; gap: 8px; }
+.mem-form-row { display: flex; align-items: center; gap: 8px; }
+.mem-label { font-size: 12px; color: var(--dsw-text-2); white-space: nowrap; }
+.mem-input, .mem-textarea { font-family: var(--dsw-font-family); font-size: 13px; padding: 6px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 7px; background: var(--dsw-bg); color: var(--dsw-text); outline: none; }
+.mem-input:focus, .mem-textarea:focus { border-color: var(--dsw-primary); }
+.mem-textarea { resize: vertical; min-height: 40px; }
+.mem-form-actions { justify-content: flex-end; gap: 10px; }
+.mem-ok { color: var(--dsw-green); font-size: 12px; margin-right: auto; }
+.mem-err { color: #ef4444; font-size: 12px; margin-right: auto; max-width: 60%; }
+.mem-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 7px; background: var(--dsw-bg); color: var(--dsw-text-2); font-size: 12px; cursor: pointer; transition: border-color .12s, color .12s; }
+.mem-btn:hover { border-color: var(--dsw-primary); color: var(--dsw-primary); }
+.mem-btn.mem-primary { background: var(--dsw-primary); border-color: var(--dsw-primary); color: #fff; }
+.mem-btn.mem-primary:hover { background: var(--dsw-primary-hover); }
+.mem-btn.mem-danger:hover { border-color: #ef4444; color: #ef4444; }
+.mem-btn:disabled { opacity: .5; cursor: not-allowed; }
+.mem-buckets { display: flex; flex-direction: column; gap: 14px; }
+.mem-bucket { background: var(--dsw-bg); border: 1px solid var(--dsw-border-l2); border-radius: 10px; overflow: hidden; }
+.mem-bucket-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--dsw-sidebar-fill); border-bottom: 1px solid var(--dsw-border-l1); flex-wrap: wrap; }
+.mem-bucket-title { font-size: 14px; font-weight: 600; }
+.mem-bucket-meta { font-size: 12px; color: var(--dsw-text-2); }
+.mem-bucket-hint { font-size: 12px; color: var(--dsw-text-3); flex: 1; min-width: 200px; }
+.mem-bucket-actions { display: flex; align-items: center; gap: 6px; }
+.mem-entries { display: flex; flex-direction: column; }
+.mem-entry { display: flex; align-items: flex-start; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--dsw-border-l1); }
+.mem-entry:last-child { border-bottom: none; }
+.mem-type { font-size: 11px; padding: 1px 7px; border-radius: 4px; color: #fff; white-space: nowrap; margin-top: 1px; }
+.mem-entry-key { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.mem-entry-content { font-size: 13px; color: var(--dsw-text-2); flex: 1; overflow-wrap: anywhere; }
+.mem-entry-meta { font-size: 11px; color: var(--dsw-text-3); white-space: nowrap; }
+.mem-entry-archived { font-size: 11px; color: #94a3b8; background: var(--dsw-sidebar-fill); padding: 1px 6px; border-radius: 4px; }
+.mem-empty { padding: 14px; color: var(--dsw-text-3); font-size: 13px; text-align: center; }
+.mem-frame { margin: 10px 14px 12px; }
+.mem-frame summary { font-size: 12px; color: var(--dsw-text-2); cursor: pointer; }
+.mem-frame-pre { background: #f8fafc; border: 1px solid var(--dsw-border-l1); border-radius: 7px; padding: 10px 12px; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; color: var(--dsw-text-2); margin: 8px 0 0; }
+
+/* 审计 tab 记忆事件 */
+.mem-event-head { border-top: 1px solid var(--dsw-border-l1); margin-top: 14px; padding-top: 12px; }
+.mem-event-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--dsw-border-l1); font-size: 13px; }
+.mem-event-key { font-weight: 600; }
+.mem-event-content { color: var(--dsw-text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-event-reason { font-size: 12px; color: #f59e0b; }
+.mem-event-time { font-size: 11px; color: var(--dsw-text-3); white-space: nowrap; }
+
+

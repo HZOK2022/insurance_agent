@@ -98,6 +98,20 @@ export function sendPrompt(sid: string, text: string, onEvent: (e: PEvent) => vo
   })
 }
 
+// ---- 记忆管理面板(P2.3)----
+export interface MemoryEntry { id?: string; user_id?: string; bucket?: string; scope?: string; type: string; key: string; content: string; confidence?: string; status?: string; updated_at?: string }
+export interface MemoryTargetMeta { label: string; cat: string[] }
+export interface MemoryListResp { enabled: boolean; user_id: string; limit: number; buckets: Record<string, MemoryEntry[]>; frames: Record<string, string>; counts: Record<string, number>; targets?: Record<string, MemoryTargetMeta> }
+export interface MemorySaveResp { ok: boolean; user_id: string; bucket: string; message: string; archived: number; entry?: any }
+export const getMemory = (sessionId?: string) =>
+  json<MemoryListResp>('/api/memory' + (sessionId ? '?session_id=' + encodeURIComponent(sessionId) : ''))
+export const saveMemory = (body: { target: string; category: string; key: string; content: string; session_id?: string }) =>
+  json<MemorySaveResp>('/api/memory', { method: 'POST', body: JSON.stringify(body) })
+export const forgetMemory = (target: string, key: string, sessionId?: string) =>
+  json<{ ok: boolean; message: string }>('/api/memory?target=' + encodeURIComponent(target) + '&key=' + encodeURIComponent(key) + (sessionId ? '&session_id=' + encodeURIComponent(sessionId) : ''), { method: 'DELETE' })
+export const compactMemory = (target: string, sessionId?: string) =>
+  json<{ ok: boolean; bucket: string; archived: number }>('/api/memory/compact?target=' + encodeURIComponent(target) + (sessionId ? '&session_id=' + encodeURIComponent(sessionId) : ''), { method: 'POST' })
+
 // ---- 知识库管理 API (admin-only) ----
 export interface KbDocument {
   doc_id: string; doc_type: string | null; product_category: string | null;

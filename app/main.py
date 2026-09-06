@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import approval, audit, citation, config, health, kb, login, metrics, prompt, sessions
+from app.api.routers import approval, audit, citation, config, health, kb, login, memory, metrics, prompt, sessions
 from app.api.services import container, auth_service
 from app.api.ratelimit import RateLimiter
 from app.util.logging import setup_logging
@@ -99,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(login.router)
     app.include_router(metrics.router)
     app.include_router(kb.router)
+    app.include_router(memory.router)
     app.middleware("http")(_auth_and_ratelimit)
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
     auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)

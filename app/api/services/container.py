@@ -9,6 +9,7 @@ from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.ingest.ingester import Ingester
 from app.session.store import SessionStore
 from app.guardrails.approval import ApprovalCenter
+from app.memory.store import MemoryStore
 
 
 def get_cfg():
@@ -62,6 +63,12 @@ def get_knowledge_store() -> KnowledgeStore:
 
 def get_ingester() -> Ingester:
     return Ingester(get_knowledge_store(), get_qstore(), get_embedder())
+
+
+@lru_cache(maxsize=1)
+def get_memory_store() -> MemoryStore:
+    """记忆存储(与 agent 运行时同一 agent.db,SQLite 单写者 / WAL)。供记忆管理面板读写。"""
+    return MemoryStore(getattr(get_cfg(), "sqlite_path", "data/agent.db"))
 
 
 @lru_cache(maxsize=1)

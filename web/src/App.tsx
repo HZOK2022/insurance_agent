@@ -5,11 +5,14 @@ import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import KbManager from "./KbManager"
 import CompareView from "./CompareView"
 import DiagnoseView from "./DiagnoseView"
+import MemoryView from "./MemoryView"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
 const SIDEBAR_COLLAPSED = 56, SIDEBAR_AUTO_COLLAPSE = 1024
 const DETAILS_MAX = 520, DETAILS_DEFAULT = 360, CENTER_MIN = 640
+// 会话 user_id = 登录账号(与记忆/归属一致);未登录(开发模式)回退 'u1'(与后端 /api/memory 默认一致)
+const currentUid = () => getUser()?.username || "u1"
 
 function I({ children }: { children: ReactNode }) { return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{children}</svg> }
 function clamp(v: number, min: number, max: number) { return Math.min(max, Math.max(min, Math.round(v))) }
@@ -101,7 +104,7 @@ function CopyBtn({ text }: { text: string }) {
   return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
-type View = "chat" | "knowledge" | "compare" | "diagnose"
+type View = "chat" | "knowledge" | "compare" | "diagnose" | "memory"
 
 function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?: boolean; currentView?: View; onViewChange?: (v: View) => void }) {
   const [open, setOpen] = useState(false)
@@ -131,7 +134,7 @@ function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?
             )}
             <button className="um-item" onClick={() => { setOpen(false); onViewChange?.(currentView === "diagnose" ? "chat" : "diagnose") }}><I><path d="M12 3a6 6 0 0 1 6 6c0 2.2-.9 3.6-1.8 4.8-.6.8-.7 1.6-.7 2.2H8.5c0-.6-.1-1.4-.7-2.2C6.9 12.6 6 11.2 6 9a6 6 0 0 1 6-6Z"/><path d="M9.5 19h5"/><path d="M10.5 21.5h3"/></I><span>{currentView === "diagnose" ? "返回对话" : "回答诊断"}</span></button>
             <button className="um-item" onClick={() => { setOpen(false) /* TODO: 设置页(后期扩展) */ }}><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></button>
-            <button className="um-item" onClick={() => { setOpen(false) /* TODO: 记忆页(后期扩展) */ }}><I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I><span>记忆</span></button>
+            <button className="um-item" onClick={() => { setOpen(false); onViewChange?.(currentView === "memory" ? "chat" : "memory") }}><I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I><span>{currentView === "memory" ? "返回对话" : "我的记忆"}</span></button>
             <button className="um-item danger" onClick={() => { setOpen(false); if (window.confirm("确定退出登录?")) logout() }}><I><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></I><span>退出登录</span></button>
           </div>
         </div>
@@ -414,12 +417,13 @@ export default function App() {
         if (!alive) return
         setSessions(s); setLoadErr("")
         if (s.length) await selectSession(s[0].id)
-        else { const n = await createSession("u1"); if (alive) { setSessions([n]); setActiveId(n.id) } }
+        else { const n = await createSession(currentUid()); if (alive) { setSessions([n]); setActiveId(n.id) } }
       } catch { if (alive) { setLoadErr("后端未就绪,正在重试…"); timer = window.setTimeout(load, 2000) } }
     }
     load()
     return () => { alive = false; if (timer) window.clearTimeout(timer) }
   }, []) // eslint-disable-line
+  // 登录态恢复:持有有效 token 但未走 Login 流程(如刷新页面/返回用户)时,补齐用户信息供用户菜单展示
   // 登录态恢复:持有有效 token 但未走 Login 流程(如刷新页面/返回用户)时,补齐用户信息供用户菜单展示
   useEffect(() => {
     if (isAuthed() && !getUser()) {
@@ -428,12 +432,12 @@ export default function App() {
   }, []) // eslint-disable-line
   useEffect(() => { getConfig().then((c) => setCfgWindow(c.context_window)).catch(() => {}) }, []) // eslint-disable-line  # 挂载时取后端当前配置的上下文窗口
   // 新建会话:清掉其它"没发过消息"的占位会话(keep=新建的这个),保证连点"新建"只留一个
-  const newSession = async () => { try { const s = await createSession("u1"); await pruneEmptySessions(s.id); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
-  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession("u1"); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
+  const newSession = async () => { try { const s = await createSession(currentUid()); await pruneEmptySessions(s.id); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
+  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession(currentUid()); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
   const renameSess = async (id: string, title: string) => { try { await renameSession(id, title); setSessions(await listSessions()) } catch { setLoadErr("重命名失败,请稍后重试") } }
   const send = async () => {
     const text = input.trim(); if (!text || busy) return
-    if (!activeId) { const n = await createSession("u1"); setActiveId(n.id); setSessions(await listSessions()) }
+    if (!activeId) { const n = await createSession(currentUid()); setActiveId(n.id); setSessions(await listSessions()) }
     const sid = activeId as string
     const ctl = new AbortController()
     abortRef.current = ctl
@@ -550,6 +554,8 @@ export default function App() {
         <KbManager onBack={() => setCurrentView("chat")} onOpenCompare={() => setCurrentView("compare")} />
       ) : currentView === "diagnose" ? (
         <DiagnoseView onBack={() => setCurrentView("chat")} />
+      ) : currentView === "memory" ? (
+        <MemoryView sessionId={activeId} onBack={() => setCurrentView("chat")} />
       ) : (
         <CompareView onBack={() => setCurrentView("chat")} onOpenKb={() => setCurrentView("knowledge")} />
       )}
@@ -569,11 +575,15 @@ function fmtCost(c?: number | null): string { if (c == null) return "—"; retur
 function AuditView({ sessionId, audit, onRefresh }: { sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefresh: () => void }) {
   const t = audit?.overall?.totals
   const sm = audit?.sessionMetrics
+  const [mem, setMem] = useState<PEvent[]>([])
+  const [memTick, setMemTick] = useState(0)
+  useEffect(() => { if (!sessionId) { setMem([]); return }; listEvents(sessionId).then((evs) => setMem(evs.filter((e) => e.type.startsWith("memory_")))).catch(() => setMem([])) }, [sessionId, memTick]) // eslint-disable-line
+  const refreshAll = () => { onRefresh(); setMemTick((x) => x + 1) }
   const download = async (fmt: string) => { if (!sessionId) return; try { const r = await fetch("/api/audit/" + encodeURIComponent(sessionId) + "/export?fmt=" + fmt); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = sessionId + "." + fmt; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url) } catch { } }
   const cell = (label: string, v: string) => (<div className="audit-cell"><span className="audit-cell-label">{label}</span><span className="audit-cell-val">{v}</span></div>)
   return (
     <div className="audit-view">
-      <div className="audit-head"><span className="audit-title">审计 / 可观测</span><div className="audit-actions"><button className="audit-btn" onClick={onRefresh}>刷新</button><button className="audit-btn" onClick={() => download("jsonl")}>导出 JSONL</button><button className="audit-btn" onClick={() => download("json")}>JSON</button><button className="audit-btn" onClick={() => download("csv")}>CSV</button></div></div>
+      <div className="audit-head"><span className="audit-title">审计 / 可观测</span><div className="audit-actions"><button className="audit-btn" onClick={refreshAll}>刷新</button><button className="audit-btn" onClick={() => download("jsonl")}>导出 JSONL</button><button className="audit-btn" onClick={() => download("json")}>JSON</button><button className="audit-btn" onClick={() => download("csv")}>CSV</button></div></div>
       <div className="audit-cards">
         <div className="audit-card"><div className="audit-card-head">全局</div><div className="audit-card-grid">{cell("会话", fmtTok(t?.sessions))}{cell("轮次", fmtTok(t?.turns))}{cell("token", fmtTok(t?.total_tokens))}{cell("成本", fmtCost(t?.cost))}{cell("错误", fmtTok(t?.errors))}{cell("重试", fmtTok(t?.retries))}{cell("审批", fmtTok(t?.approvals))}{cell("平均TTFT", t?.avg_ttft_ms != null ? (fmtDur(t.avg_ttft_ms)) : "—")}{cell("平均吞吐", t?.avg_tps != null ? (String(t.avg_tps) + " tok/s") : "—")}</div></div>
         <div className="audit-card"><div className="audit-card-head">本会话</div><div className="audit-card-grid">{cell("轮次", fmtTok(sm?.turns))}{cell("token", fmtTok(sm?.total_tokens))}{cell("成本", fmtCost(sm?.cost))}{cell("错误", fmtTok(sm?.errors))}{cell("重试", fmtTok(sm?.retries))}{cell("审批", fmtTok(sm?.approvals))}{cell("平均TTFT", sm?.avg_ttft_ms != null ? fmtDur(sm.avg_ttft_ms) : "—")}{cell("平均吞吐", sm?.avg_tps != null ? (String(sm.avg_tps) + " tok/s") : "—")}</div></div>
@@ -588,6 +598,22 @@ function AuditView({ sessionId, audit, onRefresh }: { sessionId: string | null; 
             <div className="audit-meta2">{"检索×" + (it.retrievals || 0) + " · 引用×" + (it.citations?.length || 0) + " · " + (it.ts ? formatClock(it.ts) : "")}</div>
           </div>
         ))}
+      </div>
+      <div className="audit-list mem-event-head">
+        <span className="audit-title">记忆事件(本会话)</span>
+        {mem.length === 0 && <div className="hint">本会话暂无记忆事件(memory_upsert / memory_archive / memory_injected)</div>}
+        {mem.map((e, i) => {
+          const p = e.payload || {}
+          return (
+            <div key={i} className="mem-event-row">
+              <span className="kb-tag">{e.type}</span>
+              {p.key ? <span className="mem-event-key">{p.key}</span> : null}
+              {p.content ? <span className="mem-event-content">{String(p.content).slice(0, 80)}</span> : null}
+              {p.reason ? <span className="mem-event-reason">{p.reason}</span> : null}
+              {e.ts ? <span className="mem-event-time">{formatClock(e.ts)}</span> : null}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
