@@ -4,11 +4,12 @@
 import { useEffect, useState } from "react"
 import { listSessions, listEvents, type Session, type PEvent } from "./lib/api"
 
-interface Rec { chunk_id: string; section: string; title: string; score?: number; content: string; product_name?: string }
+interface Rec { chunk_id: string; section: string; title: string; score?: number; content: string; product_name?: string; doc_id?: string }
 interface Turn {
   n: number; query: string; reason?: string; elapsed_ms?: string
   recs: Rec[];   // 该 turn 喂给模型的检索块(去重)
   answer: string; hasAnswer: boolean; cites: { idx: number; chunk_id: string }[]
+  retrievals: number; emptyRetrievals: number   // 检索次数 / 0 命中次数
 }
 
 function flat(blocks: any[]): string {
@@ -22,11 +23,13 @@ function buildTurns(evs: PEvent[]): Turn[] {
   let ansBlocks: any[] = []
   let ansCites: { idx: number; chunk_id: string }[] = []
   let streamText = ""   // 流式正文(中断无最终 messages 时兜底)
+  let retrCount = 0, retrEmpty = 0
   const finalize = () => {
     if (!cur) return
     cur.recs = Array.from(recMap.values())
     cur.answer = flat(ansBlocks) || streamText.trim()
     cur.cites = ansCites
+    cur.retrievals = retrCount; cur.emptyRetrievals = retrEmpty
     // 只要有"正文/被中断的流式",也算可诊断(常是问题现场)
     cur.hasAnswer = cur.hasAnswer || cur.answer.length > 0
   }
@@ -34,14 +37,16 @@ function buildTurns(evs: PEvent[]): Turn[] {
     const p = e.payload || {}
     if (e.type === "turn_start") {
       if (cur) { finalize(); turns.push(cur) }
-      recMap.clear(); ansBlocks = []; ansCites = []; streamText = ""
-      cur = { n: turns.length + 1, query: "", recs: [], answer: "", hasAnswer: false, cites: [] }
+      recMap.clear(); ansBlocks = []; ansCites = []; streamText = ""; retrCount = 0; retrEmpty = 0
+      cur = { n: turns.length + 1, query: "", recs: [], answer: "", hasAnswer: false, cites: [], retrievals: 0, emptyRetrievals: 0 }
     } else if (cur && e.type === "user_message") {
       cur.query = p.text || cur.query
     } else if (cur && e.type === "assistant_chunk") {
       const d = p.delta || ""
       if (p.kind === "text") streamText += d
     } else if (cur && e.type === "retrieval") {
+      retrCount += 1
+      if (!(p.chunks || []).length) retrEmpty += 1
       ;(p.chunks || []).forEach((c: any) => { if (c && c.chunk_id && !recMap.has(c.chunk_id)) recMap.set(c.chunk_id, c) })
     } else if (cur && e.type === "assistant_message") {
       ansBlocks = p.blocks || []; ansCites = p.citations || []; cur.hasAnswer = true
@@ -69,10 +74,15 @@ function Summary({ t }: { t: Turn }) {
   const c = classify(t)
   const chips: { k: string; cls: string; label: string }[] = []
   if (c.ok > 0) chips.push({ k: "ok", cls: "ok", label: `${c.ok} 有据` })
-  if (c.bad > 0) chips.push({ k: "bad", cls: "bad", label: `${c.bad} 引用但召回集没有` })
+  if (c.bad > 0) chips.push({ k: "bad", cls: "bad", label: `${c.bad} 引用但召回集没有(召回不全/引用漂移)` })
   if (c.noCite) chips.push({ k: "nocite", cls: "warn", label: "答了但全程无引用(嫌疑:未用检索/幻觉)" })
   if (c.noRecall) chips.push({ k: "norecall", cls: "warn", label: "零召回却给回答(嫌疑:缺口+幻觉)" })
   if (c.silent) chips.push({ k: "silent", cls: "ok", label: "零召回+未作答(行为正确/诚实)" })
+  // 召回质量信号(区分"不全" vs "错误")
+  const prods = new Set(t.recs.map((r) => r.product_name || r.doc_id || "").filter(Boolean))
+  if (t.retrievals > 1) chips.push({ k: "multi", cls: "warn", label: `检索了 ${t.retrievals} 次(一次没找够→召回不全迹象)` })
+  if (t.emptyRetrievals > 0) chips.push({ k: "empty", cls: "warn", label: `${t.emptyRetrievals} 次检索 0 命中(内容缺失/没召回)` })
+  if (prods.size > 1) chips.push({ k: "crossprod", cls: "warn", label: `跨 ${prods.size} 个产品召回(检查是否拿错产品)` })
   return <div className="diag-chips">{chips.map((x) => <span key={x.k} className={"diag-chip " + x.cls}>{x.label}</span>)}</div>
 }
 
