@@ -56,9 +56,9 @@ function formatClock(iso?: string): string {
 }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 // trace 面板:按 turn→step 分组下钻(L0 回合指标 / L1 每步明细 / L2 原始事件)
-interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number }
+interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[] }
 interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number }
-interface TraceTurn { turn: number; steps: TraceStep[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[] }
+interface TraceTurn { turn: number; steps: TraceStep[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number }
 
 function inline(seg: string, ns: string, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
   const out: ReactNode[] = []
@@ -187,6 +187,17 @@ function Details({ open, activeSource, onClose }: { open: boolean; activeSource:
   </div>)
 }
 function statusColor(reason?: string): string { if (reason === "error") return "#ff6b6b"; if (reason === "interrupted") return "#f59e0b"; return "var(--dsw-green)" }
+// 每回合诊断:检索命中/0命中/工具失败/引用↔召回对齐,一眼看出"这轮做得对不对"
+function traceChips(t: TraceTurn): { cls: string; label: string }[] {
+  const chips: { cls: string; label: string }[] = []
+  const r = t.nRetrieval || 0, e = t.nEmpty || 0, f = t.failCount || 0, c = t.citeCount || 0, g = t.groundedCount || 0
+  if (r) chips.push({ cls: e > 0 ? "bad" : "ok", label: `检索×${r}` + (e > 0 ? `(0命中×${e})` : "") })
+  else chips.push({ cls: "warn", label: "0次检索" })
+  if (f) chips.push({ cls: "bad", label: `工具失败×${f}` })
+  if (c === 0 && r > 0) chips.push({ cls: "warn", label: "回答无引用(幻觉嫌疑)" })
+  else if (c > 0) chips.push({ cls: g < c ? "bad" : "ok", label: `引用×${c}${g < c ? ` (仅${g}有据,${c - g}引用了未召回块)` : " 全有据"}` })
+  return chips
+}
 function TraceView({ turns }: { turns: TraceTurn[] }) {
   const [open, setOpen] = useState<number | null>(null)
   const [rawOpen, setRawOpen] = useState<number | null>(null)
@@ -208,6 +219,7 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
             {t.flags.length > 0 && <span className="trace-turn-flags">{t.flags.map((f) => <span key={f} className="trace-flag">{f}</span>)}</span>}
             <span className="trace-turn-chev">{open === i ? "▾" : "▸"}</span>
           </div>
+          <div className="trace-chips">{traceChips(t).map((ch, ci) => <span key={ci} className={"trace-chip " + ch.cls}>{ch.label}</span>)}</div>
           {open === i && (
             <div className="trace-turn-body">
               {t.steps.map((s, si) => (
@@ -222,6 +234,7 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
                       {tl.query != null ? <span className="trace-tool-query">{tl.query}{tl.chunkCount != null ? " · " + tl.chunkCount + "块" : ""}</span> : null}
                       <span className={"tool-status" + (tl.ok === false ? " failed" : "")}>{tl.ok === false ? "失败" : "✓"}</span>
                       {tl.error ? <span className="trace-tool-err">{tl.error}</span> : null}
+                      {tl.sections && tl.sections.length > 0 && <div className="trace-tool-hits">{tl.sections.map((s, k) => <span key={k} className="kb-tag">{s}</span>)}</div>}
                     </div>
                   ))}
                 </div>
@@ -391,14 +404,19 @@ export default function App() {
     let turn: TraceTurn | null = null
     let tstep: TraceStep | null = null
     let lastTool: TraceTool | null = null
+    let retrieved: Set<string> | null = null
     evs.forEach((e) => {
       const t = e.type, p = e.payload || {}
-      if (t === "turn_start") { turn = { turn: 1, steps: [], flags: [], raw: [] }; turns.push(turn); tstep = null; lastTool = null }
+      if (t === "turn_start") { turn = { turn: 1, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; turns.push(turn); tstep = null; lastTool = null; retrieved = new Set() }
       else if (t === "step_start") { tstep = { step: p.step ?? 1, reasoning: "", text: "", tools: [] }; turn?.steps.push(tstep); lastTool = null }
       else if (t === "assistant_chunk") { if (tstep) { const k = p.kind, d = p.delta || ""; if (k === "reasoning") tstep.reasoning += d; else if (k === "text") tstep.text += d } }
       else if (t === "tool_call") { lastTool = { tool: p.tool, args: p.args }; tstep?.tools.push(lastTool) }
-      else if (t === "tool_result") { if (lastTool) { lastTool.ok = p.ok; lastTool.error = p.error; lastTool.truncated = p.result_truncated } }
-      else if (t === "retrieval") { if (lastTool) { lastTool.query = p.query; lastTool.chunkCount = (p.chunks || []).length } }
+      else if (t === "tool_result") { if (lastTool) { lastTool.ok = p.ok; lastTool.error = p.error; lastTool.truncated = p.result_truncated; if (turn && p.ok === false) turn.failCount = (turn.failCount || 0) + 1 } }
+      else if (t === "retrieval") {
+        if (lastTool) { lastTool.query = p.query; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
+        if (turn) { turn.nRetrieval = (turn.nRetrieval || 0) + 1; const cs = p.chunks || []; if (!cs.length) turn.nEmpty = (turn.nEmpty || 0) + 1; cs.forEach((c: any) => retrieved?.add(c.chunk_id)) }
+      }
+      else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } }
       else if (t === "step_end") { if (tstep) tstep.elapsed_ms = p.elapsed_ms }
       else if (t === "usage") { if (turn) { turn.promptTokens = p.prompt_tokens; turn.completionTokens = p.completion_tokens } }
       else if (t === "turn_end") { if (turn) { turn.reason = p.reason; turn.elapsed_ms = p.elapsed_ms; turn.ttft_ms = p.ttft_ms; turn.tps = p.tokens_per_second } }
