@@ -9,6 +9,9 @@ import {
 
 type KbView = "list" | "chunks" | "upload"
 
+// 保险类型:必传,下拉选择(与后端 product_category 软圈定一致)
+const CATEGORY_OPTIONS = ["医疗险", "重疾险", "意外险", "寿险", "其他"]
+
 function progLabel(p: { stage: string; done: number; total: number }): string {
   if (p.stage === "upload") return "上传文件中…"
   if (p.stage === "chunked") return "解析完成,切块入库(" + p.total + " 块)…"
@@ -33,7 +36,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [selectedDoc, setSelectedDoc] = useState<string>("")
   const [chunks, setChunks] = useState<KbChunk[]>([])
   const [chunkTotal, setChunkTotal] = useState(0)
-  const [chunkPage, setChunkPage] = useState(1)
+  const [, setChunkPage] = useState(1)
   const [msg, setMsg] = useState("")
   const [msgOk, setMsgOk] = useState(true)
   const PAGE_SIZE = 50
@@ -52,6 +55,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uOverlap, setUOverlap] = useState(200)
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
+  const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -70,11 +74,12 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
 
   useEffect(() => { loadDocs() }, []) // eslint-disable-line
 
+  // 「查看」右栏一次载入全部 chunks(结构树过滤按 section 匹配,须跨全量而非仅当前页)
   const loadChunks = async (docId: string, p: number = 1) => {
     setLoading(true)
     try {
-      const r = await listKbChunks(docId, p, 100)
-      setChunks(r.items); setChunkTotal(r.total); setChunkPage(p)
+      const r = await listKbChunks(docId, 1, 100000)
+      setChunks(r.items); setChunkTotal(r.total); setChunkPage(1)
     } catch (e: any) {
       flash("加载chunks失败: " + (e?.message || ""), false)
     } finally { setLoading(false) }
@@ -122,6 +127,13 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     })
     prevNodeChunks[path] = ids
   }
+  // 预览里点目录节点→过滤右侧切块(同分支),让"目录↔切块"关联可核对
+  const prevShownChunks = (prevFilter && uPreview)
+    ? uPreview.chunks.filter((c) => {
+        const s = normS(c.section), p = normS(prevFilter)
+        return s && (s.startsWith(p) || p.startsWith(s))
+      })
+    : (uPreview ? uPreview.chunks : [])
 
   const handleDelete = async (docId: string) => {
     if (!window.confirm(`确定删除文档「${docId}」？删除后不可恢复。`)) return
@@ -139,6 +151,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const handleChunk = async () => {
     if (!uFile) { flash("请选择文件", false); return }
     if (!uProductName.trim()) { flash("请填产品名称", false); return }
+    if (!uCategory.trim()) { flash("请选择保险类型", false); return }
     setUPreviewBusy(true); setUPreview(null)
     try {
       const fd = new FormData()
@@ -149,7 +162,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       if (uOverlap >= 0) fd.append("overlap", String(uOverlap))
       const pv = await previewKbUpload(fd)
       if (!pv.ok) { flash("切块失败: " + (pv.err || "解析失败"), false); return }
-      setUPreview(pv)
+      setUPreview(pv); setPrevFilter("")
       flash(`切块完成: ${pv.chunk_count} 块,请检查后上传`)
     } catch (e: any) {
       flash("切块失败: " + (e?.message || ""), false)
@@ -161,6 +174,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     if (!uPreview) { flash("请先开始切块", false); return }
     if (!uPreview.chunks.length) { flash("切块为空,无法上传", false); return }
     if (!uProductName.trim()) { flash("请填产品名称", false); return }
+    if (!uCategory.trim()) { flash("请选择保险类型", false); return }
     setUBusy(true)
     try {
       setUProg({ stage: "chunked", done: 0, total: 1 })
@@ -196,6 +210,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const handleUpload = async (opts?: { force?: boolean }) => {
     // 文本模式:直接上传(带切块方式/参数);force:同名产品内容不同时强制覆盖
     if (!uText.trim() || !uProductName.trim()) { flash("文档内容和产品名称不能为空", false); return }
+    if (!uCategory.trim()) { flash("请选择保险类型", false); return }
     setUBusy(true)
     try {
       const r = await ingestKbText({
@@ -237,8 +252,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
-  const chunkTotalPages = Math.ceil(chunkTotal / 100)
-
   const resetUpload = () => { setView("list"); setUFile(null); setUProg(null); setUPreview(null); setUProductName("") }
 
   return (
@@ -334,13 +347,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 </div>
               ))}
               {shownChunks.length === 0 && <div className="kb-empty">该目录项下暂无切块</div>}
-              {chunkTotalPages > 1 && (
-                <div className="kb-pages">
-                  <button className="kb-btn kb-btn-sm" disabled={chunkPage <= 1} onClick={() => { setChunkPage(chunkPage - 1); loadChunks(selectedDoc, chunkPage - 1) }}>上一页</button>
-                  <span className="kb-page-info">第 {chunkPage} / {chunkTotalPages} 页</span>
-                  <button className="kb-btn kb-btn-sm" disabled={chunkPage >= chunkTotalPages} onClick={() => { setChunkPage(chunkPage + 1); loadChunks(selectedDoc, chunkPage + 1) }}>下一页</button>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -366,8 +372,11 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                     <input className="kb-form-input" value={uVersion} onChange={(e) => setUVersion(e.target.value)} placeholder="v1" />
                   </div>
                   <div className="kb-form-field">
-                    <label className="kb-form-label">保险类别</label>
-                    <input className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)} placeholder="医疗险/重疾险/意外险" />
+                    <label className="kb-form-label">保险类型 *</label>
+                    <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
+                      <option value="">请选择保险类型</option>
+                      {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
                 </div>
                 <div className="kb-form-field">
@@ -401,8 +410,11 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                     </select>
                   </div>
                   <div className="kb-form-field">
-                    <label className="kb-form-label">保险类别</label>
-                    <input className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)} placeholder="医疗险/重疾险/意外险" />
+                    <label className="kb-form-label">保险类型 *</label>
+                    <select className="kb-form-input" value={uCategory} onChange={(e) => setUCategory(e.target.value)}>
+                      <option value="">请选择保险类型</option>
+                      {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
                 </div>
                 <div className="kb-note">提示:MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown 即可。想看同一文件三路解析对比,点右上「解析对比」或用户菜单里的「解析对比」。</div>
@@ -413,7 +425,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <div className="kb-form-field">
                 <label className="kb-form-label">切分方式</label>
                 <select className="kb-form-input" value={uMethod}
-                        onChange={(e) => { setUMethod(e.target.value); setUPreview(null) }}>
+                        onChange={(e) => { setUMethod(e.target.value); if (e.target.value === "structured") setUOverlap(0); setUPreview(null) }}>
                   {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
@@ -426,12 +438,12 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 <label className="kb-form-label">overlap(字符)</label>
                 <input className="kb-form-input" type="number" value={uOverlap} min={0}
                        disabled={uMethod === "structured"}
-                       title={uMethod === "structured" ? "结构层级不使用 overlap(字符/段落才用)" : undefined}
+                       title={uMethod === "structured" ? "结构层级不使用 overlap(已置0)" : undefined}
                        onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
               </div>
             </div>
             <div className="kb-note">{uMethod === "structured"
-              ? "结构层级按语义单元切(节/条/一、/1./(1)),上下文经 section 路径保留,不使用 overlap(已置灰);token 预算约460控制块大小。"
+              ? "结构层级按语义单元切(节/条/一、/1./(1)),上下文经 section 路径保留,不使用 overlap(已置 0 且不可改);token 预算约460控制块大小。"
               : "字符/段落模式按 chunk_size 字符数分块,overlap 生效(相邻块重叠);选非结构(字符/段落)时无目录树关联。"} bge 嵌入上限约 512 token(≈400字),过大嵌入会截断。</div>
 
             <div className="kb-form-actions">
@@ -476,7 +488,9 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                     : prevTree.length > 0 ? prevTree.map(({ node, path }, i) => {
                         const ids = prevNodeChunks[path] || []
                         return (
-                          <div key={i} className="cmp-node" style={{ paddingLeft: (node.level - 1) * 16 }} title={path}>
+                          <div key={i} className={"cmp-node" + (prevFilter === path ? " sel" : "")}
+                               style={{ paddingLeft: (node.level - 1) * 16 }} title={path}
+                               onClick={() => setPrevFilter(prevFilter === path ? "" : path)}>
                             <span className="cmp-node-glyph">{node.level <= 1 ? "▣" : "▢"}</span>
                             <span className="cmp-node-title">{node.title}</span>
                             {ids.length > 0 && <span className="cmp-chunk-range-tag">§{ids[0]}{ids.length > 1 ? "–" + ids[ids.length - 1] : ""}({ids.length})</span>}
@@ -487,11 +501,11 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               </div>
               <div className="cmp-chunk-pane">
                 <div className="cmp-pane-head">
-                  <span>内容预览</span>
-                  <span className="cmp-pane-sub">{uPreview.chunk_count} 块</span>
+                  <span>内容预览{prevFilter ? " · 已筛选" : ""}</span>
+                  <span className="cmp-pane-sub">{prevShownChunks.length}/{uPreview.chunk_count} 块{prevFilter ? <a className="kb-back" onClick={() => setPrevFilter("")} style={{ marginLeft: 8 }}>清除</a> : null}</span>
                 </div>
                 <div className="cmp-chunks">
-                  {uPreview.chunks.length > 0 ? uPreview.chunks.map((c, i) => (
+                  {prevShownChunks.length > 0 ? prevShownChunks.map((c, i) => (
                     <div key={i} className="cmp-chunk" style={{ marginBottom: 8 }}>
                       <div className="cmp-chunk-meta">
                         <span className="cmp-chunk-idx">#{i + 1}</span>
@@ -500,7 +514,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                       </div>
                       <div className="cmp-chunk-content clamp">{c.content}</div>
                     </div>
-                  )) : <div className="cmp-hint">预览为空(解析失败或未切出块)</div>}
+                  )) : <div className="cmp-hint">该目录项下暂无切块</div>}
                 </div>
               </div>
             </div>
