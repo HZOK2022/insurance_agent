@@ -64,27 +64,41 @@ def get_metrics() -> dict[str, Any]:
         p = row["payload"]
         return json.loads(p) if isinstance(p, str) else (p or {})
 
+    def _distinct_sessions(cond: str, limit: int = 5) -> list[str]:
+        # 事件表的 session_id 即 trace_id;取触发该类信号的部分会话供"回放"跳到对应轨迹
+        rows = conn.execute(f"SELECT DISTINCT session_id FROM events WHERE {cond} LIMIT {limit}").fetchall()
+        return [r["session_id"] for r in rows if r["session_id"]]
+
     # 检索低置信:某次检索"有命中但最高分 < 阈值"或"有块却无分数"→ 记低置信(检索召回弱但不为空)。
     # 空结果(no_hits)单独计;这里只算"非空但很弱"的召回。
     low_conf_thresh = 0.3
     retrieval_low_conf = 0
-    for r in conn.execute("SELECT payload FROM events WHERE type='retrieval'").fetchall():
+    low_conf_samples: list[str] = []
+    for r in conn.execute("SELECT session_id, payload FROM events WHERE type='retrieval'").fetchall():
         chunks = (_payload(r).get("chunks") or [])
         if not chunks:
             continue
         scores = [c.get("score") for c in chunks if isinstance(c, dict) and isinstance(c.get("score"), (int, float))]
         if not scores or max(scores) < low_conf_thresh:
             retrieval_low_conf += 1
+            if r["session_id"] and r["session_id"] not in low_conf_samples and len(low_conf_samples) < 5:
+                low_conf_samples.append(r["session_id"])
 
     # 工具失败(ok=False)+ 依赖降级(retrieval_unavailable = 向量库挂,知识检索降级)
     tool_failures = 0
     degradations = 0
-    for r in conn.execute("SELECT payload FROM events WHERE type='tool_result'").fetchall():
+    tool_fail_samples: list[str] = []
+    degrade_samples: list[str] = []
+    for r in conn.execute("SELECT session_id, payload FROM events WHERE type='tool_result'").fetchall():
         pl = _payload(r)
         if pl.get("ok") is False:
             tool_failures += 1
+            if r["session_id"] and r["session_id"] not in tool_fail_samples and len(tool_fail_samples) < 5:
+                tool_fail_samples.append(r["session_id"])
         if pl.get("error") == "retrieval_unavailable":
             degradations += 1
+            if r["session_id"] and r["session_id"] not in degrade_samples and len(degrade_samples) < 5:
+                degrade_samples.append(r["session_id"])
 
     # 成本(单价每 1M token;未配价为 0 → 不编造成本)
     pin = float(getattr(container.get_cfg(), "llm_price_input_per_1m", 0) or 0)
@@ -105,5 +119,13 @@ def get_metrics() -> dict[str, Any]:
         "guard_triggered": guard_triggered,
         "tool_failures": tool_failures,
         "degradations": degradations,
+        "samples": {
+            "error_turns": _distinct_sessions("type='turn_end' AND json_extract(payload,'$.reason')='error'"),
+            "retries": _distinct_sessions("type='llm_retry'"),
+            "guard_triggered": _distinct_sessions("type='guard_triggered'"),
+            "retrieval_low_conf": low_conf_samples,
+            "tool_failures": tool_fail_samples,
+            "degradations": degrade_samples,
+        },
         "models": models,
     }

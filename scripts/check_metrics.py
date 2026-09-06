@@ -43,31 +43,39 @@ def main() -> int:
     empty_rate = (int(retr["no_hits"] or 0) / retr_total) if retr_total else 0
     lowconf_rate = (int(retr["low_conf"] or 0) / retr_total) if retr_total else 0
 
-    # (名称, 值, 阈值, 存在即告警)
+    # (名称, 值, 阈值, 存在即告警, 对应 samples 键[回放 trace_id])
     checks = [
-        ("错误轮数", turns["error"], args.error_count, True),
-        ("错误率", turns["error_rate"], args.error_rate, False),
-        ("延迟p95(ms)", p95, args.p95_ms, False),
-        ("累计token", total_tok, args.token_budget, False),
-        ("检索空结果率", round(empty_rate, 4), args.retrieve_empty_rate, False),
-        ("检索低置信率", round(lowconf_rate, 4), args.retrieve_lowconf_rate, False),
-        ("LLM重试次数", m["retries"], args.retry_count, False),
-        ("依赖降级数", m["degradations"], args.degrade_count, True),
-        ("护栏拦截数", m["guard_triggered"], args.guard_count, True),
-        ("工具失败数", m["tool_failures"], args.tool_fail_count, False),
+        ("错误轮数", turns["error"], args.error_count, True, "error_turns"),
+        ("错误率", turns["error_rate"], args.error_rate, False, None),
+        ("延迟p95(ms)", p95, args.p95_ms, False, None),
+        ("累计token", total_tok, args.token_budget, False, None),
+        ("检索空结果率", round(empty_rate, 4), args.retrieve_empty_rate, False, None),
+        ("检索低置信率", round(lowconf_rate, 4), args.retrieve_lowconf_rate, False, "retrieval_low_conf"),
+        ("LLM重试次数", m["retries"], args.retry_count, False, "retries"),
+        ("依赖降级数", m["degradations"], args.degrade_count, True, "degradations"),
+        ("护栏拦截数", m["guard_triggered"], args.guard_count, True, "guard_triggered"),
+        ("工具失败数", m["tool_failures"], args.tool_fail_count, False, "tool_failures"),
     ]
 
+    samples = m.get("samples") or {}
     print(f"turns={turns['total']} err={turns['error']}({turns['error_rate']}) "
           f"p95={p95}ms tokens={total_tok} retr={retr_total}(空={retr['no_hits']}/低置信={retr['low_conf']}) "
           f"retries={m['retries']} degrade={m['degradations']} guard={m['guard_triggered']} toolfail={m['tool_failures']}")
 
     alerts = 0
-    for name, val, thr, exists in checks:
+    for name, val, thr, exists, skey in checks:
         # exists=True:只要 >0 即告警(错误/降级/护栏"任何一条都必须看");否则值 <= 阈值才算达标
-        ok = (val == 0) if exists else (val <= thr)
-        if not ok:
+        _ok = (val == 0) if exists else (val <= thr)
+        tail = ""
+        if skey:
+            tra = samples.get(skey) or []
+            if tra:
+                tail = f"  trace_id={','.join(tra)}"
+        if not _ok:
             alerts += 1
-        print(f"[{'OK' if ok else 'ALERT'}] {name}: {val}  阈值 {thr}")
+            print(f"[ALERT] {name}: {val}  阈值 {thr}{tail}")
+        else:
+            print(f"[OK] {name}: {val}  阈值 {thr}")
     return 1 if alerts else 0
 
 
