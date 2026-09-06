@@ -57,9 +57,9 @@ function formatClock(iso?: string): string {
 }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 // trace 面板:按 turn→step 分组下钻(L0 回合指标 / L1 每步明细 / L2 原始事件)
-interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[] }
+interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[]; chunks?: any[] }
 interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number }
-interface TraceTurn { turn: number; steps: TraceStep[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number }
+interface TraceTurn { turn: number; steps: TraceStep[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number }
 
 function inline(seg: string, ns: string, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
   const out: ReactNode[] = []
@@ -192,7 +192,8 @@ function statusColor(reason?: string): string { if (reason === "error") return "
 // 每回合诊断:检索命中/0命中/工具失败/引用↔召回对齐,一眼看出"这轮做得对不对"
 function traceChips(t: TraceTurn): { cls: string; label: string }[] {
   const chips: { cls: string; label: string }[] = []
-  const r = t.nRetrieval || 0, e = t.nEmpty || 0, f = t.failCount || 0, c = t.citeCount || 0, g = t.groundedCount || 0
+  // 检索数 = 检索事件 ∪ 检索类工具调用(max):即使某些检索事件没对齐,也如实反映"做过检索"
+  const r = Math.max(t.nRetrieval || 0, t.nSearchTools || 0), e = t.nEmpty || 0, f = t.failCount || 0, c = t.citeCount || 0, g = t.groundedCount || 0
   if (r) chips.push({ cls: e > 0 ? "bad" : "ok", label: `检索×${r}` + (e > 0 ? `(0命中×${e})` : "") })
   else chips.push({ cls: "warn", label: "0次检索" })
   if (f) chips.push({ cls: "bad", label: `工具失败×${f}` })
@@ -237,6 +238,21 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
                       <span className={"tool-status" + (tl.ok === false ? " failed" : "")}>{tl.ok === false ? "失败" : "✓"}</span>
                       {tl.error ? <span className="trace-tool-err">{tl.error}</span> : null}
                       {tl.sections && tl.sections.length > 0 && <div className="trace-tool-hits">{tl.sections.map((s, k) => <span key={k} className="kb-tag">{s}</span>)}</div>}
+                      {tl.chunks && tl.chunks.length > 0 && (
+                        <div className="trace-tool-chunks">
+                          {tl.chunks.map((c: any, k: number) => {
+                            const sc = c.score
+                            const low = typeof sc === "number" && sc < 0.3
+                            return (
+                              <div key={k} className={"trace-chunk" + (low ? " low" : "")}>
+                                <span className={"trace-chunk-score" + (low ? " low" : "")}>{typeof sc === "number" ? sc.toFixed(2) : "?"}</span>
+                                <span className="trace-chunk-doc">{((c.product_name || c.doc_id) || "") + (c.section ? " §" + c.section : "")}</span>
+                                <span className="trace-chunk-snip">{String(c.content || "").slice(0, 80)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -414,10 +430,10 @@ export default function App() {
       if (t === "turn_start") { turn = { turn: 1, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; turns.push(turn); tstep = null; lastTool = null; retrieved = new Set() }
       else if (t === "step_start") { tstep = { step: p.step ?? 1, reasoning: "", text: "", tools: [] }; turn?.steps.push(tstep); lastTool = null }
       else if (t === "assistant_chunk") { if (tstep) { const k = p.kind, d = p.delta || ""; if (k === "reasoning") tstep.reasoning += d; else if (k === "text") tstep.text += d } }
-      else if (t === "tool_call") { lastTool = { tool: p.tool, args: p.args }; tstep?.tools.push(lastTool) }
+      else if (t === "tool_call") { lastTool = { tool: p.tool, args: p.args }; tstep?.tools.push(lastTool); if (turn && (p.tool === "search_knowledge" || p.tool === "session_history_search")) turn.nSearchTools = (turn.nSearchTools || 0) + 1 }
       else if (t === "tool_result") { if (lastTool) { lastTool.ok = p.ok; lastTool.error = p.error; lastTool.truncated = p.result_truncated; if (turn && p.ok === false) turn.failCount = (turn.failCount || 0) + 1 } }
       else if (t === "retrieval") {
-        if (lastTool) { lastTool.query = p.query; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
+        if (lastTool) { lastTool.query = p.query; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.chunks = cs; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
         if (turn) { turn.nRetrieval = (turn.nRetrieval || 0) + 1; const cs = p.chunks || []; if (!cs.length) turn.nEmpty = (turn.nEmpty || 0) + 1; cs.forEach((c: any) => retrieved?.add(c.chunk_id)) }
       }
       else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } }

@@ -231,6 +231,13 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .trace-chip.warn { background: rgba(245,158,11,.14); color: #b45309; }
 .trace-tool-hits { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; width: 100%; margin-top: 4px; }
 .trace-tool-hits .kb-tag { font-size: 10.5px; }
+.trace-tool-chunks { width: 100%; display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+.trace-chunk { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--dsw-text-2); padding: 3px 6px; border-radius: 6px; background: rgba(86,134,254,.06); }
+.trace-chunk.low { background: rgba(255,107,107,.08); }
+.trace-chunk-score { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 34px; color: #2f9e6e; }
+.trace-chunk-score.low { color: #e5484d; }
+.trace-chunk-doc { font-weight: 600; color: var(--dsw-text); }
+.trace-chunk-snip { color: var(--dsw-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .trace-raw { margin-top: 8px; }
 .trace-raw-toggle { font-size: 12px; color: var(--dsw-primary); cursor: pointer; user-select: none; }
 .trace-raw-pre { margin: 6px 0 0; padding: 10px; background: var(--dsw-sidebar-fill); border: 1px solid var(--dsw-border-l1); border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--dsw-text-2); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
