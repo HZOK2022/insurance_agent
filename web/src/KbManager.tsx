@@ -79,6 +79,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
   const [dragOver, setDragOver] = useState(false)   // 文件投递区:是否拖拽悬停
   const uFileRef = useRef<HTMLInputElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)   // 预览面板,切块完成后滚动到它
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -188,6 +189,8 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       if (!pv.ok) { flash("切块失败: " + (pv.err || "解析失败"), false); return }
       setUPreview(pv); setPrevFilter("")
       flash(`切块完成: ${pv.chunk_count} 块,请检查后上传`)
+      // 切块完成后自动滚到下方预览区(参数区滚上去,滚条可回看)
+      window.setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60)
     } catch (e: any) {
       flash("切块失败: " + (e?.message || ""), false)
     } finally { setUPreviewBusy(false) }
@@ -380,6 +383,9 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       {view === "upload" && (
         <div className="kb-body">
           <div className="kb-form">
+            <datalist id="kb-product-names">
+              {Array.from(new Set(docs.map((d) => d.doc_id).filter(Boolean))).map((n) => <option key={n} value={n} />)}
+            </datalist>
             <div className="kb-mode-row">
               <button className={"kb-btn" + (uMode === "text" ? " kb-btn-primary" : "")} onClick={() => { setUMode("text"); setUPreview(null) }}>粘贴文本</button>
               <button className={"kb-btn" + (uMode === "file" ? " kb-btn-primary" : "")} onClick={() => { setUMode("file"); setUPreview(null) }}>上传文件(PDF/DOCX/XLSX/MD/TXT)</button>
@@ -389,7 +395,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -417,7 +423,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
               <>
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *<HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" /></label>
-                  <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
+                  <input className="kb-form-input" list="kb-product-names" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -504,7 +510,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
 
           </div>
           {uMode === "file" && uPreview && (
-            <div className="cmp-upload-split">
+            <div ref={previewRef} className="cmp-upload-split">
               <div className="cmp-tree-pane">
                 <div className="cmp-pane-head">
                   <span>目录 · {uPreview.chunk_count} 块 ({uPreview.text_splitter})</span>
