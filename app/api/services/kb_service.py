@@ -95,17 +95,15 @@ def ingest_text(
                                       overlap=overlap, text_splitter=text_splitter,
                                       chunk_max_tokens=chunk_max_tokens, force=force)
         doc_id = result.get("doc_id", "")
-        if result.get("conflict"):
-            # 同名产品内容不同(未强制覆盖):返回 conflict,不标记 BM25 脏
-            return False, result, result.get("message", "产品名已存在且内容不同")
+        if result.get("conflict") or result.get("error"):
+            # 冲突(Qdrant 未启动/写入失败已回滚):返回失败+明确提示,不标记 BM25 脏
+            return False, result, result.get("message", "上传失败")
         chunks_written = result.get("chunks_written", 0)
         if chunks_written == 0:
             return False, result, f"文档 {doc_id} 切块后为空，未写入"
         # 标记BM25为脏，下次检索懒重建
         mark_bm25_dirty()
         msg = f"成功摄取文档 {doc_id}: {chunks_written} chunks"
-        if result.get("index_skipped"):
-            msg += " · " + result.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
         return True, result, msg
     except Exception as e:
         msg = f"摄取失败: {e}"
@@ -184,15 +182,13 @@ def ingest_file(
                                       chunk_max_tokens=chunk_max_tokens,
                                       product_name=product_name, force=force)
         doc_id = result.get("doc_id", "")
-        if result.get("conflict"):
-            return False, result, result.get("message", "产品名已存在且内容不同"), parser
+        if result.get("conflict") or result.get("error"):
+            return False, result, result.get("message", "上传失败"), parser
         chunks_written = result.get("chunks_written", 0)
         if not doc_id or chunks_written == 0:
             return False, result, f"解析为空/不支持(parser={parser}): {file_path}", parser
         mark_bm25_dirty()
         msg = f"成功摄取 {doc_id}(parser={parser}): {chunks_written} chunks"
-        if result.get("index_skipped"):
-            msg += " · " + result.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
         return True, result, msg, parser
     except Exception as e:
         msg = f"摄取失败: {e}"
@@ -284,14 +280,12 @@ def commit_upload(
         resp = ingester.write_chunks(doc_meta, chunk_items, outline or None,
                                      on_progress=on_progress, force=force)
         doc_id = resp.get("doc_id", "")
-        if resp.get("conflict"):
-            return False, resp, resp.get("message", "产品名已存在且内容不同")
+        if resp.get("conflict") or resp.get("error"):
+            return False, resp, resp.get("message", "上传失败")
         if not resp.get("chunks_written", 0):
             return False, resp, "切块后为空,未写入"
         mark_bm25_dirty()
         msg = f"成功摄取 {doc_id}: {resp.get('chunks_written', 0)} chunks"
-        if resp.get("index_skipped"):
-            msg += " · " + resp.get("message", "向量索引未构建,请启动 Qdrant 后点重建索引")
         return True, resp, msg
     except Exception as e:
         msg = f"摄取失败: {e}"

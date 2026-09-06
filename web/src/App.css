@@ -367,6 +367,11 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .kb-btn-danger { color: #e5484d; }
 .kb-btn-danger:hover:not(:disabled) { background: rgba(229,72,77,.08); border-color: #e5484d; }
 .kb-msg { margin: 8px 20px 0; padding: 8px 14px; border-radius: 8px; font-size: 13px; }
+.kb-err-banner { margin: 10px 20px 0; display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid #e5484d; border-radius: 10px; background: #ffecec; color: #b3261e; font-size: 13.5px; line-height: 1.6; }
+.kb-err-icon { flex: none; width: 18px; height: 18px; border-radius: 50%; background: #e5484d; color: #fff; text-align: center; line-height: 18px; font-weight: 700; font-size: 12px; }
+.kb-err-text { flex: 1; min-width: 0; word-break: break-word; }
+.kb-err-close { flex: none; border: none; background: none; color: #b3261e; font-size: 16px; cursor: pointer; line-height: 1; padding: 0 2px; }
+.kb-err-close:hover { opacity: .7; }
 .kb-msg.ok { background: rgba(34,197,94,.1); color: #1a8a47; border: 1px solid rgba(34,197,94,.25); }
 .kb-msg.err { background: rgba(229,72,77,.08); color: #e5484d; border: 1px solid rgba(229,72,77,.2); }
 .kb-body { flex: 1; overflow-y: auto; padding: 12px 20px; }
@@ -488,7 +493,9 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 
 /* ---- 解析对比:左树右切块 双栏 ---- */
 .cmp-split { display: flex; gap: 14px; align-items: stretch; height: min(640px, 74vh); }
+.kb-body-preview { display: flex; flex-direction: column; }
 .kb-preview-wrap { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+.kb-body-preview .kb-preview-wrap { flex: 1; height: auto; }
 .kb-preview-top { display: flex; align-items: center; gap: 8px; }
 .kb-preview-title { font-weight: 600; font-size: 14px; color: var(--dsw-text); }
 .kb-preview-actions { margin-left: auto; display: flex; gap: 8px; }

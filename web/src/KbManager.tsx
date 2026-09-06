@@ -77,6 +77,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
+  const [prevExpanded, setPrevExpanded] = useState<Record<number, boolean>>({})   // 预览:切块展开/收起(与解析对比一致)
   const [dragOver, setDragOver] = useState(false)   // 文件投递区:是否拖拽悬停
   const uFileRef = useRef<HTMLInputElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)   // 预览面板,切块完成后滚动到它
@@ -87,7 +88,9 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
 
+  const [err, setErr] = useState("")   // 持久错误条:任何保存/操作失败,需手动关闭
   const flash = (m: string, ok: boolean = true) => { setMsg(m); setMsgOk(ok); setTimeout(() => setMsg(""), 5000) }
+  const flashErr = (m: string) => setErr(m)
 
   const loadDocs = async (p: number = 1) => {
     setLoading(true); setError("")
@@ -169,10 +172,10 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     try {
       const r = await deleteKbDocument(docId)
       if (r.ok) flash(`已删除: ${docId} (${r.chunks_deleted} chunks)`)
-      else flash(r.message, false)
+      else flashErr(r.message || "删除失败")
       loadDocs(page)
     } catch (e: any) {
-      flash("删除失败: " + (e?.message || ""), false)
+      flashErr("删除失败: " + (e?.message || ""))
     }
   }
 
@@ -190,14 +193,15 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       if (uChunkSize > 0) fd.append("chunk_size", String(uChunkSize))
       if (uOverlap >= 0) fd.append("overlap", String(uOverlap))
       if (uChunkMaxTokens > 0) fd.append("chunk_max_tokens", String(uChunkMaxTokens))
+      setErr("")
       const pv = await previewKbUpload(fd)
-      if (!pv.ok) { flash("切块失败: " + (pv.err || "解析失败"), false); return }
-      setUPreview(pv); setPrevFilter("")
+      if (!pv.ok) { flashErr("切块失败: " + (pv.err || "解析失败")); return }
+      setUPreview(pv); setPrevFilter(""); setPrevExpanded({})
       flash(`切块完成: ${pv.chunk_count} 块,请检查后上传`)
       // 切块完成后自动滚到下方预览区(参数区滚上去,滚条可回看)
       window.setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60)
     } catch (e: any) {
-      flash("切块失败: " + (e?.message || ""), false)
+      flashErr("切块失败: " + (e?.message || ""))
     } finally { setUPreviewBusy(false) }
   }
 
@@ -207,7 +211,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     if (!uPreview.chunks.length) { flash("切块为空,无法上传", false); return }
     if (!uProductName.trim()) { flash("请填产品名称", false); return }
     if (!uCategory.trim()) { flash("请选择保险类型", false); return }
-    setUBusy(true)
+    setUBusy(true); setErr("")
     try {
       setUProg({ stage: "chunked", done: 0, total: 1 })
       const r = await commitKbUpload({
@@ -232,10 +236,10 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         const go = window.confirm(r.message + "\n\n确定覆盖该产品的旧文档？")
         if (go) { await handleCommit({ force: true }); return }
         flash("已取消")
-      } else flash(r.message, false)
+      } else flashErr(r.message || "上传失败")
     } catch (e: any) {
       setUProg(null)
-      flash("上传失败: " + (e?.message || ""), false)
+      flashErr("上传失败: " + (e?.message || ""))
     } finally { setUBusy(false) }
   }
 
@@ -243,7 +247,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     // 文本模式:直接上传(带切块方式/参数);force:同名产品内容不同时强制覆盖
     if (!uText.trim() || !uProductName.trim()) { flash("文档内容和产品名称不能为空", false); return }
     if (!uCategory.trim()) { flash("请选择保险类型", false); return }
-    setUBusy(true)
+    setUBusy(true); setErr("")
     try {
       const r = await ingestKbText({
         text: uText,
@@ -267,9 +271,9 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         const go = window.confirm(r.message + "\n\n确定覆盖该产品的旧文档？")
         if (go) { await handleUpload({ force: true }); return }
         flash("已取消")
-      } else flash(r.message, false)
+      } else flashErr(r.message || "上传失败")
     } catch (e: any) {
-      flash("上传失败: " + (e?.message || ""), false)
+      flashErr("上传失败: " + (e?.message || ""))
     } finally { setUBusy(false) }
   }
 
@@ -306,6 +310,13 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       </div>
 
       {msg && <div className={"kb-msg" + (msgOk ? " ok" : " err")}>{msg}</div>}
+      {err && (
+        <div className="kb-err-banner">
+          <span className="kb-err-icon">!</span>
+          <span className="kb-err-text">{err}</span>
+          <button className="kb-err-close" onClick={() => setErr("")} title="关闭" aria-label="关闭">✕</button>
+        </div>
+      )}
 
       {view === "list" && (
         <div className="kb-body">
@@ -386,7 +397,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       )}
 
       {view === "upload" && (
-        <div className="kb-body">
+        <div className={"kb-body" + (uMode === "file" && uPreview ? " kb-body-preview" : "")}>
           {(uMode !== "file" || !uPreview) && (
           <div className="kb-form">
             <datalist id="kb-recent-version">{recentGet("version") && <option value={recentGet("version")} />}</datalist>
@@ -552,16 +563,25 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   <span className="cmp-pane-sub">{prevShownChunks.length}/{uPreview.chunk_count} 块{prevFilter ? <a className="kb-back" onClick={() => setPrevFilter("")} style={{ marginLeft: 8 }}>清除</a> : null}</span>
                 </div>
                 <div className="cmp-chunks">
-                  {prevShownChunks.length > 0 ? prevShownChunks.map((c, i) => (
-                    <div key={i} className="cmp-chunk" style={{ marginBottom: 8 }}>
-                      <div className="cmp-chunk-meta">
-                        <span className="cmp-chunk-idx">#{i + 1}</span>
-                        {c.section ? <span className="kb-tag">{c.section}</span> : <span className="kb-tag">(无结构)</span>}
-                        {c.title && c.title !== c.section && <span className="kb-tag">{c.title}</span>}
+                  {prevShownChunks.length > 0 ? prevShownChunks.map((c, i) => {
+                    const open = !!prevExpanded[i]
+                    return (
+                      <div key={i} className={"cmp-chunk" + (open ? " open" : "")} style={{ marginBottom: 8 }}>
+                        <div className="cmp-chunk-meta">
+                          <span className="cmp-chunk-idx">#{i + 1}</span>
+                          {c.section ? <span className="kb-tag">{c.section}</span> : <span className="kb-tag">(无结构)</span>}
+                          {c.title && c.title !== c.section && <span className="kb-tag">{c.title}</span>}
+                        </div>
+                        <div className={"cmp-chunk-content" + (open ? " open" : " clamp")}
+                             onClick={open ? undefined : () => setPrevExpanded((e) => ({ ...e, [i]: true }))}
+                             title={open ? undefined : "点击省略号展开全文"}>
+                          {c.content}
+                          {open && <span className="cmp-fold" title="点击收起"
+                                         onClick={(ev) => { ev.stopPropagation(); setPrevExpanded((e) => ({ ...e, [i]: false })) }}>&lt;</span>}
+                        </div>
                       </div>
-                      <div className="cmp-chunk-content clamp">{c.content}</div>
-                    </div>
-                  )) : <div className="cmp-hint">该目录项下暂无切块</div>}
+                    )
+                  }) : <div className="cmp-hint">该目录项下暂无切块</div>}
                 </div>
               </div>
             </div>

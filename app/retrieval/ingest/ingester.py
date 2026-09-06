@@ -88,35 +88,32 @@ class Ingester:
             self.kstore.upsert_document({"doc_id": doc_id, "product_name": product_name,
                 "product_category": meta.get("product_category", ""), "version": meta.get("version", ""),
                 "title": meta.get("title", ""), "source": meta.get("source", ""), "content_hash": new_hash})
-        # 2. 向量索引:Qdrant 未启动则跳过(事实源已存,索引可重建),不假装进度、不误报失败
-        index_skipped = False
-        if not self.qstore.is_down():
+        # 原子性:SQLite 与 Qdrant 同成功同失败 —— Qdrant 未启动则整单失败并回滚
+        if self.qstore.is_down():
+            logger.warning("Qdrant 未启动,上传中止(未写入)")
+            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
+                    "error": "knowledge_base_down", "message": "知识库向量服务(Qdrant)未启动,上传已取消,未保存任何内容;请先启动 Qdrant 再上传"}
+        try:
+            contents = [c["content"] for c in chunks]
+            vectors = self.embedder.embed(contents, on_progress=(
+                (lambda d, t, on_progress=on_progress: on_progress("embed", d, t)) if on_progress else None))
+            for i in range(0, len(chunks), _BATCH_SIZE):
+                batch = chunks[i:i + _BATCH_SIZE]
+                vecs = vectors[i:i + _BATCH_SIZE]
+                self.qstore.upsert([{"vector": v, "content": c["content"], "meta": c["meta"]}
+                                    for c, v in zip(batch, vecs)])
+            if on_progress:
+                on_progress("qdrant", len(chunks), len(chunks))
+        except Exception as e:  # noqa: BLE001
+            logger.error("向量索引写入失败,回滚 %s: %s", doc_id, e)
             try:
-                contents = [c["content"] for c in chunks]
-                vectors = self.embedder.embed(contents, on_progress=(
-                    (lambda d, t, on_progress=on_progress: on_progress("embed", d, t)) if on_progress else None))
-                for i in range(0, len(chunks), _BATCH_SIZE):
-                    batch = chunks[i:i + _BATCH_SIZE]
-                    vecs = vectors[i:i + _BATCH_SIZE]
-                    self.qstore.upsert([{"vector": v, "content": c["content"], "meta": c["meta"]}
-                                        for c, v in zip(batch, vecs)])
-                if on_progress:
-                    on_progress("qdrant", len(chunks), len(chunks))
-            except Exception as e:  # noqa: BLE001
-                index_skipped = True
-                logger.warning("向量索引写入失败(内容已存 SQLite,可稍后重建索引): %s", e)
-        else:
-            index_skipped = True
-            logger.warning("Qdrant 未启动,跳过向量索引(内容已存 SQLite,可稍后重建索引)")
-        res = {"chunks_written": written,
-               "chunks_embedded": (0 if index_skipped else len(chunks)),
-               "doc_id": doc_id}
-        if index_skipped:
-            res["index_skipped"] = True
-            res["message"] = ("已保存到数据库(事实源);向量索引未构建(知识库向量服务未启动/写入失败),"
-                              "请启动 Qdrant 后点「重建索引」")
-        logger.info("ingested doc_id=%s chunks=%d index_skipped=%s", doc_id, written, index_skipped)
-        return res
+                self._drop_doc(doc_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
+                    "error": "index_write_failed", "message": "写入向量索引失败,已回滚(未保存);请检查知识库向量服务后再试"}
+        logger.info("ingested doc_id=%s chunks=%d", doc_id, written)
+        return {"chunks_written": written, "chunks_embedded": len(chunks), "doc_id": doc_id}
 
     def write_chunks(self, meta: dict, chunk_items, outline=None, on_progress=None,
                      force: bool = False) -> dict:
@@ -155,35 +152,33 @@ class Ingester:
             self.kstore.upsert_document({"doc_id": doc_id, "product_name": product_name,
                 "product_category": meta.get("product_category", ""), "version": meta.get("version", ""),
                 "title": meta.get("title", ""), "source": meta.get("source", ""), "content_hash": new_hash})
-        # 向量索引:Qdrant 未启动则跳过(事实源已存,索引可重建),不假装进度、不误报失败
-        index_skipped = False
-        if not self.qstore.is_down():
+        # 原子性:数据库(SQLite)与 Qdrant 同成功同失败 —— Qdrant 未启动则整单失败并回滚(不写库、不假进度)
+        if self.qstore.is_down():
+            logger.warning("Qdrant 未启动,上传中止(未写入)")
+            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
+                    "error": "knowledge_base_down", "message": "知识库向量服务(Qdrant)未启动,上传已取消,未保存任何内容;请先启动 Qdrant 再上传"}
+        try:
+            contents = [c["content"] for c in chunks]
+            vectors = self.embedder.embed(contents, on_progress=(
+                (lambda d, t, on_progress=on_progress: on_progress("embed", d, t)) if on_progress else None))
+            for i in range(0, len(chunks), _BATCH_SIZE):
+                batch = chunks[i:i + _BATCH_SIZE]
+                vecs = vectors[i:i + _BATCH_SIZE]
+                self.qstore.upsert([{"vector": v, "content": c["content"], "meta": c["meta"]}
+                                    for c, v in zip(batch, vecs)])
+            if on_progress:
+                on_progress("qdrant", len(chunks), len(chunks))
+        except Exception as e:  # noqa: BLE001
+            # 向量索引失败 → 回滚已写入的 SQLite(同成功同失败)
+            logger.error("向量索引写入失败,回滚 %s: %s", doc_id, e)
             try:
-                contents = [c["content"] for c in chunks]
-                vectors = self.embedder.embed(contents, on_progress=(
-                    (lambda d, t, on_progress=on_progress: on_progress("embed", d, t)) if on_progress else None))
-                for i in range(0, len(chunks), _BATCH_SIZE):
-                    batch = chunks[i:i + _BATCH_SIZE]
-                    vecs = vectors[i:i + _BATCH_SIZE]
-                    self.qstore.upsert([{"vector": v, "content": c["content"], "meta": c["meta"]}
-                                        for c, v in zip(batch, vecs)])
-                if on_progress:
-                    on_progress("qdrant", len(chunks), len(chunks))
-            except Exception as e:  # noqa: BLE001
-                index_skipped = True
-                logger.warning("向量索引写入失败(内容已存 SQLite,可稍后重建索引): %s", e)
-        else:
-            index_skipped = True
-            logger.warning("Qdrant 未启动,跳过向量索引(内容已存 SQLite,可稍后重建索引)")
-        res = {"chunks_written": written,
-               "chunks_embedded": (0 if index_skipped else len(chunks)),
-               "doc_id": doc_id}
-        if index_skipped:
-            res["index_skipped"] = True
-            res["message"] = ("已保存到数据库(事实源);向量索引未构建(知识库向量服务未启动/写入失败),"
-                              "请启动 Qdrant 后点「重建索引」")
-        logger.info("wrote chunks doc_id=%s chunks=%d index_skipped=%s", doc_id, written, index_skipped)
-        return res
+                self._drop_doc(doc_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
+                    "error": "index_write_failed", "message": "写入向量索引失败,已回滚(未保存);请检查知识库向量服务后再试"}
+        logger.info("wrote chunks doc_id=%s chunks=%d", doc_id, written)
+        return {"chunks_written": written, "chunks_embedded": len(chunks), "doc_id": doc_id}
 
     def _drop_doc(self, doc_id: str) -> None:
         """同名产品重摄:先清旧 chunks/structure/Qdrant(干净替换,防残留旧块)。容忍失败。"""
