@@ -295,6 +295,8 @@ class AgentLoop:
         _prompt_tokens = 0
         _completion_tokens = 0
         _ttft = None
+        _snap_bad = False          # 坏例快照标记:工具失败/检索弱 → 轮末落完整 prompt/completion
+        _last_completion = ""      # 最近一次最终回答文本(供坏例快照)
         assistant_emitted = False
         aborted = False
         reason = "completed"
@@ -526,6 +528,8 @@ class AgentLoop:
                                     int(getattr(self.cfg, "tool_result_tail_chars", 0) or 0))
                                 if _p is not None:
                                     pruned, truncated = _p, True
+                        if not _tok:
+                            _snap_bad = True   # 工具失败/未批准 → 坏例快照
                         yield self._emit("tool_result", {"tool": name, "ok": _tok,
                                                          "result_truncated": truncated,
                                                          "error": _terr})
@@ -538,13 +542,18 @@ class AgentLoop:
                         references.append(reference)
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
-                        if isinstance(reference, list) and reference and isinstance(reference[0], dict):
-                            logger.info("检索 sid=%s query=%s hits=%d %s", session_id,
-                                        str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
-                                        len(reference),
-                                        _summarize_chunks(reference),
-                                        extra={"session_id": session_id, "trace_id": session_id})
-                            yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
+                        if isinstance(reference, list):
+                            # 检索弱(空/最高分<0.3)→ 坏例快照(RAG 问题 80% 出在检索;空结果尤其要记)
+                            _rs = [c.get("score") for c in reference if isinstance(c, dict) and isinstance(c.get("score"), (int, float))]
+                            if not reference or not _rs or max(_rs) < 0.3:
+                                _snap_bad = True
+                            if reference and isinstance(reference[0], dict):
+                                logger.info("检索 sid=%s query=%s hits=%d %s", session_id,
+                                            str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
+                                            len(reference),
+                                            _summarize_chunks(reference),
+                                            extra={"session_id": session_id, "trace_id": session_id})
+                                yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
                     if _stopped:
                         break
                     yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
@@ -560,6 +569,7 @@ class AgentLoop:
                             (answer_text or "").strip().replace("\n", " ")[:200],
                             extra={"session_id": session_id, "trace_id": session_id})
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
+                _last_completion = answer_text or ""
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True
                 yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
@@ -614,6 +624,16 @@ class AgentLoop:
                 if rc_ev is not None:
                     yield rc_ev
                 yield use_ev
+                # 坏例快照:错误/中断/工具失败/检索弱轮才落完整 prompt/completion(好轮不存,省费用/PII)。
+                # 放在 turn_end 之前,保持 turn_end 是本轮终结事件(测试/回放据此判定轮末)。
+                _snap_enabled = bool(getattr(self.cfg, "badcase_snapshot_enabled", True))
+                if _snap_enabled and (_snap_bad or reason in ("error", "interrupted")):
+                    yield self._emit("badcase_snapshot", {
+                        "reason": reason, "model": self._effective_model,
+                        "system": self.system, "conversation": conversation,
+                        "completion": _last_completion,
+                        "prompt_tokens": _prompt_tokens, "completion_tokens": _completion_tokens,
+                        "run_ms": _run_ms})
                 yield end_ev
             logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason, extra={"session_id": session_id, "trace_id": session_id})
 

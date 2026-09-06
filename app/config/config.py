@@ -139,6 +139,7 @@ class Config:
     log_file_format: str = "text"   # 日志文件格式:text=人读(开发,默认), json=机器可解析(生产);.env LOG_FILE_FORMAT
     log_api_bodies: bool = True     # 接口出入参日志:记请求 body(打码+截断)+ 仅错误(>=400)响应 body;0=只记元数据
     log_api_body_chars: int = 300   # 接口 body 截断长度
+    badcase_snapshot_enabled: bool = True  # 坏例快照:仅错误/中断/工具失败/检索弱轮把完整 prompt/completion 落一条事件;好轮不存(省费用/PII)
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
@@ -243,6 +244,7 @@ _ENV = {
     "log_file_format": "LOG_FILE_FORMAT",
     "log_api_bodies": "LOG_API_BODIES",
     "log_api_body_chars": "LOG_API_BODY_CHARS",
+    "badcase_snapshot_enabled": "BADCASE_SNAPSHOT_ENABLED",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",

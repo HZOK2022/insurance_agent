@@ -144,6 +144,15 @@ def _validate_guard_triggered(p):
     return {"kind": p.get("kind"), "detail": p.get("detail")}
 
 
+def _validate_badcase_snapshot(p):
+    # 坏例快照:错误/中断/工具失败/检索弱轮才落(完整 prompt/completion 原文进事件,供"重看模型看到了什么")
+    return {"reason": p.get("reason"), "model": _req(p, "model", str),
+            "system": p.get("system", ""), "conversation": p.get("conversation", []),
+            "completion": p.get("completion", ""),
+            "prompt_tokens": p.get("prompt_tokens"), "completion_tokens": p.get("completion_tokens"),
+            "run_ms": p.get("run_ms")}
+
+
 def _validate_step(p): return {"turn": p.get("turn"), "step": p.get("step")}
 
 
@@ -195,6 +204,7 @@ _EVENT_TYPES.update({
     "step_start": _validate_step,
     "step_end": _validate_step_end,
     "guard_triggered": _validate_guard_triggered,
+    "badcase_snapshot": _validate_badcase_snapshot,
     "memory_upsert": _validate_memory_upsert,
     "memory_archive": _validate_memory_archive,
     "memory_injected": _validate_memory_injected,

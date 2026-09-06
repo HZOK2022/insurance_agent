@@ -115,6 +115,33 @@ class LoopTerminalTest(_Base):
         te = next(r["payload"] for r in self.store.read("s1") if r["type"] == "turn_end")
         self.assertEqual(te["reason"], "error")
 
+    def test_badcase_snapshot_full_prompt_on_error_turn(self):
+        """badcase 快照:错误轮落完整 system+conversation+completion,供"重看模型看到了什么"。"""
+        class ErrLLM:
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
+                yield {"kind": "text", "delta": "a", "block_index": 0, "ttft_ms": 10}
+                raise RuntimeError("connection reset")
+        self.run_turn(ErrLLM())
+        snaps = [r["payload"] for r in self.store.read("s1") if r["type"] == "badcase_snapshot"]
+        self.assertEqual(len(snaps), 1)
+        s = snaps[0]
+        self.assertEqual(s["reason"], "error"); self.assertEqual(s["model"], "fake")
+        self.assertIn("系统", s["system"])
+        self.assertTrue(any(m.get("role") == "user" for m in s["conversation"]))
+        self.assertIn("conversation", s); self.assertIn("completion", s)
+
+    def test_no_badcase_snapshot_on_good_turn(self):
+        """好轮(正常回答)不落 badcase 快照(平时不存完整 prompt,省费用/PII)。"""
+        self.run_turn(FakeAnswerLLM())
+        snap_types = [r["type"] for r in self.store.read("s1") if r["type"] == "badcase_snapshot"]
+        self.assertEqual(snap_types, [])
+
+    def test_badcase_snapshot_on_empty_retrieval(self):
+        """检索空结果 → badcase 快照(RAG 大问题)。"""
+        self.run_turn(FakeRetrieveLLM(), text="100种", chunks=[])
+        snap_types = [r["type"] for r in self.store.read("s1") if r["type"] == "badcase_snapshot"]
+        self.assertEqual(snap_types, ["badcase_snapshot"])
+
     def test_generator_close_records_turn_end_interrupted(self):
         class NormalLLM:
             def chat_stream(self, messages, json_mode=False, tools=None, model=None):
