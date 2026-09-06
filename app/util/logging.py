@@ -28,7 +28,8 @@ class ConsoleFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         ts = _utcnow().isoformat(timespec="milliseconds")
-        line = f"{ts} {record.levelname:<7} [{record.name}] {record.getMessage()}"
+        # where(源码位置):filename:lineno · funcName —— 排查时一眼知道这行出自哪
+        line = f"{ts} {record.levelname:<7} [{record.name}] {record.filename}:{record.lineno} {record.funcName} - {record.getMessage()}"
         extra = [f"{k}={getattr(record, k)}" for k in _EXTRA_KEYS if getattr(record, k, None) is not None]
         if extra:
             line += "  " + " ".join(extra)
@@ -43,6 +44,9 @@ class JsonFormatter(logging.Formatter):
             "ts": _utcnow().isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "logger": record.name,
+            # where(源码位置)作为结构化字段,便于机器按文件/行/函数过滤
+            "source": f"{record.filename}:{record.lineno}",
+            "func": record.funcName,
             "msg": record.getMessage(),
         }
         for k in _EXTRA_KEYS:
