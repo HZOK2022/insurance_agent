@@ -12,7 +12,7 @@ interface Turn {
 }
 
 function flat(blocks: any[]): string {
-  return (blocks || []).map((b: any) => (b.t === "ul" || b.t === "ol") ? (b.items || []).join("\n") : b.text || "").join("\n").trim()
+  return (blocks || []).map((b: any) => (b && (b.t === "ul" || b.t === "ol")) ? ((b.items || []).join("\n")) : ((b && b.text) || "")).join("\n").trim()
 }
 
 function buildTurns(evs: PEvent[]): Turn[] {
@@ -21,26 +21,36 @@ function buildTurns(evs: PEvent[]): Turn[] {
   const recMap = new Map<string, Rec>()
   let ansBlocks: any[] = []
   let ansCites: { idx: number; chunk_id: string }[] = []
+  let streamText = ""   // 流式正文(中断无最终 messages 时兜底)
+  const finalize = () => {
+    if (!cur) return
+    cur.recs = Array.from(recMap.values())
+    cur.answer = flat(ansBlocks) || streamText.trim()
+    cur.cites = ansCites
+    // 只要有"正文/被中断的流式",也算可诊断(常是问题现场)
+    cur.hasAnswer = cur.hasAnswer || cur.answer.length > 0
+  }
   evs.forEach((e) => {
     const p = e.payload || {}
     if (e.type === "turn_start") {
-      if (cur) turns.push(cur)
-      recMap.clear(); ansBlocks = []; ansCites = []
+      if (cur) { finalize(); turns.push(cur) }
+      recMap.clear(); ansBlocks = []; ansCites = []; streamText = ""
       cur = { n: turns.length + 1, query: "", recs: [], answer: "", hasAnswer: false, cites: [] }
     } else if (cur && e.type === "user_message") {
       cur.query = p.text || cur.query
+    } else if (cur && e.type === "assistant_chunk") {
+      const d = p.delta || ""
+      if (p.kind === "text") streamText += d
     } else if (cur && e.type === "retrieval") {
       ;(p.chunks || []).forEach((c: any) => { if (c && c.chunk_id && !recMap.has(c.chunk_id)) recMap.set(c.chunk_id, c) })
     } else if (cur && e.type === "assistant_message") {
       ansBlocks = p.blocks || []; ansCites = p.citations || []; cur.hasAnswer = true
     } else if (cur && e.type === "turn_end") {
-      cur.reason = p.reason; cur.elapsed_ms = p.elapsed_ms != null ? String(p.elapsed_ms) + "ms" : "";
-      cur.recs = Array.from(recMap.values())
-      cur.answer = flat(ansBlocks)
-      cur.cites = ansCites
+      cur.reason = p.reason; cur.elapsed_ms = p.elapsed_ms != null ? String(p.elapsed_ms) + "ms" : ""
+      finalize()
     }
   })
-  if (cur) turns.push(cur)
+  if (cur) { finalize(); turns.push(cur) }
   return turns.filter((t) => t.hasAnswer)
 }
 
@@ -75,8 +85,12 @@ export default function DiagnoseView({ onBack }: { onBack?: () => void }) {
   useEffect(() => { listSessions().then(setSessions).catch(() => {}) }, [])
 
   useEffect(() => {
-    if (!sid) { setTurns([]); return }
-    listEvents(sid).then((evs) => setTurns(buildTurns(evs))).catch(() => setTurns([]))
+    if (!sid) { setTurns([]); setOpen(null); return }
+    listEvents(sid).then((evs) => {
+      const ts = buildTurns(evs)
+      setTurns(ts)
+      setOpen(ts.length ? ts[0].n : null)   // 自动展开第一轮
+    }).catch(() => setTurns([]))
   }, [sid])
 
   return (
@@ -96,7 +110,7 @@ export default function DiagnoseView({ onBack }: { onBack?: () => void }) {
       </div>
       <div className="kb-body">
         {!sid && <div className="kb-empty">先在右上角选择一个会话,再点轮次展开诊断</div>}
-        {sid && turns.length === 0 && <div className="kb-empty">该会话没有可诊断的回答轮次</div>}
+        {sid && turns.length === 0 && <div className="kb-empty">该会话没有可诊断的回答轮次(可能只是寒暄/未生成回答,换一个会话试试)</div>}
         {turns.length > 0 && (
           <div className="diag-list">
             {turns.map((t) => (
