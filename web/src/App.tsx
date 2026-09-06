@@ -39,6 +39,7 @@ interface Msg { id: string; role: "user" | "think" | "text" | "tool" | "answer" 
 // 照 dsh formatLatencySeconds/formatTokensPerSecond:<10s 一位小数,>=10s 取整;tps >=10 取整
 function fmtDur(ms?: number): string { if (ms == null) return ""; if (ms < 1000) return ms + "ms"; const s = ms / 1000; return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "秒" }
 function fmtTps(v?: number): string { if (v == null) return ""; const c = Math.max(0, v); return (c >= 10 ? String(Math.round(c)) : String(Math.round(c * 10) / 10)) + " tok/s" }
+function shorten(s: string, n = 60): string { return s.length <= n ? s : s.slice(0, n) + "…(展开)" }
 // 上下文用量:~9.9K / ~720K / ~1M(照 dsh)
 function fmtCtx(n?: number): string { if (n == null) return "—"; if (n >= 1_000_000) { const v = n / 1_000_000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "M" } if (n >= 1000) { const v = n / 1000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "K" } return "~" + String(n) }
 // 任务耗时:2m25s / 45s / 800ms
@@ -228,8 +229,18 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
               {t.steps.map((s, si) => (
                 <div key={si} className="trace-step">
                   <div className="trace-step-head">Step {s.step}{s.elapsed_ms != null ? " · " + fmtDur(s.elapsed_ms) : ""}</div>
-                  {s.reasoning.trim() !== "" && <div className="trace-step-line trace-reason"><span className="trace-k">思考</span>{s.reasoning}</div>}
-                  {s.text.trim() !== "" && <div className="trace-step-line trace-narr"><span className="trace-k">叙述</span>{s.text}</div>}
+                  {s.reasoning.trim() !== "" && (
+                    <details className="trace-collapse trace-reason-detail">
+                      <summary className="trace-step-line trace-reason"><span className="trace-k">思考</span>{shorten(s.reasoning)}</summary>
+                      <div className="trace-full">{s.reasoning}</div>
+                    </details>
+                  )}
+                  {s.text.trim() !== "" && (
+                    <details className="trace-collapse trace-narr-detail">
+                      <summary className="trace-step-line trace-narr"><span className="trace-k">叙述</span>{shorten(s.text)}</summary>
+                      <div className="trace-full">{s.text}</div>
+                    </details>
+                  )}
                   {s.tools.map((tl, ti) => (
                     <div key={ti} className={"trace-tool" + (tl.ok === false ? " failed" : "")}>
                       <span className="tool-name">{tl.tool}</span>

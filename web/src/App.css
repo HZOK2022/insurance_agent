@@ -215,6 +215,10 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .trace-step { margin: 10px 0; padding-left: 12px; border-left: 2px solid var(--dsw-border-l2); }
 .trace-step-head { font-weight: 600; color: var(--dsw-text); font-size: 12.5px; margin-bottom: 5px; }
 .trace-step-line { font-size: 12.5px; color: var(--dsw-text-2); margin: 3px 0; word-break: break-word; }
+.trace-collapse { margin: 3px 0; }
+.trace-collapse > summary { cursor: pointer; user-select: none; }
+.trace-collapse > summary::marker { color: var(--dsw-text-3); }
+.trace-full { margin: 3px 0 6px; padding: 6px 8px; background: var(--dsw-sidebar-fill); border-radius: 6px; color: var(--dsw-text-2); font-size: 12px; white-space: pre-wrap; word-break: break-word; border-left: 2px solid var(--dsw-border-l2); }
 .trace-k { display: inline-block; font-size: 10.5px; color: var(--dsw-text-3); border: 1px solid var(--dsw-border-l2); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
 .trace-reason { color: var(--dsw-text-3); }
 .trace-tool { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 5px 0; padding: 6px 10px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; background: var(--dsw-sidebar-fill); font-size: 12px; }
@@ -661,3 +665,18 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mon-bad { color: #e5484d; font-weight: 600; }
 
 
+
+/* ===== timeseries chart (MonitorView) ===== */
+.mon-ts-toggle { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.mon-ts-toggle .audit-btn { padding: 2px 8px; font-size: 11px; }
+.mon-ts-toggle .audit-btn.mon-ts-on { background: var(--dsw-primary); border-color: var(--dsw-primary); color: #fff; }
+.mon-ts-note { font-size: 11px; color: var(--dsw-text-3); margin-left: 10px; font-weight: 400; }
+.mon-ts { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.mon-ts-svg { width: 100%; height: auto; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 8px; }
+.mon-ts-title { font-size: 12px; fill: var(--dsw-text-2); }
+.mon-ts-grid { stroke: var(--dsw-border-l1); stroke-width: 1; }
+.mon-ts-ylab { font-size: 10px; fill: var(--dsw-text-3); }
+.mon-ts-xlab { font-size: 10px; fill: var(--dsw-text-3); }
+.mon-ts-line { stroke: var(--dsw-primary); stroke-width: 2; }
+.mon-ts-dot { fill: var(--dsw-primary); }
+.mon-ts-empty { color: var(--dsw-text-3); font-size: 12px; padding: 10px; }
