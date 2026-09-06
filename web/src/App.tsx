@@ -4,6 +4,7 @@ import { listSessions, createSession, listEvents, deleteSession, renameSession, 
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import KbManager from "./KbManager"
 import CompareView from "./CompareView"
+import DiagnoseView from "./DiagnoseView"
 import "./App.css"
 
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 420, SIDEBAR_DEFAULT = 240
@@ -100,7 +101,7 @@ function CopyBtn({ text }: { text: string }) {
   return (<button className="copy-btn" title="复制" aria-label="复制" onClick={() => { navigator.clipboard.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <I><path d="M20 6L9 17l-5-5"/></I> : <I><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></I>}</button>)
 }
 
-type View = "chat" | "knowledge" | "compare"
+type View = "chat" | "knowledge" | "compare" | "diagnose"
 
 function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?: boolean; currentView?: View; onViewChange?: (v: View) => void }) {
   const [open, setOpen] = useState(false)
@@ -128,6 +129,7 @@ function UserMenu({ collapsed = false, currentView, onViewChange }: { collapsed?
             {user?.role === "admin" && (
               <button className="um-item" onClick={() => { setOpen(false); onViewChange?.(currentView === "knowledge" ? "chat" : "knowledge") }}><I><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></I><span>{currentView === "knowledge" ? "返回对话" : "知识管理"}</span></button>
             )}
+            <button className="um-item" onClick={() => { setOpen(false); onViewChange?.(currentView === "diagnose" ? "chat" : "diagnose") }}><I><path d="M12 3a6 6 0 0 1 6 6c0 2.2-.9 3.6-1.8 4.8-.6.8-.7 1.6-.7 2.2H8.5c0-.6-.1-1.4-.7-2.2C6.9 12.6 6 11.2 6 9a6 6 0 0 1 6-6Z"/><path d="M9.5 19h5"/><path d="M10.5 21.5h3"/></I><span>{currentView === "diagnose" ? "返回对话" : "回答诊断"}</span></button>
             <button className="um-item" onClick={() => { setOpen(false) /* TODO: 设置页(后期扩展) */ }}><I><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></I><span>设置</span></button>
             <button className="um-item" onClick={() => { setOpen(false) /* TODO: 记忆页(后期扩展) */ }}><I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I><span>记忆</span></button>
             <button className="um-item danger" onClick={() => { setOpen(false); if (window.confirm("确定退出登录?")) logout() }}><I><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></I><span>退出登录</span></button>
@@ -298,7 +300,7 @@ export default function App() {
   // 顶层视图持久化:刷新后停留在当前页(对话/知识管理/解析对比),不强制跳回对话
   const [currentView, setCurrentView] = useState<View>(() => {
     const v = localStorage.getItem("ins-view")
-    return v === "chat" || v === "knowledge" || v === "compare" ? v : "chat"
+    return v === "chat" || v === "knowledge" || v === "compare" || v === "diagnose" ? v : "chat"
   })
   const [activeCite, setActiveCite] = useState<{ msgId: string; idx: number } | null>(null)
   const [ctxUsage, setCtxUsage] = useState<{ used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null>(null)
@@ -546,6 +548,8 @@ export default function App() {
         <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} />
       ) : currentView === "knowledge" ? (
         <KbManager onBack={() => setCurrentView("chat")} onOpenCompare={() => setCurrentView("compare")} />
+      ) : currentView === "diagnose" ? (
+        <DiagnoseView onBack={() => setCurrentView("chat")} />
       ) : (
         <CompareView onBack={() => setCurrentView("chat")} onOpenKb={() => setCurrentView("knowledge")} />
       )}

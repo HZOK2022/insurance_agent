@@ -491,6 +491,30 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .cmp-page-tag { font-size: 10.5px; color: var(--dsw-text-3); border: 1px solid var(--dsw-border-l1); border-radius: 3px; padding: 0 4px; margin-left: 4px; flex: none; }
 .cmp-chunk-range-tag { font-size: 10.5px; color: var(--dsw-primary); border: 1px solid rgba(86,134,254,.25); background: var(--dsw-primary-soft); border-radius: 3px; padding: 0 4px; margin-left: 4px; flex: none; }
 
+/* ---- 回答诊断 ---- */
+.diag-list { display: flex; flex-direction: column; gap: 12px; max-width: 1200px; }
+.diag-turn { border: 1px solid var(--dsw-border-l1); border-radius: 10px; background: var(--dsw-bg); overflow: hidden; }
+.diag-turn-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }
+.diag-turn-title { font-weight: 600; color: var(--dsw-text); flex: none; }
+.diag-turn-query { flex: 1; min-width: 0; color: var(--dsw-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diag-turn-meta { color: var(--dsw-text-3); font-size: 12px; flex: none; }
+.diag-turn-chev { color: var(--dsw-text-3); flex: none; }
+.diag-turn-body { border-top: 1px solid var(--dsw-border-l1); padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.diag-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.diag-chip { font-size: 12px; padding: 3px 9px; border-radius: 20px; }
+.diag-chip.ok { background: rgba(34,197,94,.12); color: #1a8a47; border: 1px solid rgba(34,197,94,.3); }
+.diag-chip.bad { background: rgba(229,72,77,.1); color: #e5484d; border: 1px solid rgba(229,72,77,.3); }
+.diag-chip.warn { background: rgba(245,158,11,.12); color: #b45309; border: 1px solid rgba(245,158,11,.3); }
+.diag-sec-label { font-size: 12px; font-weight: 600; color: var(--dsw-text-3); margin-bottom: 6px; }
+.diag-recs, .diag-cites { display: flex; flex-direction: column; gap: 6px; }
+.diag-rec { border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.diag-rec-content { width: 100%; font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.diag-ans { font-size: 13px; line-height: 1.7; color: var(--dsw-text); white-space: pre-wrap; word-break: break-word; }
+.diag-cite { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }
+.diag-cite.ok { background: rgba(34,197,94,.08); color: #1a8a47; }
+.diag-cite.bad { background: rgba(229,72,77,.08); color: #e5484d; }
+.diag-none { font-size: 12.5px; color: var(--dsw-text-3); padding: 4px 0; }
+
 /* ---- 解析对比:左树右切块 双栏 ---- */
 .cmp-split { display: flex; gap: 14px; align-items: stretch; height: min(640px, 74vh); }
 .kb-body-preview { display: flex; flex-direction: column; }
