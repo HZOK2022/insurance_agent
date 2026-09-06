@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""集中日志(结构化 JSON + trace_id + 分级 + 滚动文件),供排查/监控。
+"""集中日志(可读控制台 + 结构化 JSON 文件 + trace_id + 分级 + 滚动),供排查/监控。
 
-- JsonFormatter:一条日志一个 JSON 对象,含 ts/level/logger/msg + 可选的 trace_id/session_id/turn/step/event_type/tool/model/latency_ms/error 等字段。
-- setup_logging():配置根 logger 的 level + 控制台/文件 handler(文件滚动,路径默认可配)。
+双格式:
+- ConsoleFormatter:控制台用**人读文本**(时间 级别 [logger] msg + 上下文字段),开发时一眼可读。
+- JsonFormatter:文件用**一条日志一个 JSON 对象**(ts/level/logger/msg + 可选 trace_id/session_id/turn/step/tool/model/latency_ms/error 等),机器可解析。
+- setup_logging():配置根 logger 的 level + 控制台(可读)/文件(JSON,按天滚动)。重复调用只生效一次。
 - 用法:logging.getLogger(__name__).info("...", extra={"session_id":..., "trace_id":...})
 """
 from __future__ import annotations
@@ -12,15 +14,33 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
-# 会作为"字段"打进 JSON 的 extra 键
+# 会作为"字段"打进日志的 extra 键(控制台拼在行尾,文件进 JSON 对象)
 _EXTRA_KEYS = ("trace_id", "session_id", "turn", "step", "event_type", "tool", "model",
                "latency_ms", "prompt_tokens", "completion_tokens", "error")
+
+
+def _utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+class ConsoleFormatter(logging.Formatter):
+    """人类可读的控制台格式:2026-09-06T10:29:08 INFO [app.agent_loop] turn end sid=xxx  … trace_id=xxx"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts = _utcnow().isoformat(timespec="milliseconds")
+        line = f"{ts} {record.levelname:<7} [{record.name}] {record.getMessage()}"
+        extra = [f"{k}={getattr(record, k)}" for k in _EXTRA_KEYS if getattr(record, k, None) is not None]
+        if extra:
+            line += "  " + " ".join(extra)
+        if record.exc_info:
+            line += "\n" + self.formatException(record.exc_info)
+        return line
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         d = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "ts": _utcnow().isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
@@ -38,19 +58,27 @@ class JsonFormatter(logging.Formatter):
             return json.dumps(d, ensure_ascii=False)
 
 
-def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
-                  backup_count: int = 30) -> None:
-    """配置根 logger:控制台(可读)+ 文件(JSON,滚动)。重复调用只生效一次。
+def _quiet_third_party() -> None:
+    """降噪第三方库(网络/HTTP 框架)的 INFO 刷屏,保留业务日志可读。"""
+    for name in ("httpx", "httpcore", "urllib3", "uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
-    按天滚动:每天生成一个新文件,保留 backup_count 天。
+
+def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
+                  backup_count: int = 30, console_format: str = "text") -> None:
+    """配置根 logger:控制台(默认人读文本;console_format='json' 时也用 JSON)+ 文件(JSON,滚动)。
+
+    按天滚动:每天生成一个新文件,保留 backup_count 天。重复调用只生效一次。
     """
     lg = logging.getLogger()
     if getattr(lg, "_dsh_setup", False):
         return
     lg.setLevel(getattr(logging, level.upper(), logging.INFO))
-    fmt = JsonFormatter()
+    _quiet_third_party()
+    file_fmt = JsonFormatter()
+    console_fmt = ConsoleFormatter() if console_format == "text" else JsonFormatter()
     ch = logging.StreamHandler()
-    ch.setFormatter(fmt)
+    ch.setFormatter(console_fmt)
     lg.addHandler(ch)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
@@ -63,6 +91,6 @@ def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
             encoding="utf-8",
             utc=True         # 用 UTC 时间切分,避免时区问题
         )
-        fh.setFormatter(fmt)
+        fh.setFormatter(file_fmt)
         lg.addHandler(fh)
     lg._dsh_setup = True  # type: ignore[attr-defined]
