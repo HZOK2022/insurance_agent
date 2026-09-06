@@ -38,13 +38,14 @@ class Ingester:
 
     def ingest_text(self, text: str, meta: dict, on_progress=None,
                     chunk_size: int | None = None, overlap: int | None = None,
-                    text_splitter: str | None = None, force: bool = False) -> dict:
+                    text_splitter: str | None = None, chunk_max_tokens: int | None = None,
+                    force: bool = False) -> dict:
         """摄取原始文本。
         Args:
             text: 文档内容
             meta: 文档元数据,需包含 doc_id,version,title,doc_type,product_category 等
             on_progress: 可选回调(stage, done, total),stage in chunked/embed/qdrant
-            chunk_size/overlap/text_splitter: 覆盖 config 默认(切块口径集中 config,铁律4);
+            chunk_size/overlap/text_splitter/chunk_max_tokens: 覆盖 config 默认(切块口径集中 config,铁律4);
                 传 None 则取 config。
         Returns: {chunks_written, chunks_embedded, doc_id}
         """
@@ -60,10 +61,11 @@ class Ingester:
         cs = int(getattr(cfg, "chunk_size", 1000) or 1000) if chunk_size is None else int(chunk_size)
         ov = int(getattr(cfg, "chunk_overlap", 200) or 200) if overlap is None else int(overlap)
         ts = getattr(cfg, "text_splitter", "structured") if text_splitter is None else text_splitter
+        mt = (int(chunk_max_tokens) if chunk_max_tokens is not None
+              else int(getattr(cfg, "chunk_max_tokens", 0) or 0)) or None
         chunks = chunk_documents(docs,
                                  chunk_size=cs, overlap=ov,
-                                 text_splitter=ts,
-                                 max_tokens=int(getattr(cfg, "chunk_max_tokens", 0) or 0) or None)
+                                 text_splitter=ts, max_tokens=mt)
         if not chunks:
             return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id}
         # 同名产品判重:内容不同且非 force → conflict(防覆盖他人文档)
@@ -176,12 +178,12 @@ class Ingester:
 
     def ingest_file(self, file_path: str, category: str = "", backend: str | None = None,
                      on_progress=None, chunk_size: int | None = None, overlap: int | None = None,
-                     text_splitter: str | None = None, product_name: str | None = None,
-                     force: bool = False) -> dict:
+                     text_splitter: str | None = None, chunk_max_tokens: int | None = None,
+                     product_name: str | None = None, force: bool = False) -> dict:
         """摄取单个文件。
         backend: None=取 config PARSER_BACKEND | auto(回退链)| mineru | markitdown | pdfplumber | native(仅 docx/xlsx)。
         on_progress: 可选回调(stage, done, total),见 ingest_text。
-        chunk_size/overlap/text_splitter: 覆盖 config 切块口径。product_name: 产品名(必填,doc_id=它)。
+        chunk_size/overlap/text_splitter/chunk_max_tokens: 覆盖 config 切块口径。product_name: 产品名(必填,doc_id=它)。
         Returns: {chunks_written, chunks_embedded, doc_id} 或 None(不支持格式)
         """
         if not is_supported(file_path):
@@ -197,7 +199,7 @@ class Ingester:
             docs[0]["meta"]["product_name"] = product_name
         result = self.ingest_text(docs[0]["text"], docs[0]["meta"], on_progress,
                                   chunk_size=chunk_size, overlap=overlap, text_splitter=text_splitter,
-                                  force=force)
+                                  chunk_max_tokens=chunk_max_tokens, force=force)
         _doc = docs[0]["meta"].get("doc_id", "")
         if _doc:
             # 文件路径已知:pdf 读内嵌书签(带页码),覆盖 ingest_text 的正则 outline

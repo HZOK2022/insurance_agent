@@ -84,6 +84,7 @@ def ingest_text(
     chunk_size: int | None = None,
     overlap: int | None = None,
     text_splitter: str | None = None,
+    chunk_max_tokens: int | None = None,
     force: bool = False,
 ) -> tuple[bool, dict, str]:
     """摄取文本文档。
@@ -91,7 +92,8 @@ def ingest_text(
     """
     try:
         result = ingester.ingest_text(text, meta, chunk_size=chunk_size,
-                                      overlap=overlap, text_splitter=text_splitter, force=force)
+                                      overlap=overlap, text_splitter=text_splitter,
+                                      chunk_max_tokens=chunk_max_tokens, force=force)
         doc_id = result.get("doc_id", "")
         if result.get("conflict"):
             # 同名产品内容不同(未强制覆盖):返回 conflict,不标记 BM25 脏
@@ -166,6 +168,7 @@ def ingest_file(
     chunk_size: int | None = None,
     overlap: int | None = None,
     text_splitter: str | None = None,
+    chunk_max_tokens: int | None = None,
     product_name: str | None = None,
     force: bool = False,
 ) -> tuple[bool, dict, str, str]:
@@ -175,6 +178,7 @@ def ingest_file(
     try:
         result = ingester.ingest_file(file_path, category, parser, on_progress,
                                       chunk_size=chunk_size, overlap=overlap, text_splitter=text_splitter,
+                                      chunk_max_tokens=chunk_max_tokens,
                                       product_name=product_name, force=force)
         doc_id = result.get("doc_id", "")
         if result.get("conflict"):
@@ -214,6 +218,7 @@ def preview_upload(
     text_splitter: str | None = None,
     chunk_size: int | None = None,
     overlap: int | None = None,
+    chunk_max_tokens: int | None = None,
 ) -> tuple[bool, dict, str]:
     """单文件单后端"预览切块"(不写库、不发嵌入):解析 + 按指定切块方式切块,返回 outline + chunks。
     供上传页"预览切块→确认并索引"复用,避免二次解析(commit 直接用这里的 chunks/outline)。
@@ -238,9 +243,10 @@ def preview_upload(
     meta = docs[0]["meta"]
     doc_type = meta.get("doc_type", "policy_document")
     text = docs[0]["text"]
-    max_tokens = int(getattr(cfg, "chunk_max_tokens", 0) or 0) or None
+    mt = (int(chunk_max_tokens) if chunk_max_tokens is not None
+          else int(getattr(cfg, "chunk_max_tokens", 0) or 0)) or None
     chunks = chunk_documents([{"text": text, "meta": dict(meta)}],
-                             chunk_size=cs, overlap=ov, text_splitter=ts, max_tokens=max_tokens)
+                             chunk_size=cs, overlap=ov, text_splitter=ts, max_tokens=mt)
     outline = []
     try:
         outline = build_from_outline(text or "", doc_type)

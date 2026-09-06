@@ -18,7 +18,7 @@ function HelpDot({ text }: { text: string }) {
   return (
     <span className="help-dot-wrap">
       <button type="button" className="help-dot" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} title="提示" aria-label="提示">!</button>
-      {open && <span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span>}
+      {open && <><span className="ctx-backdrop" onClick={() => setOpen(false)} /><span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span></>}
     </span>
   )
 }
@@ -64,6 +64,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uMethod, setUMethod] = useState("structured")   // D70:切块方式,默认结构层级
   const [uChunkSize, setUChunkSize] = useState(1000)
   const [uOverlap, setUOverlap] = useState(200)
+  const [uChunkMaxTokens, setUChunkMaxTokens] = useState(460)   // 结构层级的 token 预算
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
@@ -173,6 +174,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       fd.append("text_splitter", uMethod)
       if (uChunkSize > 0) fd.append("chunk_size", String(uChunkSize))
       if (uOverlap >= 0) fd.append("overlap", String(uOverlap))
+      if (uChunkMaxTokens > 0) fd.append("chunk_max_tokens", String(uChunkMaxTokens))
       const pv = await previewKbUpload(fd)
       if (!pv.ok) { flash("切块失败: " + (pv.err || "解析失败"), false); return }
       setUPreview(pv); setPrevFilter("")
@@ -236,6 +238,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         text_splitter: uMethod,
         chunk_size: uChunkSize > 0 ? uChunkSize : undefined,
         overlap: uOverlap >= 0 ? uOverlap : undefined,
+        chunk_max_tokens: uChunkMaxTokens > 0 ? uChunkMaxTokens : undefined,
         force: opts?.force,
       })
       if (r.ok) {
@@ -442,18 +445,26 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
-            <div className="kb-form-field">
-              <label className="kb-form-label">chunk_size(字符)<HelpDot text="bge 嵌入上限约 512 token(≈400字),超过会被截断(结构层级由 token 预算约460控制)。" /></label>
-              <input className="kb-form-input" type="number" value={uChunkSize} min={1}
-                     onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
-            </div>
-            <div className="kb-form-field">
-              <label className="kb-form-label">overlap(字符)</label>
-              <input className="kb-form-input" type="number" value={uOverlap} min={0}
-                     disabled={uMethod === "structured"}
-                     title={uMethod === "structured" ? "结构层级不使用 overlap(已置0)" : undefined}
-                     onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
-            </div>
+            {uMethod === "structured" ? (
+              <div className="kb-form-field">
+                <label className="kb-form-label">token 预算<HelpDot text="结构层级按语义单元切(节/条/一、/1./(1)),块大小由 token 预算控制;bge 上限 512 token,建议 ≤512(默认460)。" /></label>
+                <input className="kb-form-input" type="number" value={uChunkMaxTokens} min={1}
+                       onChange={(e) => { setUChunkMaxTokens(Number(e.target.value) || 0); setUPreview(null) }} />
+              </div>
+            ) : (
+              <>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">chunk_size(字符)<HelpDot text="bge 嵌入上限约 512 token(≈400字),超过会被截断,建议 ≤400。" /></label>
+                  <input className="kb-form-input" type="number" value={uChunkSize} min={1}
+                         onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
+                </div>
+                <div className="kb-form-field">
+                  <label className="kb-form-label">overlap(字符)</label>
+                  <input className="kb-form-input" type="number" value={uOverlap} min={0}
+                         onChange={(e) => { setUOverlap(Number(e.target.value) || 0); setUPreview(null) }} />
+                </div>
+              </>
+            )}
             <div className="kb-form-actions">
               {uMode === "file" ? (
                 uPreview ? (

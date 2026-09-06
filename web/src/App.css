@@ -401,7 +401,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .help-dot-wrap { position: relative; display: inline-flex; margin-left: 2px; vertical-align: super; font-size: 0; }
 .help-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--dsw-border-l2); background: var(--dsw-bg); color: var(--dsw-text-3); font-size: 10px; line-height: 12px; text-align: center; cursor: pointer; padding: 0; }
 .help-dot:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); }
-.help-dot-pop { position: absolute; top: 16px; left: -8px; width: 250px; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); z-index: 30; box-shadow: 0 6px 20px rgba(0,0,0,.12); text-align: left; white-space: normal; }
+.help-dot-pop { position: absolute; top: 16px; left: -8px; width: 250px; background: var(--dsw-bg); border: 1px solid var(--dsw-border-l1); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-text-2); z-index: 60; box-shadow: 0 6px 20px rgba(0,0,0,.12); text-align: left; white-space: normal; }
 .kb-form-input { flex: 1; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--dsw-border-l2); border-radius: 8px; font: inherit; font-size: 13px; color: var(--dsw-text); background: var(--dsw-bg); outline: none; transition: border-color .15s; }
 .kb-form-input:focus { border-color: var(--dsw-primary); box-shadow: 0 0 0 3px var(--dsw-primary-soft); }
 .kb-form-row { display: flex; gap: 12px; }

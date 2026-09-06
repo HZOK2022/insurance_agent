@@ -76,6 +76,7 @@ class IngestTextRequest(BaseModel):
     text_splitter: Optional[str] = Field(None, description="切块方式: structured|character|paragraph")
     chunk_size: Optional[int] = Field(None, description="切块字符数上限(覆盖 config)")
     overlap: Optional[int] = Field(None, description="切块重叠字符数(覆盖 config)")
+    chunk_max_tokens: Optional[int] = Field(None, description="结构层级 token 预算(覆盖 config)")
     force: bool = Field(False, description="同名产品内容不同时强制覆盖(需确认)")
 
 

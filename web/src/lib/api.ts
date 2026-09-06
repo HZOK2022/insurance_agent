@@ -120,7 +120,7 @@ export interface KbStructureResp { doc_id: string; nodes: KbStructNode[] }
 export const getKbStructure = (docId: string) =>
   json<KbStructureResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/structure')
 
-export interface KbIngestTextReq { text: string; product_name: string; doc_id?: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string; text_splitter?: string; chunk_size?: number; overlap?: number; force?: boolean }
+export interface KbIngestTextReq { text: string; product_name: string; doc_id?: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string; text_splitter?: string; chunk_size?: number; overlap?: number; chunk_max_tokens?: number; force?: boolean }
 export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string; conflict?: boolean }
 export const ingestKbText = (body: KbIngestTextReq) =>
   json<KbIngestResp>('/api/kb/ingest/text', { method: 'POST', body: JSON.stringify(body) })

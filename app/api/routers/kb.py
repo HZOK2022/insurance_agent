@@ -73,7 +73,7 @@ def ingest_text(body: IngestTextRequest):
     ok, result, msg = kb_service.ingest_text(
         ingester, body.text, meta,
         chunk_size=body.chunk_size, overlap=body.overlap, text_splitter=body.text_splitter,
-        force=body.force)
+        chunk_max_tokens=body.chunk_max_tokens, force=body.force)
     return IngestTextResponse(
         ok=ok,
         doc_id=result.get("doc_id", ""),
@@ -186,6 +186,7 @@ def ingest_file_upload_stream(
     text_splitter: str = Form("auto"),
     chunk_size: int = Form(0),
     overlap: int = Form(-1),
+    chunk_max_tokens: int = Form(0),
     product_name: str = Form(""),
     force: str = Form(""),
 ):
@@ -204,6 +205,7 @@ def ingest_file_upload_stream(
                 text_splitter=(None if text_splitter in ("auto", "", "null") else text_splitter),
                 chunk_size=(None if chunk_size <= 0 else chunk_size),
                 overlap=(None if overlap < 0 else overlap),
+                chunk_max_tokens=(None if chunk_max_tokens <= 0 else chunk_max_tokens),
                 product_name=(product_name.strip() or None),
                 force=(str(force).lower() in ("1", "true", "yes")))
             q.put({"type": "done", "ok": ok, "doc_id": result.get("doc_id", ""),
@@ -235,6 +237,7 @@ def ingest_preview_upload(
     text_splitter: str = Form("structured"),
     chunk_size: int = Form(0),
     overlap: int = Form(-1),
+    chunk_max_tokens: int = Form(0),
 ):
     """上传前"预览切块"(不写库、不发嵌入):同一文件按所选解析+切块方式切片,返回目录树 + 切块内容。
     供上传页「预览切块→确认并索引」复用,避免二次解析。"""
@@ -244,7 +247,8 @@ def ingest_preview_upload(
             path, parser,
             text_splitter=(None if text_splitter in ("auto", "", "null") else text_splitter),
             chunk_size=(None if chunk_size <= 0 else chunk_size),
-            overlap=(None if overlap < 0 else overlap))
+            overlap=(None if overlap < 0 else overlap),
+            chunk_max_tokens=(None if chunk_max_tokens <= 0 else chunk_max_tokens))
         return UploadPreviewResponse(ok=ok, err=err, **{k: result.get(k) for k in (
             "doc_type", "parser", "text_splitter", "chunk_count", "chunk_size",
             "overlap", "outline", "chunks")})
