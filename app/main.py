@@ -60,9 +60,11 @@ async def _access_log(request: Request, call_next):
     resp = None
     try:
         resp = await call_next(request)
-    except Exception:
-        _emit(500, int((time.time() - _start) * 1000), "EXCEPTION",
+    except Exception as e:
+        # 未处理异常:访问行要带上"是什么异常"(别再只写 EXCEPTION),并另记完整堆栈供诊断
+        _emit(500, int((time.time() - _start) * 1000), f"EXCEPTION {type(e).__name__}: {e}",
               _sid_from_path(request.url.path), _user_from_token(request), request.url.path, request.method)
+        logging.getLogger("insurance.agent").exception("http %s %s 未处理异常", request.method, request.url.path)
         raise
 
     _status = getattr(resp, "status_code", "?")
