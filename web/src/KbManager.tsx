@@ -387,6 +387,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
 
       {view === "upload" && (
         <div className="kb-body">
+          {(uMode !== "file" || !uPreview) && (
           <div className="kb-form">
             <datalist id="kb-recent-version">{recentGet("version") && <option value={recentGet("version")} />}</datalist>
             <datalist id="kb-recent-title">{recentGet("title") && <option value={recentGet("title")} />}</datalist>
@@ -486,18 +487,10 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             )}
             <div className="kb-form-actions">
               {uMode === "file" ? (
-                uPreview ? (
-                  <>
-                    <button className="kb-btn kb-btn-primary" onClick={() => handleCommit()} disabled={uBusy}>{uBusy ? "上传中…" : "上传至知识库"}</button>
-                    <button className="kb-btn" onClick={() => setUPreview(null)}>返回重新配置</button>
-                    <button className="kb-btn" onClick={resetUpload}>取消</button>
-                  </>
-                ) : (
-                  <>
-                    <button className="kb-btn kb-btn-primary" onClick={handleChunk} disabled={uPreviewBusy || !uProductName.trim() || !uFile}>{uPreviewBusy ? "切块中…" : "开始切块"}</button>
-                    <button className="kb-btn" onClick={resetUpload}>取消</button>
-                  </>
-                )
+                <>
+                  <button className="kb-btn kb-btn-primary" onClick={handleChunk} disabled={uPreviewBusy || !uProductName.trim() || !uFile}>{uPreviewBusy ? "切块中…" : "开始切块"}</button>
+                  <button className="kb-btn" onClick={resetUpload}>取消</button>
+                </>
               ) : (
                 <>
                   <button className="kb-btn kb-btn-primary" onClick={() => handleUpload()} disabled={uBusy || !uProductName.trim()}>{uBusy ? "上传中…" : "上传到知识库"}</button>
@@ -513,7 +506,23 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
             )}
 
           </div>
+          )}
           {uMode === "file" && uPreview && (
+            <div className="kb-preview-wrap">
+            <div className="kb-preview-top">
+              <span className="kb-preview-title">预览 · {uPreview.chunk_count} 块 ({uPreview.text_splitter})</span>
+              <div className="kb-preview-actions">
+                <button className="kb-btn kb-btn-primary" onClick={() => handleCommit()} disabled={uBusy}>{uBusy ? "上传中…" : "上传至知识库"}</button>
+                <button className="kb-btn" onClick={() => setUPreview(null)}>返回重新配置</button>
+                <button className="kb-btn" onClick={resetUpload}>取消</button>
+              </div>
+            </div>
+            {uBusy && uProg && (
+              <div className="kb-progress">
+                <div className="kb-progress-label">{progLabel(uProg)}</div>
+                <div className="kb-progress-track"><div className="kb-progress-fill" style={{ width: progPct(uProg) + "%" }} /></div>
+              </div>
+            )}
             <div ref={previewRef} className="cmp-upload-split">
               <div className="cmp-tree-pane">
                 <div className="cmp-pane-head">
@@ -555,6 +564,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   )) : <div className="cmp-hint">该目录项下暂无切块</div>}
                 </div>
               </div>
+            </div>
             </div>
           )}
         </div>
