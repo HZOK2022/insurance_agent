@@ -413,7 +413,7 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .kb-field-block .kb-form-textarea { display: block; width: 100%; }
 .kb-note { grid-column: 1 / -1; margin: 2px 0 0; }
 .kb-hint { grid-column: 1 / -1; }
-.kb-form-actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; }
+.kb-form-actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; justify-content: flex-end; }
 .kb-progress { grid-column: 1 / -1; }
 .kb-form-actions { display: flex; gap: 8px; margin-top: 4px; }
 /* ---- KB 文件上传 + 解析对比(D57 UI)---- */
