@@ -58,7 +58,8 @@ class LoggingFormatterTest(unittest.TestCase):
         out = f.format(_record("app.demo", logging.INFO, "检索命中 %s", "重疾险100种"))
         self.assertIn("重疾险100种", out)   # ensure_ascii=False,中文原样
 
-    def test_setup_dual_format_console_text_file_json(self):
+    def test_setup_dual_format_console_text_file_text(self):
+        # 默认:控制台 + 文件都人读文本(tail .log 即可排查)
         lg = logging.getLogger()
         saved = [h for h in lg.handlers]
         for h in list(lg.handlers):
@@ -72,7 +73,39 @@ class LoggingFormatterTest(unittest.TestCase):
             self.assertTrue(cons, "控制台 handler 缺失")
             self.assertIsInstance(cons[0].formatter, ConsoleFormatter, "控制台应为人读文本")
             self.assertTrue(files, "文件 handler 缺失")
-            self.assertIsInstance(files[0].formatter, JsonFormatter, "文件应为 JSON")
+            self.assertIsInstance(files[0].formatter, ConsoleFormatter, "文件应为人读文本(tail .log 可读)")
+        finally:
+            for h in list(lg.handlers):
+                lg.removeHandler(h)
+                try:
+                    h.close()
+                except Exception:
+                    pass
+            for h in saved:
+                lg.addHandler(h)
+            for p in os.listdir(d):
+                try:
+                    os.remove(os.path.join(d, p))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+    def test_setup_file_json_when_requested(self):
+        # 传 file_format="json" 时文件仍为 JSON(供日志采集器)
+        lg = logging.getLogger()
+        saved = [h for h in lg.handlers]
+        for h in list(lg.handlers):
+            lg.removeHandler(h)
+        lg.__dict__.pop("_dsh_setup", None)
+        d = tempfile.mkdtemp()
+        try:
+            setup_logging("INFO", log_dir=d, backup_count=1, file_format="json")
+            files = [h for h in lg.handlers if isinstance(h, logging.FileHandler)]
+            self.assertTrue(files)
+            self.assertIsInstance(files[0].formatter, JsonFormatter)
         finally:
             for h in list(lg.handlers):
                 lg.removeHandler(h)

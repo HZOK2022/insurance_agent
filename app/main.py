@@ -1,6 +1,8 @@
 """App 入口:仅初始化 FastAPI、注册路由、托管前端 dist。不写任何接口。"""
 import logging
 import os
+import re
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +14,28 @@ from app.api.ratelimit import RateLimiter
 from app.util.logging import setup_logging
 
 _rate = RateLimiter()
+
+# 访问日志:每个 /api 请求打一行(方法/路径/状态/耗时 + 会话 id),供 tail .log 排查"接口报错是鉴权/参数/500"
+def _sid_from_path(path: str) -> str:
+    m = re.search(r"/([0-9a-f]{12})(?:/|$)", path)
+    return m.group(1) if m else ""
+
+async def _access_log(request: Request, call_next):
+    _start = time.time()
+    resp = None
+    try:
+        resp = await call_next(request)
+        return resp
+    finally:
+        try:
+            _sid = _sid_from_path(request.url.path)
+            _dur = int((time.time() - _start) * 1000)
+            logging.getLogger("insurance.agent").info(
+                "http sid=%s %s %s -> %s %dms", _sid, request.method, request.url.path,
+                getattr(resp, "status_code", "?"), _dur,
+                extra={"trace_id": _sid or None, "session_id": _sid or None})
+        except Exception:
+            pass
 
 
 def _token_valid(cfg, request: Request) -> bool:
@@ -101,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(kb.router)
     app.include_router(memory.router)
     app.middleware("http")(_auth_and_ratelimit)
+    app.middleware("http")(_access_log)   # 最外层访问日志:能记录到鉴权/限流/参数/500 等拒绝
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
     auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)
     # 启动对账:补齐进程崩溃/断电遗留的悬挂 turn(补 turn_end reason=interrupted;失败不阻断启动)

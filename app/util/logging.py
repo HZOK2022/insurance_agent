@@ -65,8 +65,10 @@ def _quiet_third_party() -> None:
 
 
 def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
-                  backup_count: int = 30, console_format: str = "text") -> None:
-    """配置根 logger:控制台(默认人读文本;console_format='json' 时也用 JSON)+ 文件(JSON,滚动)。
+                  backup_count: int = 30, console_format: str = "text",
+                  file_format: str = "text") -> None:
+    """配置根 logger。默认控制台 + 文件都用**人读文本**(tail .log 即可排查);
+    传 console_format/file_format="json" 可切回 JSON(供日志采集器/机器解析)。
 
     按天滚动:每天生成一个新文件,保留 backup_count 天。重复调用只生效一次。
     """
@@ -75,8 +77,8 @@ def setup_logging(level: str = "INFO", log_dir: str = "data/logs",
         return
     lg.setLevel(getattr(logging, level.upper(), logging.INFO))
     _quiet_third_party()
-    file_fmt = JsonFormatter()
     console_fmt = ConsoleFormatter() if console_format == "text" else JsonFormatter()
+    file_fmt = ConsoleFormatter() if file_format == "text" else JsonFormatter()
     ch = logging.StreamHandler()
     ch.setFormatter(console_fmt)
     lg.addHandler(ch)

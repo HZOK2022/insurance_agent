@@ -26,6 +26,15 @@ from app.compaction.compactor import (
 logger = logging.getLogger("insurance.agent")
 
 
+def _summarize_args(args: Any, cap: int = 200) -> str:
+    """工具参数摘要:转成短 JSON,超长截断(日志可读,不落全文)。"""
+    try:
+        s = json.dumps(args or {}, ensure_ascii=False)
+    except Exception:
+        s = str(args or {})
+    return s if len(s) <= cap else s[:cap] + f"…(+{len(s) - cap}字)"
+
+
 # ---- 工具参数校验(契约加固)----
 # 为什么需要:handler 里普遍是 `(args or {}).get("query") or ""` 这类兜底取值,模型把参数名
 # 写错(如 q/keyword)不会报错,而是带着空值**真的去执行** —— 检索空串照样 embedding、照样
@@ -457,6 +466,12 @@ class AgentLoop:
                                 content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
+                        # 排查摘要:每个工具调用落一行日志(参数/命中块数/ok/错误码),全文进 events
+                        logger.info(
+                            "step tool sid=%s tool=%s ok=%s code=%s args=%s out=%d块",
+                            session_id, name, _tok, _terr, _summarize_args(args),
+                            len(reference) if isinstance(reference, list) else 0,
+                            extra={"session_id": session_id, "trace_id": session_id, "tool": name})
                         # D55:引用编号每轮 turn-local —— 检索内容保持 handler 的当轮编号
                         # (search_knowledge 用 start_idx 从 1 连续编号),不再用会话全局编号重排(D35 取消)。
                         # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
@@ -484,6 +499,10 @@ class AgentLoop:
                         references_map.setdefault(name, reference)
                         # 工具返回"类 chunk 列表" → 以 retrieval 事件透出(前端溯源 sources 用);业务无关:非列表则不发
                         if isinstance(reference, list) and reference and isinstance(reference[0], dict):
+                            logger.info("检索 sid=%s query=%s hits=%d", session_id,
+                                        str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
+                                        len(reference),
+                                        extra={"session_id": session_id, "trace_id": session_id})
                             yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
                     if _stopped:
                         break
@@ -494,6 +513,10 @@ class AgentLoop:
                 # D55:回答引用按当轮 references 顺序解析(present_answer 平铺编号 1..N)——
                 # 模型只见过当轮编号(检索内容当轮从 1 起),上下文回答(无检索)无块可解析 → 无角标。
                 blocks, citations = self.present_answer(answer_text or "（无回答）", references)
+                logger.info("回答 sid=%s chars=%d cites=%d head=%s", session_id,
+                            len(answer_text or ""), len(citations or []),
+                            (answer_text or "").strip().replace("\n", " ")[:60],
+                            extra={"session_id": session_id, "trace_id": session_id})
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
                 assistant_emitted = True
