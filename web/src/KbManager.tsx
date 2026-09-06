@@ -51,6 +51,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uChunkSize, setUChunkSize] = useState(1000)
   const [uOverlap, setUOverlap] = useState(200)
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
+  const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -134,14 +135,12 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
     }
   }
 
-  // D70/72:一键「上传到知识库」——解析+切块(展示目录/切块)→ 写库+索引(SSE 进度)。
-  // 同名产品内容不同且未 force → 先弹"是否覆盖"确认;force=确认后覆盖写入。
-  const handleUploadFile = async (opts?: { force?: boolean }) => {
+  // ① 开始切块:解析 + 切块(不写库、不发嵌入),展示目录/切块内容供确认;可返回改参数再切
+  const handleChunk = async () => {
     if (!uFile) { flash("请选择文件", false); return }
     if (!uProductName.trim()) { flash("请填产品名称", false); return }
-    setUBusy(true); setUPreview(null)
+    setUPreviewBusy(true); setUPreview(null)
     try {
-      // 1. 解析 + 切块(不写库):返回目录树 + 切块内容,供展示 + 写库复用(不二次解析)
       const fd = new FormData()
       fd.append("file", uFile)
       fd.append("parser", uParser)
@@ -149,21 +148,33 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       if (uChunkSize > 0) fd.append("chunk_size", String(uChunkSize))
       if (uOverlap >= 0) fd.append("overlap", String(uOverlap))
       const pv = await previewKbUpload(fd)
-      if (!pv.ok) { flash("解析失败: " + (pv.err || "解析失败"), false); return }
+      if (!pv.ok) { flash("切块失败: " + (pv.err || "解析失败"), false); return }
       setUPreview(pv)
-      // 2. 写库 + 嵌入 + 索引(SSE 进度)
+      flash(`切块完成: ${pv.chunk_count} 块,请检查后上传`)
+    } catch (e: any) {
+      flash("切块失败: " + (e?.message || ""), false)
+    } finally { setUPreviewBusy(false) }
+  }
+
+  // ② 上传至知识库:把预览得到的 chunks/outline 写库+索引(SSE 进度);同名产品内容不同才弹覆盖
+  const handleCommit = async (opts?: { force?: boolean }) => {
+    if (!uPreview) { flash("请先开始切块", false); return }
+    if (!uPreview.chunks.length) { flash("切块为空,无法上传", false); return }
+    if (!uProductName.trim()) { flash("请填产品名称", false); return }
+    setUBusy(true)
+    try {
       setUProg({ stage: "chunked", done: 0, total: 1 })
       const r = await commitKbUpload({
         product_name: uProductName.trim(),
         title: uTitle || uProductName.trim(),
         version: uVersion || "v1",
         product_category: uCategory || undefined,
-        doc_type: pv.doc_type || "policy_pdf",
+        doc_type: uPreview.doc_type || "policy_pdf",
         source: "upload-preview/" + uProductName.trim(),
         parser: uParser,
-        text_splitter: pv.text_splitter,
-        outline: pv.outline,
-        chunks: pv.chunks,
+        text_splitter: uPreview.text_splitter,
+        outline: uPreview.outline,
+        chunks: uPreview.chunks,
         force: opts?.force,
       }, (p) => setUProg(p))
       setUProg(null)
@@ -173,7 +184,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
         openChunks(r.doc_id)   // 直接打开该文档「查看」:看目录+切块
       } else if (r.conflict && !opts?.force) {
         const go = window.confirm(r.message + "\n\n确定覆盖该产品的旧文档？")
-        if (go) { await handleUploadFile({ force: true }); return }
+        if (go) { await handleCommit({ force: true }); return }
         flash("已取消")
       } else flash(r.message, false)
     } catch (e: any) {
@@ -425,10 +436,18 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
 
             <div className="kb-form-actions">
               {uMode === "file" ? (
-                <>
-                  <button className="kb-btn kb-btn-primary" onClick={() => handleUploadFile()} disabled={uBusy || !uProductName.trim() || !uFile}>{uBusy ? "上传中…" : "上传到知识库"}</button>
-                  <button className="kb-btn" onClick={resetUpload}>取消</button>
-                </>
+                uPreview ? (
+                  <>
+                    <button className="kb-btn kb-btn-primary" onClick={() => handleCommit()} disabled={uBusy}>{uBusy ? "上传中…" : "上传至知识库"}</button>
+                    <button className="kb-btn" onClick={() => setUPreview(null)}>返回重新配置</button>
+                    <button className="kb-btn" onClick={resetUpload}>取消</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="kb-btn kb-btn-primary" onClick={handleChunk} disabled={uPreviewBusy || !uProductName.trim() || !uFile}>{uPreviewBusy ? "切块中…" : "开始切块"}</button>
+                    <button className="kb-btn" onClick={resetUpload}>取消</button>
+                  </>
+                )
               ) : (
                 <>
                   <button className="kb-btn kb-btn-primary" onClick={() => handleUpload()} disabled={uBusy || !uProductName.trim()}>{uBusy ? "上传中…" : "上传到知识库"}</button>
