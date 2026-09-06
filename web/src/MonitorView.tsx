@@ -1,8 +1,9 @@
 // -*- coding: utf-8 -*-
 // 观测大盘(对标 Langfuse 的 trace explorer + 大盘):把 /api/metrics(全局聚合)
-// + /api/observability(按会话明细)渲染成一张可看的监控页。从用户菜单「观测」进入。
+// + /api/observability(按会话明细) + /api/metrics/timeseries(时间序列走势)
+// 渲染成一张可看的监控页。从用户菜单「观测」进入。
 import { useEffect, useState } from "react"
-import { getMetrics, getObservability, type GlobalMetrics } from "./lib/api"
+import { getMetrics, getObservability, getTimeseries, type GlobalMetrics, type TimeseriesBucket } from "./lib/api"
 
 const fmt = (n?: number | null): string => (n == null ? "—" : String(n))
 const fmtTok = (n?: number | null): string => {
@@ -18,6 +19,11 @@ const fmtDur = (ms?: number | null): string => {
   return (s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s))) + "s"
 }
 const fmtCost = (c?: number | null): string => (c == null ? "—" : "$" + Number(c).toFixed(4))
+const fmtBucket = (b: string, gran: string): string => {
+  // '2026-09-06T15:00:00+00:00' → day:'09-06'  hour:'09-06 15:00'
+  const d = b.slice(0, 10).slice(5) // MM-DD
+  return gran === "day" ? d : d + " " + b.slice(11, 16)
+}
 
 // 阈值(与 scripts/check_metrics.py 默认一致):超了标红
 const TH = { errRate: 0.05, errCount: 1, p95: 20000, tok: 5_000_000, empty: 0.10, lowconf: 0.30, retry: 5, degrade: 1, guard: 1, toolfail: 5 }
@@ -32,15 +38,51 @@ function card(cls: "ok" | "warn" | "bad", label: string, val: string, hint?: str
   )
 }
 
+// 单系列迷你走势图(纯 SVG,无依赖):label 轴标签,points[{x, v}],unit 单位
+function SparkLine({ label, points, unit, gran }: { label: string; points: { x: string; v: number }[]; unit: string; gran: string }) {
+  if (!points.length) return null
+  const W = 620, H = 170, padL = 50, padR = 12, padT = 14, padB = 30
+  const iw = W - padL - padR, ih = H - padT - padB
+  const max = Math.max(...points.map((p) => p.v), 1)
+  const yMax = max * 1.06
+  const xs = points.map((_, i) => padL + (points.length === 1 ? iw / 2 : (i / (points.length - 1)) * iw))
+  const ys = points.map((p) => padT + ih - (p.v / yMax) * ih)
+  const path = xs.map((x, i) => (i ? "L" : "M") + x.toFixed(1) + "," + ys[i].toFixed(1)).join(" ")
+  const gridLv = [0, 0.25, 0.5, 0.75, 1]
+  const xTick = (i: number) => {
+    const n = points.length
+    if (n <= 2) return i === 0 || i === n - 1
+    if (n <= 8) return i % Math.ceil(n / 4) === 0
+    return i % Math.ceil(n / 6) === 0 || i === n - 1
+  }
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mon-ts-svg" role="img" aria-label={label}>
+      <text x={padL} y={padT - 2} className="mon-ts-title">{label} · {unit}</text>
+      {gridLv.map((t) => {
+        const y = padT + (1 - t) * ih
+        return (
+          <g key={t}>
+            <line x1={padL} y1={y} x2={W - padR} y2={y} className="mon-ts-grid" />
+            <text x={padL - 5} y={y + 3} textAnchor="end" className="mon-ts-ylab">{String(Math.round(t * yMax))}</text>
+          </g>
+        )
+      })}
+      {xs.map((x, i) =>
+        xTick(i) ? <text key={i} x={x} y={H - 8} textAnchor="middle" className="mon-ts-xlab">{fmtBucket(points[i].x, gran)}</text> : null
+      )}
+      <path d={path} className="mon-ts-line" fill="none" />
+      {xs.map((x, i) => <circle key={i} cx={x} cy={ys[i]} r={2.2} className="mon-ts-dot" />)}
+    </svg>
+  )
+}
+
 export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: (sid: string) => void; onBack: () => void }) {
   const [m, setM] = useState<GlobalMetrics | null>(null)
   const [rows, setRows] = useState<any[]>([])
+  const [ts, setTs] = useState<TimeseriesBucket[]>([])
+  const [gran, setGran] = useState<"day" | "hour">("day")
   const [err, setErr] = useState("")
   const [tick, setTick] = useState(0)
-  const [q, setQ] = useState("")   // trace_id / 标题 检索
-  const copy = (t: string) => { try { navigator.clipboard?.writeText(t) } catch { /* noop */ } }
-  const openExact = () => { const s = q.trim(); if (!s) return; const hit = rows.find((r) => r.session_id === s); if (hit) onOpenSession(hit.session_id) }
-  const filtered = rows.filter((r) => !q.trim() || (r.session_id || "").includes(q.trim()) || String(r.title || "").toLowerCase().includes(q.trim().toLowerCase()))
 
   useEffect(() => {
     let alive = true
@@ -55,6 +97,16 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
     })()
     return () => { alive = false }
   }, [tick])
+
+  useEffect(() => {
+    let alive = true
+    getTimeseries(gran).then((r) => { if (alive) setTs(r?.series || []) }).catch(() => { if (alive) setTs([]) })
+    return () => { alive = false }
+  }, [gran, tick])
+
+  const hasCost = ts.some((b) => b.cost != null)
+  const latPts = ts.map((b) => ({ x: b.bucket, v: b.p95_latency_ms ?? b.avg_latency_ms ?? 0 }))
+  const metPts = ts.map((b) => ({ x: b.bucket, v: hasCost ? (b.cost ?? 0) : b.total_tokens }))
 
   return (
     <div className="mon-view">
@@ -76,10 +128,10 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
             {card((m.tokens.prompt + m.tokens.completion) >= TH.tok ? "warn" : "ok", "累计token", fmtTok(m.tokens.prompt + m.tokens.completion),
               "prompt " + fmtTok(m.tokens.prompt) + " / comp " + fmtTok(m.tokens.completion))}
             {card("ok", "成本", fmtCost(m.tokens.cost), m.tokens.cost == null ? "未配单价" : "")}
-            {card((m.retrieval.total > 0 && m.retrieval.no_hits / m.retrieval.total) >= TH.empty ? "bad" : "ok", "检索空结果率",
+            {card((m.retrieval.total > 0 ? m.retrieval.no_hits / m.retrieval.total : 0) >= TH.empty ? "bad" : "ok", "检索空结果率",
               m.retrieval.total ? ((m.retrieval.no_hits / m.retrieval.total) * 100).toFixed(1) + "%" : "—",
               fmt(m.retrieval.no_hits) + "/" + fmt(m.retrieval.total) + " 空")}
-            {card((m.retrieval.total > 0 && m.retrieval.low_conf / m.retrieval.total) >= TH.lowconf ? "bad" : "ok", "检索低置信率",
+            {card((m.retrieval.total > 0 ? m.retrieval.low_conf / m.retrieval.total : 0) >= TH.lowconf ? "bad" : "ok", "检索低置信率",
               m.retrieval.total ? ((m.retrieval.low_conf / m.retrieval.total) * 100).toFixed(1) + "%" : "—",
               fmt(m.retrieval.low_conf) + "/" + fmt(m.retrieval.total) + " 低置信")}
             {card("ok", "引用率", m.citations.assistant ? ((m.citations.with_cite / m.citations.assistant) * 100).toFixed(0) + "%" : "—",
@@ -102,6 +154,21 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
             </>
           )}
 
+          {/* 时间序列走势(成本/延迟/token) */}
+          <div className="mon-sec-head">时间序列走势 {gran === "day" ? "按天" : "按小时"}
+            <span className="mon-ts-toggle">
+              <button className={"audit-btn" + (gran === "day" ? " mon-ts-on" : "")} onClick={() => setGran("day")}>天</button>
+              <button className={"audit-btn" + (gran === "hour" ? " mon-ts-on" : "")} onClick={() => setGran("hour")}>小时</button>
+            </span>
+            {!hasCost && <span className="mon-ts-note">未配单价,成本线以 token 替代</span>}
+          </div>
+          {ts.length ? (
+            <div className="mon-ts">
+              <SparkLine label="延迟 P95(毫秒)" points={latPts} unit="ms" gran={gran} />
+              <SparkLine label={hasCost ? "成本(美元)" : "总 token"} points={metPts} unit={hasCost ? "$" : "tok"} gran={gran} />
+            </div>
+          ) : <div className="mon-ts-empty">暂无时间序列数据</div>}
+
           {/* 坏例 trace_id 样本(点 trace_id 可直接进该会话轨迹) */}
           {m.samples && (m.samples.error_turns?.length || m.samples.tool_failures?.length || m.samples.degradations?.length) ? (
             <>
@@ -117,22 +184,14 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
         </>
       )}
 
-      {/* 按会话明细 + trace_id 检索 */}
-      <div className="mon-sec-head">按会话(trace_id 即会话 id,点行进该会话轨迹)</div>
-      <div className="mon-search-row">
-        <input className="mon-search" placeholder="按 trace_id / 标题 检索…" value={q} onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") openExact() }} />
-        <button className="audit-btn" onClick={openExact}>打开该 trace_id</button>
-      </div>
-      {filtered.length === 0 && !err && <div className="hint">暂无会话数据(先跑一轮问答再来)</div>}
+      {/* 按会话明细 */}
+      <div className="mon-sec-head">按会话</div>
+      {rows.length === 0 && !err && <div className="hint">暂无会话数据(先跑一轮问答再来)</div>}
       <div className="mon-table">
-        <div className="mon-tr mon-tr-head"><span>会话(trace_id)</span><span>轮</span><span>token</span><span>成本</span><span>错误</span><span>重试</span><span>平均TTFT</span></div>
-        {filtered.map((r, i) => (
+        <div className="mon-tr mon-tr-head"><span>会话</span><span>轮</span><span>token</span><span>成本</span><span>错误</span><span>重试</span><span>平均TTFT</span></div>
+        {rows.map((r, i) => (
           <div key={i} className="mon-tr" onClick={() => onOpenSession(r.session_id)} title={"trace " + r.session_id}>
-            <span className="mon-td-title">
-              <span className={"mon-tid" + (r.errors > 0 ? " bad" : "")} title={"trace_id " + r.session_id + "(点击复制)"} onClick={(e) => { e.stopPropagation(); copy(r.session_id) }}>trace:{String(r.session_id).slice(0, 8)}</span>
-              <span className="mon-td-name">{r.title || "—"}</span>
-            </span>
+            <span className="mon-td-title">{(r.title || r.session_id || "—").slice(0, 24)}</span>
             <span>{fmt(r.turns)}</span>
             <span>{fmtTok(r.total_tokens)}</span>
             <span>{fmtCost(r.cost)}</span>

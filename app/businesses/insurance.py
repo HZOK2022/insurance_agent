@@ -147,6 +147,9 @@ SYSTEM = (
     "- 涉及保费/年缴/多少钱(某年龄某方案):【必须】调用 calculate_premium 算确切金额,不要用 search_knowledge 找费率、更不要自己估算。入参:product(产品名或key)、age、items=[{item_key,dims?,coverage?}]。示例:算'0元免赔计划一'→{item_key:'plan',dims:{deductible:'0元',plan_variant:'计划一'}};加'重疾10万'→{item_key:'critical',dims:{gender:'男'},coverage:100000};按结果引用角标。\n"
     "- 用户明确指定险种(医疗险/重疾险/意外险/…):检索把该险种写进 query,并在调用 search_knowledge 时传 category(如 category='医疗险')以圈定范围;比较型(如 医疗险 vs 重疾险)则两类都检索再比。\n"
     "- 用户明确点名产品(如'尊享e生2025'):检索把产品名写进 query,并在调用 search_knowledge 时传 product(如 product='尊享e生2025')以圈定范围;先看检索块标注的产品名,别把别的产品的条款当成这个产品的说。\n"
+    "- **产品不明确必须先问(不要猜、不要笼统答)**:若问题必须知道**具体是哪款产品**才答得准——如保费/年缴金额、免赔额、保额、等待期、续保条件、能否报销某费用/涵盖范围、某责任免除/条款细则等——而当前**从问题本身与对话上下文都无法确定**是哪款产品,则**【不要】调用 search_knowledge / calculate_premium**,也**【不要】直接作答**(别拿某款产品的条款当答案、也别拿一类产品的通识笼统回答)。应**主动中断并追问**一句(请对方说明是哪款产品,可列出当前在售产品供选择),然后**结束本轮**。\n"
+    "- **判断\"是否依赖具体产品\"**:问的是某款产品自身的数字/条款/责任/细则(如 免赔额、保费、等待期、某费用能否报销、某病种保不保、续保条件)→ 依赖具体产品,不明确就先问;问的是保险类型概念(如 医疗险/重疾险是什么)、一般规则、产品间对比、产品清单(如 有哪些产品)→ 不绑定单一产品,**不需要**追问。\n"
+    "- **追问后继续原问题**:用户告知是哪款产品后,在**后续轮次**把\"刚确认的产品\"与\"对话里的原问题\"结合,**继续回答该原问题**,不要重复追问一遍。\n"
     "- 资料足够或这是寒暄/常识时,不要再调工具,**直接输出最终回答**。\n"
     "- **检索上限达到时收尾**:当检索次数达到上限、或已通过检索得到足够信息时,应停止继续调用工具,**基于已有资料整理最终回答**;若已达上限但仍缺部分内容,就用**已检索到的内容作答**并写明'以下为检索到的部分,完整清单以保险条款原文为准',不要声称无法回答。"
     "- 最终回答:写成要回复客户的**可读文本**(可分段;要点行用'- '开头;关键结论用**加粗**)。在引用处标 [idx](对应你**本轮检索结果**里的片段编号,每轮都从 [1] 开始,如 [1])。不要输出 JSON/代码块。\n"
@@ -338,7 +341,23 @@ def force_answer(chunks_list: list) -> tuple[list, list]:
     return [{"t": "p", "text": text}], []
 
 
+def _append_product_list(system: str) -> str:
+    """把"当前在售产品"拼进 system 末尾(纯函数,不触库)。
+
+    产品不明确需追问时,模型可据此给出可勾选的真实产品清单(而非空泛猜测)。
+    取不到产品目录则原样返回(追问仍可发生,只是不列出清单)。
+    """
+    try:
+        from app.businesses.premium import available_product_keys
+        prods = available_product_keys()
+        if prods:
+            return system + "\n【在售产品】" + "、".join(prods) + "\n"
+    except Exception:
+        return system
+    return system
+
+
 def bundle(embedder, qstore, cfg, store=None) -> dict:
-    return {"system": SYSTEM, "tools": build_tools(embedder, qstore, cfg, store=store),
+    return {"system": _append_product_list(SYSTEM), "tools": build_tools(embedder, qstore, cfg, store=store),
             "present_answer": present_answer, "force_answer": force_answer, "cfg": cfg,
             "mark_bm25_dirty": mark_bm25_dirty}

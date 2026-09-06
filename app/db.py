@@ -15,8 +15,10 @@ logger = logging.getLogger("insurance.agent")
 
 
 def dial(cfg) -> str:
-    """当前运行方言:配了 db_host → mysql,否则 sqlite。"""
-    if (getattr(cfg, "db_host", "") or "").strip():
+    """当前运行方言:DB_ENABLED=true 且 db_host 非空 → mysql,否则 sqlite。
+    DB_ENABLED 显式开关,避免只填 host 就意外切 MySQL(开发期易踩)。"""
+    if (getattr(cfg, "db_enabled", False)
+            and (getattr(cfg, "db_host", "") or "").strip()):
         return "mysql"
     return "sqlite"
 
@@ -54,20 +56,7 @@ def _sqlite_path(cfg, db_kind: str = "session") -> str:
 def get_conn(cfg, db_kind: str = "session") -> Any:
     """生产:返回 pymysql 连接(应用服务器连数据库服务器);开发/测试:返回 sqlite3 连接(对应 *.db)。"""
     if dial(cfg) == "mysql":
-        try:
-            import pymysql
-        except ImportError as e:  # pragma: no cover
-            raise RuntimeError("使用 MySQL 需安装 pymysql(pip install pymysql)") from e
-        return pymysql.connect(
-            host=(getattr(cfg, "db_host", "") or "").strip(),
-            port=int(getattr(cfg, "db_port", 3306) or 3306),
-            user=(getattr(cfg, "db_user", "") or "").strip(),
-            password=(getattr(cfg, "db_pass", "") or ""),
-            database=db_name(cfg, db_kind),
-            charset="utf8mb4",
-            autocommit=True,
-            cursorclass=pymysql.cursors.DictCursor,
-        )
+        return _mysql_conn_from_cfg(cfg, db_kind)
     # 开发/测试:SQLite
     import sqlite3
     conn = sqlite3.connect(_sqlite_path(cfg, db_kind), check_same_thread=False)
@@ -76,6 +65,24 @@ def get_conn(cfg, db_kind: str = "session") -> Any:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _mysql_conn_from_cfg(cfg, db_kind: str = "session") -> Any:
+    """单独建 pymysql 连接(给 reconnect 用)。与 get_conn mysql 分支保持一致参数。"""
+    import pymysql
+    return pymysql.connect(
+        host=(getattr(cfg, "db_host", "") or "").strip(),
+        port=int(getattr(cfg, "db_port", 3306) or 3306),
+        user=(getattr(cfg, "db_user", "") or "").strip(),
+        password=(getattr(cfg, "db_pass", "") or ""),
+        database=db_name(cfg, db_kind),
+        charset="utf8mb4",
+        autocommit=True,
+        cursorclass=pymysql.cursors.DictCursor,
+        # init_command 在每次新连接上设 session 变量,保活与超时更可控;
+        # ping(reconnect=True) 见 DB._ensure_alive
+        init_command="SET SESSION wait_timeout=600, SESSION interactive_timeout=600",
+    )
 
 
 def get_db(cfg, db_kind: str = "session") -> "DB":
@@ -100,32 +107,76 @@ class DB:
     - sql:一律写 `?` 占位符,执行时按方言 translate(mysql `?`→`%s`)。
     - 行:sqlite3.Row / pymysql DictCursor 都支持 `row["col"]`。
     - mysql autocommit=True;sqlite 靠显式 commit(兼容原逻辑)。
+    - 线程安全:FastAPI 同步端点跑线程池,pymysql 连接不支持多线程共享——
+      所有 mysql 路径的 execute/executemany/commit 加锁串行(sqlite3 本身串行,不加锁)。
     """
 
     def __init__(self, conn, cfg):
+        import threading
         self._conn = conn
         self._cfg = cfg
         self._dialect = dial(cfg)
+        self._lock = threading.Lock() if self._dialect == "mysql" else None
         # pymysql 用 cursor;sqlite3.Connection.execute 也内建 cursor
         self._cursor = conn.cursor() if self._dialect == "mysql" else None
 
     def translate(self, sql: str) -> str:
         return translate(sql, self._cfg)
 
+    def _ensure_alive(self) -> None:
+        """MySQL:连接被服务端断开后(超时/重启)下一次 query 会 InterfaceError(0,'')
+        或 ValueError('read of closed file')。这里两层防御:
+        ① 每次 execute 前 ping(reconnect=True):如连接已死,会透明重建底层 socket
+        ② 抓 socket 关闭类异常,强制重新 build 一个 pymysql 连接替换 self._conn
+        """
+        if self._dialect != "mysql":
+            return
+        try:
+            self._conn.ping(reconnect=True)
+        except Exception:  # noqa: BLE001
+            try:
+                self._conn = _mysql_conn_from_cfg(self._cfg)
+            except Exception:  # noqa: BLE001
+                # 上层 execute 会抛;store 可决定是否再试
+                pass
+
     def execute(self, sql: str, params: Any = ()):
         sql2 = translate(sql, self._cfg)
         if self._dialect == "mysql":
-            cur = self._conn.cursor()
-            cur.execute(sql2, params)
-            return cur
+            # pymysql 连接不支持多线程共享:FastAPI 线程池并发请求会交错读同一 socket,
+            # 导致 "read of closed file" / "Packet sequence number wrong"。锁内串行执行。
+            with self._lock:
+                self._ensure_alive()
+                cur = self._conn.cursor()
+                try:
+                    cur.execute(sql2, params)
+                except Exception:  # noqa: BLE001
+                    # 连接被服务端 kill / 超时断开:重建连接重试一次
+                    try:
+                        self._conn = _mysql_conn_from_cfg(self._cfg)
+                        cur = self._conn.cursor()
+                        cur.execute(sql2, params)
+                    except Exception:
+                        raise
+                return cur
         return self._conn.execute(sql2, params)
 
     def executemany(self, sql: str, seq: Any):
         sql2 = translate(sql, self._cfg)
         if self._dialect == "mysql":
-            cur = self._conn.cursor()
-            cur.executemany(sql2, seq)
-            return cur
+            with self._lock:
+                self._ensure_alive()
+                cur = self._conn.cursor()
+                try:
+                    cur.executemany(sql2, seq)
+                except Exception:  # noqa: BLE001
+                    try:
+                        self._conn = _mysql_conn_from_cfg(self._cfg)
+                        cur = self._conn.cursor()
+                        cur.executemany(sql2, seq)
+                    except Exception:
+                        raise
+                return cur
         return self._conn.executemany(sql2, seq)
 
     def commit(self):

@@ -159,9 +159,9 @@ class Config:
     qdrant_retry_base_delay_ms: int = 500
     qdrant_retry_max_delay_ms: int = 3000
     redis_url: str = "redis://:123456@101.132.61.48:6379/2"
-    # 生产两机:事实源在数据库服务器的 MySQL(应用跨网络连接);db_host 非空则用 MySQL,
+    # 生产两机:事实源在数据库服务器的 MySQL(应用跨网络连接);db_enabled=true 且 db_host 非空才走 MySQL,
     # 否则回退 SQLite(开发/测试)。全部库(会话/事件/记忆/知识/费率)都迁到 MySQL。
-    db_enabled: bool = False             # 是否启用 MySQL(与 db_host 一致;db_host 非空即可)
+    db_enabled: bool = False             # 是否启用 MySQL(显式开关,避免只填 host 就误切)
     db_host: str = ""                    # MySQL 主机(数据库服务器);空=开发用 SQLite
     db_port: int = 3306
     db_user: str = ""                    # 数据库账号(仅应用服务器部署用这一个连接,单写者)

@@ -12,7 +12,7 @@ from app.session.store import SessionStore
 
 def _mysql_cfg():
     host = os.environ.get("MYSQL_HOST", "127.0.0.1")
-    return SimpleNamespace(db_host=host, db_port=3306, db_user="root", db_pass="",
+    return SimpleNamespace(db_enabled=True, db_host=host, db_port=3306, db_user="root", db_pass="",
                            db_name="insurance_agent", knowledge_db_name="insurance_knowledge",
                            premium_db_name="insurance_premium", sqlite_path="")
 

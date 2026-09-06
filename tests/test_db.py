@@ -11,7 +11,7 @@ from app import db
 
 
 def _cfg(**kw):
-    d = dict(db_host="", db_port=3306, db_user="", db_pass="", db_name="agent",
+    d = dict(db_enabled=True, db_host="", db_port=3306, db_user="", db_pass="", db_name="agent",
              knowledge_db_name="", premium_db_name="", sqlite_path="")
     d.update(kw)
     return SimpleNamespace(**d)

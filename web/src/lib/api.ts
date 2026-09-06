@@ -78,6 +78,16 @@ export interface GlobalMetrics {
 }
 export const getMetrics = () => json<GlobalMetrics>('/api/metrics')
 
+// ---- 观测大盘 · 时间序列(成本/延迟/token 走势,自建 "Langfuse 大盘" 数据源)----
+export interface TimeseriesBucket {
+  bucket: string; turns: number; errors: number;
+  prompt_tokens: number; completion_tokens: number; total_tokens: number;
+  cost: number | null; avg_latency_ms: number | null; p95_latency_ms: number | null; retries: number
+}
+export interface TimeseriesResp { granularity: string; series: TimeseriesBucket[] }
+export const getTimeseries = (granularity: 'hour' | 'day' = 'hour') =>
+  json<TimeseriesResp>('/api/metrics/timeseries?granularity=' + granularity)
+
 
 // 显式"停止":置后端中止位(不是直接断流——断流后 Starlette 不保证 close 底层生成器,后端会白跑完这一轮)。
 // 置位后后端在下一个 step/chunk 边界收尾并照常推 turn_end,前端因此能拿到完整终结事件。

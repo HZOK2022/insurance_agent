@@ -11,6 +11,9 @@ usage 事件取,单价未配置则成本为 None)。
 """
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timedelta
+
 from app.session.store import SessionStore
 
 
@@ -128,3 +131,84 @@ def overall_metrics(store: SessionStore, *, price_in_per_1m: float = 0.0,
         tot["avg_tps"] = round(tot["avg_tps"] / n, 1)
         tot["cost"] = round(tot["cost"], 6)
     return {"totals": tot, "per_session": per}
+
+
+def _parse_ts(ts: str | None) -> datetime | None:
+    """把 ISO8601(带时区)时间戳解析为 aware datetime;失败返回 None。"""
+    if not ts:
+        return None
+    s = ts
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _bucket_start(dt: datetime, granularity: str) -> datetime:
+    if granularity == "day":
+        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 默认 hour
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def timeseries_metrics(store: SessionStore, *, granularity: str = "hour",
+                       price_in_per_1m: float = 0.0, price_out_per_1m: float = 0.0) -> list[dict]:
+    """按时间分桶聚合:每桶 turns / errors / tokens / cost / 延迟(avg、p95)。
+
+    granularity='hour'|'day'。只从 events(事实源)派生,绝不写历史。空桶按首个与末个
+    有数据桶之间的区间补齐(0 值),便于前端画"走势",不漏时空档。
+    """
+    if granularity not in ("hour", "day"):
+        granularity = "hour"
+
+    zero = lambda: {"turns": 0, "errors": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                    "cost": 0.0, "lat": [], "retries": 0}
+    buckets: dict[datetime, dict] = defaultdict(zero)
+
+    for s in (store.list_sessions() or []):
+        for turn in project_turn_metrics(store, s["id"], price_in_per_1m=price_in_per_1m,
+                                         price_out_per_1m=price_out_per_1m):
+            dt = _parse_ts(turn.get("ts"))
+            if dt is None:
+                continue
+            b = buckets[_bucket_start(dt, granularity)]
+            b["turns"] += 1
+            if turn.get("severity") == "error":
+                b["errors"] += 1
+            b["prompt_tokens"] += int(turn.get("prompt_tokens") or 0)
+            b["completion_tokens"] += int(turn.get("completion_tokens") or 0)
+            if turn.get("cost") is not None:
+                b["cost"] += float(turn["cost"])
+            if turn.get("elapsed_ms") is not None:
+                b["lat"].append(float(turn["elapsed_ms"]))
+            b["retries"] += int(turn.get("retries") or 0)
+
+    if not buckets:
+        return []
+    keys = sorted(buckets.keys())
+    step = timedelta(days=1) if granularity == "day" else timedelta(hours=1)
+
+    out: list[dict] = []
+    cur = keys[0]
+    while cur <= keys[-1]:
+        b = buckets[cur]
+        lat = sorted(b["lat"])
+        avg_lat = round(sum(lat) / len(lat), 1) if lat else None
+        p95_lat = round(lat[max(0, int(len(lat) * 0.95) - 1)], 1) if lat else None
+        total = b["prompt_tokens"] + b["completion_tokens"]
+        out.append({
+            "bucket": cur.isoformat(),
+            "turns": b["turns"],
+            "errors": b["errors"],
+            "prompt_tokens": b["prompt_tokens"],
+            "completion_tokens": b["completion_tokens"],
+            "total_tokens": total,
+            "cost": round(b["cost"], 6) if b["cost"] else None,
+            "avg_latency_ms": avg_lat,
+            "p95_latency_ms": p95_lat,
+            "retries": b["retries"],
+        })
+        cur += step
+    return out

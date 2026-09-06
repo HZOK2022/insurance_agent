@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from app.audit.queries import history_qa, export_session, audit_overview
-from app.observability.metrics import project_turn_metrics, session_metrics, overall_metrics, estimate_cost, severity_of
+from app.observability.metrics import project_turn_metrics, session_metrics, overall_metrics, timeseries_metrics, estimate_cost, severity_of
 from app.session.store import SessionStore
 
 
@@ -139,6 +139,56 @@ class ObservabilityTest(unittest.TestCase):
         self.assertEqual(severity_of("completed"), "info")
         self.assertEqual(severity_of("error"), "error")
         self.assertEqual(severity_of(None, ok=False), "error")
+
+
+class TimeseriesTest(unittest.TestCase):
+    def setUp(self):
+        self.db = tempfile.mktemp(suffix=".db")
+        self.store = SessionStore(self.db)
+        self.sid = self.store.create_session("u1")["id"]
+        _fill(self.store, self.sid)
+
+    def tearDown(self):
+        try:
+            self.store.close()
+        except Exception:
+            pass
+        os.remove(self.db)
+
+    def test_buckets_aggregate(self):
+        for gran in ("hour", "day"):
+            s = timeseries_metrics(self.store, granularity=gran)
+            # 同一测试时间内的两个 turn 落在同一桶(跨小时/天边界概率可忽略)
+            nz = [x for x in s if x["turns"] > 0]
+            self.assertGreaterEqual(len(nz), 1)
+            sum_ = lambda k: sum(int(x[k] or 0) for x in nz)
+            self.assertEqual(sum_("turns"), 2)
+            self.assertEqual(sum_("errors"), 1)
+            self.assertEqual(sum_("prompt_tokens"), 150)
+            self.assertEqual(sum_("completion_tokens"), 30)
+            self.assertEqual(sum_("total_tokens"), 180)
+            self.assertEqual(sum_("retries"), 1)
+            self.assertEqual(sum_("cost"), 0.0)  # 未配单价 → 每桶 cost 为 None,sum 为 0
+            if len(nz) == 1:  # 正常单桶:验证 p95(延迟 [800,1500] 的 p95≈第 0 个)
+                self.assertEqual(nz[0]["p95_latency_ms"], 800)
+
+    def test_cost_when_priced(self):
+        s = timeseries_metrics(self.store, granularity="hour", price_in_per_1m=1.0, price_out_per_1m=1.0)
+        nz = [x for x in s if x["turns"] > 0]
+        self.assertGreaterEqual(len(nz), 1)
+        cost = sum((x["cost"] or 0.0) for x in nz)
+        self.assertAlmostEqual(cost, (150 / 1e6) + (30 / 1e6), places=9)
+
+    def test_invalid_granularity_falls_back(self):
+        s = timeseries_metrics(self.store, granularity="week")  # 非法 → hour
+        self.assertGreaterEqual(len(s), 1)
+
+    def test_empty_store(self):
+        db2 = tempfile.mktemp(suffix=".db")
+        st = SessionStore(db2)
+        self.assertEqual(timeseries_metrics(st), [])
+        st.close()
+        os.remove(db2)
 
 
 class PIIRedactTest(unittest.TestCase):

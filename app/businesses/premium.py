@@ -22,6 +22,21 @@ PRODUCT_XX = "尊享e生2025"                        # key(稳定业务键,LLM �
 PRODUCT_XX_NAME = "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）"
 VERSION_XX = "v2025"
 
+# 在售产品目录(兜底,当 CALCULATORS 尚未载入时用)。产品不明确需追问题时据此给出可选清单。
+_KNOWN_PRODUCTS: tuple[str, ...] = ("尊享e生2025", "安盛天平卓越馨选2025")
+
+
+def available_product_keys() -> tuple[str, ...]:
+    """返回当前已注册计算器的产品 key(即用户在售产品),供"产品不明确时追问"列出可选产品。
+
+    以 CALCULATORS(费率计算器注册表)为权威;为空时退回静态兜底清单(防御:计算器未加载时也能给清单)。
+    """
+    try:
+        keys = tuple(sorted(CALCULATORS.keys()))
+    except Exception:   # 注册表未就绪/导入异常 → 兜底
+        keys = ()
+    return keys if keys else _KNOWN_PRODUCTS
+
 _XX_PLAN_COLS = [
     ("0元", "计划一"), ("0元", "计划二"),
     ("1.5万", "计划一"), ("1.5万", "计划二"),
@@ -280,7 +295,10 @@ def _calc_xx2025(store, product_key, age, items, family_member_count=1):
 def calculate_premium(store, args):
     ref_name = (args.get("product") or "").strip()
     if not ref_name:
-        return {"content": "请指定产品(product,填产品 key 或名称)", "reference": []}
+        # 缺产品是常见错误(产品不明确就该先问)。给出可操作清单,让模型能照着实答/转述,而不是空泛的"请指定产品"。
+        avail = "、".join(available_product_keys())
+        return {"content": f"请指定产品(product,填产品 key 或名称)。当前在售:{avail}。" if avail
+                else "请指定产品(product,填产品 key 或名称)", "reference": []}
     prod = store.get_product(ref_name)
     if not prod:
         return {"content": f"产品 {ref_name} 不存在/暂无费率", "reference": []}

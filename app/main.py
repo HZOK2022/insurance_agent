@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routers import approval, audit, citation, config, health, kb, login, memory, metrics, prompt, sessions
 from app.api.services import container, auth_service
 from app.api.ratelimit import RateLimiter
+import app.db as dbmod
 from app.util.logging import setup_logging
 from app.util.http_log import decode_body, should_capture_request, should_capture_response
 
@@ -18,6 +19,24 @@ _rate = RateLimiter()
 
 # 访问日志:每个 /api 请求打一行(方法/路径/状态/耗时 + 会话 id + 用户 + 打码截断的入参/错误出参),
 # 供 tail .log 排查"接口报错是鉴权/参数/500"。body 只记请求入参 + 错误(>=400)响应;敏感键打码、流式/文件上传不记。
+# 默认过滤掉高频/机器对机器的轮询(GET /api/sessions、/api/config、/api/metrics、/api/health、/api/prompt 这些前端每 2-3s 拉一次的),
+# 只在错误(>=400)或显式开启 log_api_verbose 时打。
+# 可由 .env 配 LOG_API_VERBOSE=true 强制全打(诊断用)。
+_API_LOG_VERBOSE = os.environ.get("LOG_API_VERBOSE", "").lower() in ("1", "true", "yes")
+# 不打 INFO 的路径前缀(每分钟可能上百次);错误请求仍会打(>=400)
+_QUIET_PREFIXES = (
+    "/api/sessions",   # 前端拉会话列表(每 2-3s 一次)
+    "/api/config",     # 前端拉系统配置(每 2-3s 一次)
+    "/api/metrics",    # 机器对机器的 metrics 探针
+    "/api/health",     # 容器/负载均衡健康检查
+    "/api/prompt",     # 前端拉提示词(轮询)
+)
+
+
+def _is_quiet(path: str) -> bool:
+    return any(path.startswith(p) for p in _QUIET_PREFIXES)
+
+
 def _sid_from_path(path: str) -> str:
     m = re.search(r"/([0-9a-f]{12})(?:/|$)", path)
     return m.group(1) if m else ""
@@ -72,6 +91,14 @@ async def _access_log(request: Request, call_next):
     _sid = _sid_from_path(request.url.path)
     _user = getattr(request.state, "user_id", None) or _user_from_token(request)
     _dur = int((time.time() - _start) * 1000)
+    _path = request.url.path
+    _method = request.method
+
+    # 静默路径:GET + 200 + 命中白名单前缀 + 未开 verbose → 不打 INFO(避免前端轮询淹没日志)
+    # 失败请求(>=400) / 非 GET / verbose 模式 → 仍正常打
+    if (_status == 200 and _method == "GET" and _is_quiet(_path)
+            and not _API_LOG_VERBOSE):
+        return resp
 
     # 错误(>=400)且非流式:tee 响应体,流完再记 resp body(成功/流式不记出参,避免噪音/体积)
     if should_capture_response(request.url.path, _rct, _status, _bodies) and hasattr(resp, "body_iterator"):
@@ -206,6 +233,16 @@ def create_app() -> FastAPI:
     dist = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
     if os.path.isdir(dist):
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+
+    # 启动就绪横幅:uvicorn 自身的 "running on..." 行已被 _quiet_third_party 压掉,
+    # 且轮询访问日志默认静默(见 _QUIET_PREFIXES),这里补一行醒目的"服务已就绪",
+    # 让控制台/日志有明确的"启动成功"标志。
+    @app.on_event("startup")
+    async def _startup_ready():
+        logging.getLogger("insurance.agent").info(
+            "===== 后端已就绪 http://127.0.0.1:8181 (docs: /docs) · db=%s · 访问日志静默路径=%s =====",
+            dbmod.dial(_c), ",".join(_QUIET_PREFIXES) if not _API_LOG_VERBOSE else "verbose(全打)",
+        )
     return app
 
 

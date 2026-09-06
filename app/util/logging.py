@@ -63,8 +63,13 @@ class JsonFormatter(logging.Formatter):
 
 
 def _quiet_third_party() -> None:
-    """降噪第三方库(网络/HTTP 框架)的 INFO 刷屏,保留业务日志可读。"""
-    for name in ("httpx", "httpcore", "urllib3", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    """降噪第三方库的刷屏日志,但**保留启动/错误标志**:
+    - uvicorn.access(每请求一行)→ WARNING:请求日志由 main._access_log 统一打(带 sid/user/耗时)
+    - httpx/httpcore/urllib3(网络细节刷屏)→ WARNING
+    - uvicorn / uvicorn.error 保持 INFO:启动横幅("Uvicorn running on ..."/"Started server process"/
+      "Application startup complete")与 reload 提示都走这个 logger,压掉会看不出启动成功。
+    """
+    for name in ("httpx", "httpcore", "urllib3", "uvicorn.access"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 

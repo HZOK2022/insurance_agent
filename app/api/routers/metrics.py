@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.api.services import container
+from app.observability.metrics import timeseries_metrics
 
 router = APIRouter(prefix="/api", tags=["metrics"])
 
@@ -129,3 +130,18 @@ def get_metrics() -> dict[str, Any]:
         },
         "models": models,
     }
+
+
+@router.get("/metrics/timeseries")
+def get_timeseries(granularity: str = "hour") -> dict[str, Any]:
+    """按时间分桶聚合(成本/延迟/token 走势)。granularity=hour|day,默认 hour。
+
+    自建观测的"时间序列大盘"数据源;只读 events(事实源),绝不写历史。
+    """
+    store = container.get_store()
+    cfg = container.get_cfg()
+    pin = float(getattr(cfg, "llm_price_input_per_1m", 0) or 0)
+    pout = float(getattr(cfg, "llm_price_output_per_1m", 0) or 0)
+    series = timeseries_metrics(store, granularity=granularity,
+                                price_in_per_1m=pin, price_out_per_1m=pout)
+    return {"granularity": granularity, "series": series}
