@@ -154,6 +154,16 @@ class Config:
     qdrant_retry_base_delay_ms: int = 500
     qdrant_retry_max_delay_ms: int = 3000
     redis_url: str = "redis://:123456@101.132.61.48:6379/2"
+    # 生产两机:事实源在数据库服务器的 MySQL(应用跨网络连接);db_host 非空则用 MySQL,
+    # 否则回退 SQLite(开发/测试)。全部库(会话/事件/记忆/知识/费率)都迁到 MySQL。
+    db_enabled: bool = False             # 是否启用 MySQL(与 db_host 一致;db_host 非空即可)
+    db_host: str = ""                    # MySQL 主机(数据库服务器);空=开发用 SQLite
+    db_port: int = 3306
+    db_user: str = ""                    # 数据库账号(仅应用服务器部署用这一个连接,单写者)
+    db_pass: str = ""
+    db_name: str = ""                    # 会话/事件/记忆库
+    knowledge_db_name: str = ""          # 知识库(空=用 db_name)
+    premium_db_name: str = ""            # 费率库(空=用 db_name)
 
 
 _ENV = {
@@ -230,6 +240,14 @@ _ENV = {
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",
+    "db_enabled": "DB_ENABLED",
+    "db_host": "DB_HOST",
+    "db_port": "DB_PORT",
+    "db_user": "DB_USER",
+    "db_pass": "DB_PASS",
+    "db_name": "DB_NAME",
+    "knowledge_db_name": "KNOWLEDGE_DB_NAME",
+    "premium_db_name": "PREMIUM_DB_NAME",
     "qdrant_url": "QDRANT_URL",
     "qdrant_collection": "QDRANT_COLLECTION",
     "qdrant_retry_max_tries": "QDRANT_RETRY_MAX_TRIES",
@@ -247,6 +265,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "memory_consolidate_min_interval",
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",
+                  "db_port",
                   "api_rate_limit", "api_rate_window_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user")
