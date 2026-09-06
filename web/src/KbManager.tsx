@@ -12,6 +12,17 @@ type KbView = "list" | "chunks" | "upload"
 // 保险类型:必传,下拉选择(与后端 product_category 软圈定一致)
 const CATEGORY_OPTIONS = ["医疗险", "重疾险", "意外险", "寿险", "其他"]
 
+// 字段级提示:在字段右上角放一个「?」,点开看该字段的说明
+function HelpDot({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="help-dot-wrap">
+      <button className="help-dot" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} title="提示" aria-label="提示">?</button>
+      {open && <span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span>}
+    </span>
+  )
+}
+
 function progLabel(p: { stage: string; done: number; total: number }): string {
   if (p.stage === "upload") return "上传文件中…"
   if (p.stage === "chunked") return "解析完成,切块入库(" + p.total + " 块)…"
@@ -56,7 +67,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
-  const [uHelp, setUHelp] = useState(false)   // 上传页右上角「提示」是否展开(默认隐藏)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -356,19 +366,6 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
       {view === "upload" && (
         <div className="kb-body">
           <div className="kb-form">
-            <div className="kb-form-head">
-              <button className="kb-help-btn" onClick={() => setUHelp((h) => !h)} title="查看提示" aria-label="查看提示">？ 提示</button>
-            </div>
-            {uHelp && (
-              <div className="kb-help-pop">
-                <ul>
-                  <li>产品名称唯一;同名产品内容不同会提示"是否覆盖",需确认后覆盖旧文档。</li>
-                  <li>解析后端:MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown 即可。想看同一文件三路解析对比,点右上「解析对比」。</li>
-                  <li>切分方式:结构层级按语义单元切(节/条/一、/1./(1)),不使用 overlap(已置0);字符/段落按 chunk_size 分块,overlap 生效(相邻重叠)。</li>
-                  <li>bge 嵌入上限约 512 token(≈400字),chunk 过大嵌入会截断。</li>
-                </ul>
-              </div>
-            )}
             <div className="kb-mode-row">
               <button className={"kb-btn" + (uMode === "text" ? " kb-btn-primary" : "")} onClick={() => { setUMode("text"); setUPreview(null) }}>粘贴文本</button>
               <button className={"kb-btn" + (uMode === "file" ? " kb-btn-primary" : "")} onClick={() => { setUMode("file"); setUPreview(null) }}>上传文件(PDF/DOCX/XLSX/MD/TXT)</button>
@@ -379,6 +376,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *</label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => setUProductName(e.target.value)} placeholder="例: 尊享e生2025" />
+                  <HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -407,6 +405,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                 <div className="kb-form-field">
                   <label className="kb-form-label">产品名称 *</label>
                   <input className="kb-form-input" value={uProductName} onChange={(e) => { setUProductName(e.target.value); setUPreview(null) }} placeholder="例: 尊享e生2025" />
+                  <HelpDot text="产品名称唯一;同名产品内容不同会提示「是否覆盖」,需确认后覆盖旧文档。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">保险类型 *</label>
@@ -420,6 +419,7 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   <select className="kb-form-input" value={uParser} onChange={(e) => { setUParser(e.target.value); setUPreview(null) }}>
                     {PARSER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
+                  <HelpDot text="MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown。想看同一文件三路解析对比,点右上「解析对比」。" />
                 </div>
                 <div className="kb-form-field">
                   <label className="kb-form-label">选择文件 *</label>
@@ -435,11 +435,13 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                       onChange={(e) => { setUMethod(e.target.value); if (e.target.value === "structured") setUOverlap(0); setUPreview(null) }}>
                 {CHUNK_METHOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+              <HelpDot text="结构层级按语义单元切(节/条/一、/1./(1)),不使用 overlap(已置0);字符/段落按 chunk_size 分块,overlap 生效(相邻重叠)。" />
             </div>
             <div className="kb-form-field">
               <label className="kb-form-label">chunk_size(字符)</label>
               <input className="kb-form-input" type="number" value={uChunkSize} min={1}
                      onChange={(e) => { setUChunkSize(Number(e.target.value) || 0); setUPreview(null) }} />
+              <HelpDot text="bge 嵌入上限约 512 token(≈400字),超过会被截断(结构层级由 token 预算约460控制)。" />
             </div>
             <div className="kb-form-field">
               <label className="kb-form-label">overlap(字符)</label>
