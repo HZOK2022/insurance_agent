@@ -5,6 +5,7 @@
 retrieval(总数/no_hits/命中率)、citations(回答数/带引用数/引用率)、models(按模型)。
 """
 from __future__ import annotations
+import json
 from typing import Any
 
 from fastapi import APIRouter
@@ -55,6 +56,36 @@ def get_metrics() -> dict[str, Any]:
     models = {str(r["m"]): int(r["c"]) for r in conn.execute(
         "SELECT json_extract(payload,'$.model') m, COUNT(*) c FROM events WHERE type='usage' GROUP BY 1").fetchall()}
 
+    # —— 扩展信号(需解析 payload,方言无关):重试/降级/护栏拦截/工具失败/检索低置信 ——————
+    retries = one("SELECT COUNT(*) v FROM events WHERE type='llm_retry'")
+    guard_triggered = one("SELECT COUNT(*) v FROM events WHERE type='guard_triggered'")
+
+    def _payload(row) -> dict:
+        p = row["payload"]
+        return json.loads(p) if isinstance(p, str) else (p or {})
+
+    # 检索低置信:某次检索"有命中但最高分 < 阈值"或"有块却无分数"→ 记低置信(检索召回弱但不为空)。
+    # 空结果(no_hits)单独计;这里只算"非空但很弱"的召回。
+    low_conf_thresh = 0.3
+    retrieval_low_conf = 0
+    for r in conn.execute("SELECT payload FROM events WHERE type='retrieval'").fetchall():
+        chunks = (_payload(r).get("chunks") or [])
+        if not chunks:
+            continue
+        scores = [c.get("score") for c in chunks if isinstance(c, dict) and isinstance(c.get("score"), (int, float))]
+        if not scores or max(scores) < low_conf_thresh:
+            retrieval_low_conf += 1
+
+    # 工具失败(ok=False)+ 依赖降级(retrieval_unavailable = 向量库挂,知识检索降级)
+    tool_failures = 0
+    degradations = 0
+    for r in conn.execute("SELECT payload FROM events WHERE type='tool_result'").fetchall():
+        pl = _payload(r)
+        if pl.get("ok") is False:
+            tool_failures += 1
+        if pl.get("error") == "retrieval_unavailable":
+            degradations += 1
+
     # 成本(单价每 1M token;未配价为 0 → 不编造成本)
     pin = float(getattr(container.get_cfg(), "llm_price_input_per_1m", 0) or 0)
     pout = float(getattr(container.get_cfg(), "llm_price_output_per_1m", 0) or 0)
@@ -66,8 +97,13 @@ def get_metrics() -> dict[str, Any]:
         "latency_ms": {"avg": avg_lat, "p50": p50, "p95": p95},
         "tokens": {"prompt": pt, "completion": ct, "cost": cost},
         "retrieval": {"total": retr, "no_hits": no_hits,
+                      "low_conf": retrieval_low_conf,
                       "hit_rate": round((retr - no_hits) / retr, 4) if retr else 0},
         "citations": {"assistant": am, "with_cite": am_cite,
                       "cite_rate": round(am_cite / am, 4) if am else 0},
+        "retries": retries,
+        "guard_triggered": guard_triggered,
+        "tool_failures": tool_failures,
+        "degradations": degradations,
         "models": models,
     }
