@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import {
   listKbDocuments, listKbChunks, deleteKbDocument, ingestKbText, reindexKb,
@@ -67,6 +67,8 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
   const [uPreview, setUPreview] = useState<UploadPreviewResp | null>(null)
   const [uPreviewBusy, setUPreviewBusy] = useState(false)
   const [prevFilter, setPrevFilter] = useState("")   // 预览:点的目录节点路径(同分支过滤右侧切块)
+  const [dragOver, setDragOver] = useState(false)   // 文件投递区:是否拖拽悬停
+  const uFileRef = useRef<HTMLInputElement>(null)
   const [uBusy, setUBusy] = useState(false)
   const [uProg, setUProg] = useState<{ stage: string; done: number; total: number } | null>(null)
   const [reindexBusy, setReindexBusy] = useState(false)
@@ -419,8 +421,15 @@ export default function KbManager({ onBack, onOpenCompare }: { onBack?: () => vo
                   </select>
                 </div>
                 <div className="kb-form-field">
-                  <label className="kb-form-label">选择文件 *</label>
-                  <input className="kb-form-input" type="file" accept=".pdf,.docx,.xlsx,.md,.txt"
+                  <label className="kb-form-label">选择文件 *<HelpDot text="点击选择,或把文件拖到这里。MinerU 需在 .env 配 MINERU_API_KEY 且消耗每日额度;纯文本条款一般选 pdfplumber/markitdown。想看同一文件三路解析对比,点右上「解析对比」。" /></label>
+                  <div className={"kb-dropzone" + (dragOver ? " over" : "")}
+                       onClick={() => uFileRef.current?.click()}
+                       onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                       onDragLeave={() => setDragOver(false)}
+                       onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer?.files?.[0]; if (f) { setUFile(f); setUPreview(null) } }}>
+                    {uFile ? <span className="kb-dropzone-name">{uFile.name}</span> : <span className="kb-dropzone-hint">点击选择,或把文件拖到这里</span>}
+                  </div>
+                  <input ref={uFileRef} className="kb-form-input" type="file" accept=".pdf,.docx,.xlsx,.md,.txt" style={{ display: "none" }}
                          onChange={(e) => { setUFile(e.target.files?.[0] || null); setUPreview(null) }} />
                 </div>
               </>
