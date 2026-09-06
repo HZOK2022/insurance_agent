@@ -1,6 +1,10 @@
 """外部重排(SiliconFlow bge-reranker-v2-m3)。失败返回 None(调用方回退原顺序)。"""
 from __future__ import annotations
+import logging
+
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def rerank(query: str, documents: list[str], url: str, api_key: str, model: str,
@@ -13,5 +17,7 @@ def rerank(query: str, documents: list[str], url: str, api_key: str, model: str,
                           timeout=timeout)
         r.raise_for_status()
         return r.json().get("results")
-    except Exception:
+    except Exception as e:
+        # 依赖失败被吞 → 必须记,否则"重排失效"静默(调用方回退原序)
+        logger.warning("rerank 失败,回退原序: %s", e)
         return None

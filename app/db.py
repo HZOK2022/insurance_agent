@@ -132,14 +132,14 @@ class DB:
         if self._dialect != "mysql":  # mysql autocommit,无谓 commit
             try:
                 self._conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("db commit 失败: %s", e)
 
     def rollback(self):
         try:
             self._conn.rollback()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("db rollback 失败: %s", e)
 
     def close(self):
         try:

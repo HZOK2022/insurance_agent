@@ -13,10 +13,13 @@ Block protocol (照 dsh llm-deepseek/translate.ts):
 永久错误(如 400 参数错、401 鉴权)不重试直接抛。每次重试记 llm_retry 事件(on_retry 回调)。
 """
 import json
+import logging
 import random
 import time
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class StreamChunk:
@@ -60,6 +63,7 @@ class LLMClient:
     def _maybe_retry(self, err, retry_no: int, on_retry) -> bool:
         """重试第 retry_no 次(retry_no 从 1 起):一次退避 + 通知 on_retry。返回 True=应重试,False=放弃抛错。"""
         if retry_no <= self.max_retries:
+            logger.warning("llm retry after %d/%d: %s", retry_no, self.max_retries, err)
             self._retry_sleep(retry_no)
             if on_retry:
                 on_retry({"attempt": retry_no, "err": str(err)})
