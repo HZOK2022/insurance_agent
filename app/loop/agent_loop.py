@@ -323,8 +323,8 @@ class AgentLoop:
         _chunk_offset = 0             # 本 turn 已返回 chunk 总数 → 检索片段当轮编号(检索1 [1..k],检索2 [k+1..]),每轮从 1 起,避免多轮检索引用错位
         references: list = []          # 本 turn 工具返回的原始引用(交给业务层呈现)
         references_map: dict = {}      # tool_call name -> 最新 reference(供 present 溯源)
-        max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))
-        max_history_search = int(getattr(self.cfg, "max_history_search_per_turn", 0) or 0)
+        max_retrieve = int(getattr(self.cfg, "max_retrieve_per_turn", 5))      # 只约束"知识检索步数"(见下方 n_retrieve 计数)
+        max_history_search = int(getattr(self.cfg, "max_history_search_per_turn", 0) or 0)  # 会话内回源检索独立上限
         n_retrieve = 0
         n_history_search = 0
 
@@ -403,6 +403,8 @@ class AgentLoop:
                 tool_calls = assembler.tool_calls()
                 # D52 知识检索达上限:仅当本轮还调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
                 # 不触发也不被拦(它帮收尾,不增加知识检索收敛)。
+                # 注意:这里是按"步"计数(一个 LLM 回合调了检索类工具就 +1),不是按"调用次数"。
+                # 同一步内多个 search_knowledge 只算 1;其它工具(算保费/记忆等)不进入 n_retrieve。
                 _has_kw_tool = any((tc.name or "search_knowledge") != "session_history_search" for tc in tool_calls)
                 if tool_calls and _has_kw_tool and n_retrieve >= max_retrieve:
                     # LLM 无视上限仍想调工具 → 强制诚实结束(业务层兜底)

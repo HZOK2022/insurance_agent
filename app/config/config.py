@@ -89,13 +89,21 @@ class Config:
     reranking_external_timeout: int = 30
     rerank_max_length: int = 512
     # 上限(完整结果预算)
+    # max_steps_per_turn=整轮总步数上限(每个 LLM 回合=1 步,一步里可发多个工具调用)。
+    # 它才是"整轮所有工具调用"的真正天花板:任何工具(检索/算保费/记忆/…)都受它兜底,但不互相占额度。
     max_steps_per_turn: int = 20
     context_window: int = 128000
     compaction_threshold_ratio: float = 0.8   # 超窗触发压缩的阈值(窗口×ratio)
     compaction_retain_ratio: float = 0.16   # 保留尾(最近对话逐字)占比
     compaction_max_tokens: int = 2000       # 摘要输出上限(估计 token)
-    max_retrieve_per_turn: int = 5   # 单轮最多检索次数;超过后强制基于现有资料诚实回答,防反复无效检索
-    max_history_search_per_turn: int = 1   # 单轮最多本会话历史检索次数(防滥用,回指场景才用)
+    # max_retrieve_per_turn=每轮"知识检索步数"上限,只约束知识检索类工具(search_knowledge 等,不含 session_history_search)。
+    # · 每"步"(一个 LLM 回合)只要调用了检索类工具就 +1;同一步内发多个 search_knowledge 只算 1。
+    # · 达到上限且 LLM 仍想调检索工具 → 循环强制收尾,调 force_answer 做"以检索到的部分作答"的诚实兜底。
+    # · 其它工具(calculate_premium / memory_save 等)不占此额度,只受 max_steps_per_turn 约束。
+    max_retrieve_per_turn: int = 5
+    # max_history_search_per_turn=每轮"会话内回源检索"(session_history_search,回忆早前原文)次数上限;
+    # 独立计数,不占 max_retrieve_per_turn,也不新增步数(帮收尾,不增加知识检索收敛)。仅回指本会话早前内容时才用。
+    max_history_search_per_turn: int = 1
     history_search_top_k: int = 4          # 本会话历史检索返回的相关早前记录条数
     # 跨会话记忆(可插拔增强,memory_enabled 开关;关=完全不参与,非侵入)
     memory_enabled: bool = False             # 跨会话记忆开关(关:不注入指令帧/不注册工具,行为与未加一致)
