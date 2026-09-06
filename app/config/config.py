@@ -137,6 +137,8 @@ class Config:
     log_level: str = "INFO"
     log_dir: str = "data/logs"
     log_file_format: str = "text"   # 日志文件格式:text=人读(开发,默认), json=机器可解析(生产);.env LOG_FILE_FORMAT
+    log_api_bodies: bool = True     # 接口出入参日志:记请求 body(打码+截断)+ 仅错误(>=400)响应 body;0=只记元数据
+    log_api_body_chars: int = 300   # 接口 body 截断长度
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
@@ -239,6 +241,8 @@ _ENV = {
     "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",
     "llm_price_output_per_1m": "LLM_PRICE_OUTPUT_PER_1M",
     "log_file_format": "LOG_FILE_FORMAT",
+    "log_api_bodies": "LOG_API_BODIES",
+    "log_api_body_chars": "LOG_API_BODY_CHARS",
     "sqlite_path": "SQLITE_PATH",
     "premium_db_path": "PREMIUM_DB_PATH",
     "knowledge_db_path": "KNOWLEDGE_DB_PATH",
@@ -270,7 +274,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "db_port",
                   "api_rate_limit", "api_rate_window_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
-                  "daily_token_budget_per_user")
+                  "daily_token_budget_per_user", "log_api_body_chars")
 _NONNEG_INTS = ("chunk_overlap",)
 _FLOATS_01 = ("hybrid_bm25_weight",)
 

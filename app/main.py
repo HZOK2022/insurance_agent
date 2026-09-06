@@ -12,30 +12,85 @@ from app.api.routers import approval, audit, citation, config, health, kb, login
 from app.api.services import container, auth_service
 from app.api.ratelimit import RateLimiter
 from app.util.logging import setup_logging
+from app.util.http_log import decode_body, should_capture_request, should_capture_response
 
 _rate = RateLimiter()
 
-# 访问日志:每个 /api 请求打一行(方法/路径/状态/耗时 + 会话 id),供 tail .log 排查"接口报错是鉴权/参数/500"
+# 访问日志:每个 /api 请求打一行(方法/路径/状态/耗时 + 会话 id + 用户 + 打码截断的入参/错误出参),
+# 供 tail .log 排查"接口报错是鉴权/参数/500"。body 只记请求入参 + 错误(>=400)响应;敏感键打码、流式/文件上传不记。
 def _sid_from_path(path: str) -> str:
     m = re.search(r"/([0-9a-f]{12})(?:/|$)", path)
     return m.group(1) if m else ""
 
+
+def _user_from_token(request: Request) -> str | None:
+    """从 Bearer 会话 token 解 user_id(尽力而为,失败或未带返回 None;单次 index 查询)。"""
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return auth_service.validate_token(container.get_store(), auth[len("Bearer "):])
+    except Exception:
+        return None
+
+
 async def _access_log(request: Request, call_next):
     _start = time.time()
+    _cfg = container.get_cfg()
+    _bodies = bool(getattr(_cfg, "log_api_bodies", True))
+    _char = int(getattr(_cfg, "log_api_body_chars", 300) or 300)
+    _req_ct = request.headers.get("content-type", "")
+    _req_body: str | None = None
+    if should_capture_request(request.url.path, _req_ct, _bodies):
+        try:
+            _req_body = decode_body(await request.body(), _char)
+        except Exception:
+            _req_body = None
+
+    def _emit(status, duration, resp_body="-", sid="", user=None, path="", method=""):
+        try:
+            logging.getLogger("insurance.agent").info(
+                "http sid=%s %s %s -> %s %dms user=%s req=%s resp=%s",
+                sid, method, path, status, duration, user or "-", _req_body or "-", resp_body,
+                extra={"trace_id": sid or None, "session_id": sid or None,
+                       "http_status": status, "user": user or None})
+        except Exception:
+            pass
+
     resp = None
     try:
         resp = await call_next(request)
+    except Exception:
+        _emit(500, int((time.time() - _start) * 1000), "EXCEPTION",
+              _sid_from_path(request.url.path), _user_from_token(request), request.url.path, request.method)
+        raise
+
+    _status = getattr(resp, "status_code", "?")
+    _rct = (resp.headers.get("content-type", "") if resp is not None else "")
+    _sid = _sid_from_path(request.url.path)
+    _user = getattr(request.state, "user_id", None) or _user_from_token(request)
+    _dur = int((time.time() - _start) * 1000)
+
+    # 错误(>=400)且非流式:tee 响应体,流完再记 resp body(成功/流式不记出参,避免噪音/体积)
+    if should_capture_response(request.url.path, _rct, _status, _bodies) and hasattr(resp, "body_iterator"):
+        _buf = bytearray()
+        _iter = resp.body_iterator
+
+        async def _tee(_iter=_iter, _buf=_buf, _status=_status, _dur=_dur, _sid=_sid,
+                       _user=_user, _path=request.url.path, _method=request.method, _char=_char):
+            try:
+                async for part in _iter:
+                    _buf.extend(part)
+                    yield part
+            finally:
+                _emit(_status, _dur, decode_body(bytes(_buf), _char) or "-",
+                      _sid, _user, _path, _method)
+
+        resp.body_iterator = _tee()
         return resp
-    finally:
-        try:
-            _sid = _sid_from_path(request.url.path)
-            _dur = int((time.time() - _start) * 1000)
-            logging.getLogger("insurance.agent").info(
-                "http sid=%s %s %s -> %s %dms", _sid, request.method, request.url.path,
-                getattr(resp, "status_code", "?"), _dur,
-                extra={"trace_id": _sid or None, "session_id": _sid or None})
-        except Exception:
-            pass
+
+    _emit(_status, _dur, "-", _sid, _user, request.url.path, request.method)
+    return resp
 
 
 def _token_valid(cfg, request: Request) -> bool:
