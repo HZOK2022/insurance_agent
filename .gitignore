@@ -2,6 +2,7 @@
 docs/
 DECISIONS.md
 STATUS.md
+AGENTS.md
 
 # ===== 密钥与本地配置 =====
 .env
