@@ -621,4 +621,27 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .mem-event-reason { font-size: 12px; color: #f59e0b; }
 .mem-event-time { font-size: 11px; color: var(--dsw-text-3); white-space: nowrap; }
 
+/* ===== 观测总览(MonitorView) ===== */
+.mon-view { overflow-y: auto; height: 100%; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; }
+.mon-head { display: flex; align-items: center; gap: 12px; }
+.mon-title { font-size: 17px; font-weight: 600; }
+.mon-sub { font-size: 12px; color: var(--dsw-text-3); flex: 1; }
+.mon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.mon-card { border: 1px solid var(--dsw-border-l2); border-radius: 10px; padding: 10px 12px; background: var(--dsw-sidebar-fill); }
+.mon-card.ok { border-left: 3px solid #2f9e6e; }
+.mon-card.warn { border-left: 3px solid #f59e0b; }
+.mon-card.bad { border-left: 3px solid #e5484d; }
+.mon-card-label { font-size: 11px; color: var(--dsw-text-3); }
+.mon-card-val { font-size: 20px; font-weight: 600; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.mon-card-hint { font-size: 11px; color: var(--dsw-text-3); }
+.mon-sec-head { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--dsw-text-2); }
+.mon-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.mon-trace { cursor: pointer; }
+.mon-table { border: 1px solid var(--dsw-border-l2); border-radius: 8px; overflow: hidden; }
+.mon-tr { display: grid; grid-template-columns: 2fr 0.6fr 0.8fr 0.8fr 0.6fr 0.6fr 0.8fr; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--dsw-border-l1); font-size: 12px; cursor: pointer; align-items: center; }
+.mon-tr:hover { background: var(--dsw-sidebar-fill); }
+.mon-tr-head { background: var(--dsw-sidebar-fill); font-weight: 600; color: var(--dsw-text-3); cursor: default; }
+.mon-td-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon-bad { color: #e5484d; font-weight: 600; }
+
 

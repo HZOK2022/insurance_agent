@@ -65,6 +65,19 @@ export const getAudit = (sid: string) => json<{ count: number; items: AuditItem[
 export const getSessionMetrics = (sid: string) => json<Metrics>('/api/observability/' + encodeURIComponent(sid))
 export const getObservability = () => json<{ totals: Metrics & { sessions: number }; per_session: any[] }>('/api/observability')
 
+// ---- 观测大盘:全局聚合(含检索低置信/引用率/重试/降级/护栏/工具失败 + trace_id 样本)----
+export interface GlobalMetrics {
+  turns: { total: number; error: number; error_rate: number }
+  latency_ms: { avg: number | null; p50: number | null; p95: number | null }
+  tokens: { prompt: number; completion: number; cost: number | null }
+  retrieval: { total: number; no_hits: number; low_conf: number; hit_rate: number }
+  citations: { assistant: number; with_cite: number; cite_rate: number }
+  retries: number; guard_triggered: number; tool_failures: number; degradations: number
+  models: Record<string, number>
+  samples?: Record<string, string[]>
+}
+export const getMetrics = () => json<GlobalMetrics>('/api/metrics')
+
 
 // 显式"停止":置后端中止位(不是直接断流——断流后 Starlette 不保证 close 底层生成器,后端会白跑完这一轮)。
 // 置位后后端在下一个 step/chunk 边界收尾并照常推 turn_end,前端因此能拿到完整终结事件。
