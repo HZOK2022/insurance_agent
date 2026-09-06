@@ -12,13 +12,22 @@ type KbView = "list" | "chunks" | "upload"
 // 保险类型:必传,下拉选择(与后端 product_category 软圈定一致)
 const CATEGORY_OPTIONS = ["医疗险", "重疾险", "意外险", "寿险", "其他"]
 
-// 字段级提示:在字段右上角放一个「?」,点开看该字段的说明
+// 字段级提示:标签右上角「!」,点开看说明。点击页面任意处(提示内容之外)收起。
 function HelpDot({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", onDoc)
+    return () => document.removeEventListener("mousedown", onDoc)
+  }, [open])
   return (
-    <span className="help-dot-wrap">
+    <span ref={ref} className="help-dot-wrap">
       <button type="button" className="help-dot" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }} title="提示" aria-label="提示">!</button>
-      {open && <><span className="ctx-backdrop" onClick={() => setOpen(false)} /><span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span></>}
+      {open && <span className="help-dot-pop" onClick={(e) => e.stopPropagation()}>{text}</span>}
     </span>
   )
 }
