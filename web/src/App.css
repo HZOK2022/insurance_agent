@@ -492,7 +492,7 @@ select.kb-form-input { appearance: none; -webkit-appearance: none; height: 34px;
 .cmp-chunk-range-tag { font-size: 10.5px; color: var(--dsw-primary); border: 1px solid rgba(86,134,254,.25); background: var(--dsw-primary-soft); border-radius: 3px; padding: 0 4px; margin-left: 4px; flex: none; }
 
 /* ---- 回答诊断 ---- */
-.diag-list { display: flex; flex-direction: column; gap: 12px; max-width: 1200px; }
+.diag-list { display: flex; flex-direction: column; gap: 12px; width: 100%; }
 .diag-turn { border: 1px solid var(--dsw-border-l1); border-radius: 10px; background: var(--dsw-bg); overflow: hidden; }
 .diag-turn-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }
 .diag-turn-title { font-weight: 600; color: var(--dsw-text); flex: none; }
