@@ -224,6 +224,8 @@ body { margin: 0; font-family: var(--dsw-font-family); color: var(--dsw-text); b
 .trace-comp-sec pre { max-height: 220px; overflow: auto; }
 .trace-comp-msg { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; line-height: 1.55; }
 .trace-comp-msg i { flex-shrink: 0; font-style: normal; color: var(--dsw-text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.trace-q { margin: 0 4px 6px 22px; font-size: 12.5px; line-height: 1.6; color: var(--dsw-text-2); word-break: break-word; }
+.trace-q::before { content: "问"; font-size: 10px; color: var(--dsw-text-3); border: 1px solid var(--dsw-border-l2); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
 .trace-tid { flex-shrink: 0; margin-left: 2px; border: 1px solid var(--dsw-border-l2); border-radius: 5px; background: var(--dsw-sidebar-fill); color: var(--dsw-text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.5; padding: 0 5px; cursor: pointer; }
 .trace-tid:hover { color: var(--dsw-primary); border-color: var(--dsw-primary); }
 .trace-flash { outline: 2px solid var(--dsw-primary); outline-offset: 1px; border-radius: 8px; transition: outline-color .2s; }

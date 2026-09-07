@@ -60,7 +60,7 @@ interface Source { idx: number; chunk_id: string; title: string; content: string
 // trace 面板:按 turn→step 分组下钻(L0 回合指标 / L1 每步明细 / L2 原始事件)
 interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[]; chunks?: any[]; elapsed_ms?: number; timings?: Record<string, number> }
 interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number }
-interface TraceTurn { turn: number; trace_id?: number; steps: TraceStep[]; compactions?: TraceCompaction[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number; badcase?: any }
+interface TraceTurn { turn: number; trace_id?: number; question?: string; steps: TraceStep[]; compactions?: TraceCompaction[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number; badcase?: any }
 // 压缩可见性(M3):一次压缩 = 摘要 + 被压掉的原文(shadowed_seqs 指向 append-only events,原文可还原)
 interface TraceCompaction { summary: string; chars_saved?: number; reason?: string; shadowed: { seq: number; role: string; text: string }[] }
 
@@ -239,6 +239,7 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
             {t.flags.length > 0 && <span className="trace-turn-flags">{t.flags.map((f) => <span key={f} className="trace-flag">{f}</span>)}</span>}
             <span className="trace-turn-chev">{open === i ? "▾" : "▸"}</span>
           </div>
+          {t.question ? <div className="trace-q" title={"问题(" + (i + 1) + " 轮) " + t.question}>{t.question}</div> : null}
           <div className="trace-chips">{traceChips(t).map((ch, ci) => <span key={ci} className={"trace-chip " + ch.cls}>{ch.label}</span>)}</div>
           {open === i && (
             <div className="trace-turn-body">
@@ -483,7 +484,7 @@ export default function App() {
         if (lastTool) { lastTool.query = p.query; lastTool.timings = p.timings || undefined; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.chunks = cs; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
         if (turn) { turn.nRetrieval = (turn.nRetrieval || 0) + 1; const cs = p.chunks || []; if (!cs.length) turn.nEmpty = (turn.nEmpty || 0) + 1; cs.forEach((c: any) => retrieved?.add(c.chunk_id)) }
       }
-      else if (t === "user_message") { if (e.seq != null) seqText.set(e.seq, { role: "user", text: p.text || "" }) }
+      else if (t === "user_message") { if (e.seq != null) seqText.set(e.seq, { role: "user", text: p.text || "" }); if (turn && turn.question == null) turn.question = p.text || "" }
       else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } if (e.seq != null) seqText.set(e.seq, { role: "assistant", text: ((p.blocks || []) as any[]).map((b: any) => b.t === "ul" || b.t === "ol" ? (b.items || []).join("；") : (b.text || "")).join(" ").trim() }) }
       else if (t === "step_end") { if (tstep) tstep.elapsed_ms = p.elapsed_ms }
       else if (t === "usage") { if (turn) { turn.promptTokens = p.prompt_tokens; turn.completionTokens = p.completion_tokens } }
@@ -552,6 +553,7 @@ export default function App() {
       const touch = () => { if (lt.turn) setTrace((prev) => [...prev]) }
       // 与 loadEvents 回放构建同口径:实时也维护 trace_id 与诊断计数,否则轨迹流式期间徽标/轮号会失真
       if (t === "turn_start") { if (!lt.turn) { lt.turn = { turn: 1, trace_id: e.seq, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; lt.retrieved = new Set(); setTrace((prev) => [...prev, lt.turn as TraceTurn]) } }
+      else if (t === "user_message") { if (lt.turn && lt.turn.question == null) lt.turn.question = e.payload?.text || ""; touch() }
       else if (t === "step_start") { if (lt.turn) { lt.step = { step: e.payload?.step ?? lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step); touch() } }
       else if (t === "assistant_chunk") { const k = e.payload?.kind, d = e.payload?.delta || ""; if (lt.step && (k === "reasoning" || k === "text")) { if (k === "reasoning") lt.step.reasoning += d; else lt.step.text += d } }
       else if (t === "tool_call") { if (lt.turn) { if (!lt.step) { lt.step = { step: lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step) } lt.tool = { tool: e.payload?.tool, args: e.payload?.args }; lt.step.tools.push(lt.tool); if (e.payload?.tool === "search_knowledge" || e.payload?.tool === "session_history_search") lt.turn.nSearchTools = (lt.turn.nSearchTools || 0) + 1; touch() } }
