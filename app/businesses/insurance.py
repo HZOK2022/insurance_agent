@@ -219,15 +219,19 @@ def build_tools(embedder, qstore, cfg, store=None) -> dict[str, dict]:
 
     def handler(args: Any, start_idx: int = 0, session_id: str | None = None) -> dict:
         query = (args or {}).get("query") or ""
+        # M1:检索内部四段耗时(embed/dense/bm25/rerank),经 tool_meta 进 retrieval 事件(trace 显示"慢在哪段")。
+        timings: dict = {}
         # 向量库不可用时 search_knowledge 抛 RetrievalUnavailable(注入零检索结果),
         # 由 _run_tool 记 error_code=retrieval_unavailable,LLM 依 SYSTEM 约束诚实拒答——不做关键词兜底作答。
         chunks = search_knowledge(embedder, qstore, query, top_k=cfg.top_k, top_rerank=cfg.top_k_reranker,
                                   rerank_fn=rerank_fn, hybrid=_get_hybrid(),
                                   hybrid_weight=getattr(cfg, "hybrid_bm25_weight", 0.0),
                                   category=(args or {}).get("category"),
-                                  product=(args or {}).get("product"))
+                                  product=(args or {}).get("product"),
+                                  timings=timings)
         # 喂给 LLM 的 content 用格式化文本(整轮全局编号);reference 保留原始 chunks 供溯源
-        return {"content": _format_chunks(chunks, start_idx), "reference": chunks}
+        return {"content": _format_chunks(chunks, start_idx), "reference": chunks,
+                "tool_meta": {"retrieval_timings_ms": timings} if timings else {}}
     # D52 本会话历史检索(回忆,弥补压缩细节丢失)。会话 id 由核心注入 handler(不来自模型)。
     tools = {"search_knowledge": {"schema": SEARCH_TOOL, "handler": handler},
              "session_history_search": {"schema": HISTORY_SEARCH_TOOL, "handler": _make_history_handler(store, cfg)}}
@@ -360,4 +364,6 @@ def _append_product_list(system: str) -> str:
 def bundle(embedder, qstore, cfg, store=None) -> dict:
     return {"system": _append_product_list(SYSTEM), "tools": build_tools(embedder, qstore, cfg, store=store),
             "present_answer": present_answer, "force_answer": force_answer, "cfg": cfg,
-            "mark_bm25_dirty": mark_bm25_dirty}
+            "mark_bm25_dirty": mark_bm25_dirty,
+            # 知识检索类工具名(计入 n_retrieve 收敛;其它工具如 calculate_premium/记忆不占)
+            "retrieve_tool_names": {"search_knowledge"}}

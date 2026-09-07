@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.api.services import container
-from app.observability.metrics import timeseries_metrics
+from app.observability.metrics import timeseries_metrics, anomaly_report
 
 router = APIRouter(prefix="/api", tags=["metrics"])
 
@@ -145,3 +145,17 @@ def get_timeseries(granularity: str = "hour") -> dict[str, Any]:
     series = timeseries_metrics(store, granularity=granularity,
                                 price_in_per_1m=pin, price_out_per_1m=pout)
     return {"granularity": granularity, "series": series}
+
+
+@router.get("/metrics/anomalies")
+def get_anomalies(latency_ms: float | None = None) -> dict[str, Any]:
+    """生产异常定位:坏轮按主因分类 + trace_id 样本 + why 提示 + 检索→引用漏斗。
+
+    latency_ms 可选,给定时才把超时轮归为 latency_spike;只读 events(事实源)。
+    """
+    store = container.get_store()
+    cfg = container.get_cfg()
+    pin = float(getattr(cfg, "llm_price_input_per_1m", 0) or 0)
+    pout = float(getattr(cfg, "llm_price_output_per_1m", 0) or 0)
+    return anomaly_report(store, price_in_per_1m=pin, price_out_per_1m=pout,
+                          latency_threshold_ms=latency_ms)

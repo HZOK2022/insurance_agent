@@ -73,7 +73,7 @@ class RunToolRetrievalUnavailableTest(unittest.TestCase):
                                       "handler": handler}}
         loop = AgentLoop(None, "系统", tools, (lambda t, r: ([{"t": "p", "text": t}], [])),
                          _cfg(), emit=lambda t, p: make_event(t, p))
-        content, ref, ok, code = loop._run_tool("search_knowledge", {"query": "q"}, 0)
+        content, ref, ok, code, _meta = loop._run_tool("search_knowledge", {"query": "q"}, 0)
         self.assertFalse(ok)
         self.assertEqual(code, "retrieval_unavailable")
         self.assertIn("请稍后重试", content)    # 引导用户稍后重试
@@ -88,7 +88,7 @@ class RunToolRetrievalUnavailableTest(unittest.TestCase):
                        "handler": handler}}
         loop = AgentLoop(None, "系统", tools, (lambda t, r: ([{"t": "p", "text": t}], [])),
                          _cfg(), emit=lambda t, p: make_event(t, p))
-        _c, _r, ok, code = loop._run_tool("x", {}, 0)
+        _c, _r, ok, code, _meta = loop._run_tool("x", {}, 0)
         self.assertFalse(ok)
         self.assertEqual(code, "tool_error")
 

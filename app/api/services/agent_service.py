@@ -21,7 +21,10 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     emit 落库;调用 turn(),逐个 yield 事件(含 assistant_chunk),供 SSE 逐帧推流。"""
     def emit(type_: str, payload: dict) -> dict:
         ev = make_event(type_, payload)
-        store.append(session_id, type_, payload)
+        seq = store.append(session_id, type_, payload)
+        # 把落库后的全局唯一 seq 挂回事件(M0):轮级 trace_id = 本轮 turn_start 的 seq,
+        # agent_loop 据此打日志/badcase/usage;SSE 帧也随之携带 seq(前端 live 轨迹可据此标轮)。
+        ev["seq"] = seq
         return ev
     # 阶段 A:构建跨轮历史(剥掉旧 [idx] 角标,防跨轮编号混淆,D55)。在 loop 写入当前 user_message 之前调用。
     history = build_history(store, session_id)
@@ -48,7 +51,8 @@ def run_prompt(store: SessionStore, llm, bundle: dict, session_id: str, text: st
     loop = AgentLoop(llm, sys_msg, bundle["tools"], bundle["present_answer"],
                      _fresh_cfg(), emit=emit, force_answer=bundle.get("force_answer"), model=model,
                      approval=_container.get_approval(),
-                     should_abort=lambda: abort_is_set(session_id))
+                     should_abort=lambda: abort_is_set(session_id),
+                     retrieve_tool_names=bundle.get("retrieve_tool_names"))
     # ① 输出护栏:回答若泄漏系统签名片段 → 掩码 + 记 guard_triggered(审计)
     try:
         for ev in loop.turn(session_id, text, history=history):

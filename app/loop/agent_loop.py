@@ -224,7 +224,8 @@ class AgentLoop:
                  emit: Callable[[str, dict], dict] | None = None,
                  force_answer: Callable[[list], tuple[list, list]] | None = None,
                  model: str | None = None, approval=None,
-                 should_abort: Callable[[], bool] | None = None):
+                 should_abort: Callable[[], bool] | None = None,
+                 retrieve_tool_names: set[str] | None = None):
         # llm: .chat_stream(messages, json_mode, tools) -> iter chunks
         # system: 业务 prompt
         # tools: {name: {"schema": openai 工具 schema, "handler": fn(args)->{"content":str,"reference":any}}}
@@ -240,6 +241,9 @@ class AgentLoop:
         self.model_override = model   # 模型可配置:前端选 deepseek-v4-flash / deepseek-v4-pro
         self.approval = approval      # 写审批中心(None=不门控,兼容旧调用/测试)
         self.should_abort = should_abort   # 显式"停止"通道(见 app/loop/abort.py):每 step 边界 + 每 chunk 检查
+        # 知识检索类工具名(仅这些计入 n_retrieve 收敛):默认 search_knowledge;
+        # 其它工具(calculate_premium / 记忆等)不占检索上限,由业务层 bundle 显式传入。
+        self._retrieve_tool_names = set(retrieve_tool_names) if retrieve_tool_names else {"search_knowledge"}
 
     @property
     def _effective_model(self) -> str:
@@ -290,7 +294,11 @@ class AgentLoop:
         不产生引用角标,需要回指早前内容时模型走 session_history_search 回源。
         """
         t0 = time.time()
-        yield self._emit("turn_start", {"turn": 1})
+        # 轮级 trace_id(对齐共识:session=窗口,trace=一轮):取本轮 turn_start 事件落库后的 seq(=该事件全局唯一号)。
+        # 真实路径(agent_service.emit)会把 seq 挂回事件;测试用裸 emit 拿不到时为 None → 日志 trace_id 回退 session。
+        _turn_start_ev = self._emit("turn_start", {"turn": 1})
+        turn_trace = _turn_start_ev.get("seq") if isinstance(_turn_start_ev, dict) else None
+        yield _turn_start_ev
         yield self._emit("user_message", {"text": text, "client_time": None})
 
         _prompt_tokens = 0
@@ -446,15 +454,17 @@ class AgentLoop:
                 logger.info("llm step=%s model=%s ptokens=%s ctokens=%s ttft=%s run_ms=%s tps=%s",
                             n_steps, self._effective_model, _llm_pt, _llm_ct,
                             _step_ttft, _step_ms, _llm_tps,
-                            extra={"session_id": session_id, "trace_id": session_id,
+                            extra={"session_id": session_id, "trace_id": (turn_trace or session_id),
                                    "model": self._effective_model})
 
                 tool_calls = assembler.tool_calls()
-                # D52 知识检索达上限:仅当本轮还调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
+                # D52 知识检索达上限:仅当本轮调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
                 # 不触发也不被拦(它帮收尾,不增加知识检索收敛)。
                 # 注意:这里是按"步"计数(一个 LLM 回合调了检索类工具就 +1),不是按"调用次数"。
                 # 同一步内多个 search_knowledge 只算 1;其它工具(算保费/记忆等)不进入 n_retrieve。
-                _has_kw_tool = any((tc.name or "search_knowledge") != "session_history_search" for tc in tool_calls)
+                # 修正(原 bug):此前 _has_kw_tool = "非 session_history_search 即算检索",会把 calculate_premium
+                # 等非检索工具也计入 n_retrieve → 检索上限被非检索调用提前消耗,导致"已检索未完全"在真检索不足 5 次时提前出现。
+                _has_kw_tool = any((tc.name or "search_knowledge") in self._retrieve_tool_names for tc in tool_calls)
                 if tool_calls and _has_kw_tool and n_retrieve >= max_retrieve:
                     # LLM 无视上限仍想调工具 → 强制诚实结束(业务层兜底)
                     blocks, citations = (self.force_answer(references) if self.force_answer
@@ -482,12 +492,17 @@ class AgentLoop:
                         name = tc.name or "search_knowledge"
                         args = parse_tool_arguments(tc.text)
                         yield self._emit("tool_call", {"tool": name, "args": args})
+                        # M1:工具执行计时(_run_tool 真实执行才计;审批等待/未执行不算工具耗时)
+                        def _run_timed(tool_name: str, tool_args: Any):
+                            _s = time.perf_counter()
+                            _c, _r, _o, _e, _m = self._run_tool(tool_name, tool_args, start_idx=_chunk_offset, session_id=session_id)
+                            return _c, _r, _o, _e, _m, int((time.perf_counter() - _s) * 1000)
                         if name == "session_history_search":
                             # D52:本会话历史检索(回忆)——独立上限,不占知识检索收敛;会话 id 由系统注入,不来自模型
                             if max_history_search and n_history_search >= max_history_search:
-                                content, reference, _tok, _terr = ("已达本会话历史检索上限,请基于现有资料回答。", None, False, "history_search_limit")
+                                content, reference, _tok, _terr, tool_meta, tool_ms = ("已达本会话历史检索上限,请基于现有资料回答。", None, False, "history_search_limit", {}, 0)
                             else:
-                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
+                                content, reference, _tok, _terr, tool_meta, tool_ms = _run_timed(name, args)
                                 n_history_search += 1
                         else:
                             # 阶段5:写工具审批门控(读工具放行;写工具需人工批准,可改参数/拒绝/挂起)
@@ -499,22 +514,23 @@ class AgentLoop:
                                 _ad = self.approval.wait(_rid)
                                 if _ad and _ad.get("status") == "approve":
                                     args = _ad.get("edited_args") or args   # 用改后的参数执行
-                                    content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
+                                    content, reference, _tok, _terr, tool_meta, tool_ms = _run_timed(name, args)
                                 else:
-                                    content, reference, _tok, _terr = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None, False, "approval_denied")
+                                    content, reference, _tok, _terr, tool_meta, tool_ms = (f"写操作「{name}」未被批准({(_ad or {}).get('status', 'denied')}),未执行。", None, False, "approval_denied", {}, 0)
                             else:
-                                content, reference, _tok, _terr = self._run_tool(name, args, start_idx=_chunk_offset, session_id=session_id)
+                                content, reference, _tok, _terr, tool_meta, tool_ms = _run_timed(name, args)
                         if isinstance(reference, list):
                             _chunk_offset += len(reference)
                         # 排查摘要:每个工具调用落一行日志(参数/命中块数/ok/错误码/结果头),全文进 events
                         _res_head = (content or "").strip().replace("\n", " ") if isinstance(content, str) else ""
                         _res_log = _res_head[:120] + (f"…(+{len(_res_head) - 120}字)" if len(_res_head) > 120 else "")
                         logger.info(
-                            "step tool sid=%s tool=%s ok=%s code=%s args=%s out=%d块 res=%s",
+                            "step tool sid=%s tool=%s ok=%s code=%s args=%s out=%d块 tool_ms=%d res=%s",
                             session_id, name, _tok, _terr, _summarize_args(args),
                             len(reference) if isinstance(reference, list) else 0,
-                            _res_log,
-                            extra={"session_id": session_id, "trace_id": session_id, "tool": name})
+                            tool_ms, _res_log,
+                            extra={"session_id": session_id, "trace_id": (turn_trace or session_id),
+                                   "tool": name, "latency_ms": tool_ms})
                         # D55:引用编号每轮 turn-local —— 检索内容保持 handler 的当轮编号
                         # (search_knowledge 用 start_idx 从 1 连续编号),不再用会话全局编号重排(D35 取消)。
                         # 阶段 B-1:工具结果落地截断(D12)。只截"喂给模型的 content";
@@ -533,7 +549,7 @@ class AgentLoop:
                             _snap_bad = True   # 工具失败/未批准 → 坏例快照
                         yield self._emit("tool_result", {"tool": name, "ok": _tok,
                                                          "result_truncated": truncated,
-                                                         "error": _terr})
+                                                         "error": _terr, "elapsed_ms": tool_ms})
                         # ok / error_code 只进 tool_result 事件(UI 与审计可见),模型的 tool 消息
                         # 里只有 content —— 不加标记的话它只能从文案字面猜"这算不算失败"。
                         # 故失败时补一个结构化前缀,让模型明确知道:这是失败,不是一条普通结果。
@@ -553,8 +569,10 @@ class AgentLoop:
                                             str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
                                             len(reference),
                                             _summarize_chunks(reference),
-                                            extra={"session_id": session_id, "trace_id": session_id})
-                                yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)), "chunks": reference})
+                                            extra={"session_id": session_id, "trace_id": (turn_trace or session_id)})
+                                yield self._emit("retrieval", {"query": str((args or {}).get("query") or json.dumps(args or {}, ensure_ascii=False)),
+                                                               "chunks": reference,
+                                                               "timings": (tool_meta.get("retrieval_timings_ms") or {})})
                     if _stopped:
                         break
                     yield self._emit("step_end", {"turn": 1, "step": n_steps, "elapsed_ms": int((time.time() - (_step_t0 or time.time())) * 1000)})
@@ -568,7 +586,7 @@ class AgentLoop:
                 logger.info("回答 sid=%s chars=%d cites=%s msg=%s", session_id,
                             len(answer_text or ""), _cids or len(citations or []),
                             (answer_text or "").strip().replace("\n", " ")[:300],
-                            extra={"session_id": session_id, "trace_id": session_id})
+                            extra={"session_id": session_id, "trace_id": (turn_trace or session_id)})
                 conversation.append({"role": "assistant", "content": answer_text or "（无回答）"})
                 _last_completion = answer_text or ""
                 yield self._emit("assistant_message", {"blocks": blocks or [{"t": "p", "text": answer_text}], "citations": citations or []})
@@ -581,7 +599,7 @@ class AgentLoop:
             raise
         except Exception as e:
             reason = "error"
-            logger.exception("turn failed sid=%s err=%s", session_id, e, extra={"session_id": session_id, "trace_id": session_id})
+            logger.exception("turn failed sid=%s err=%s", session_id, e, extra={"session_id": session_id, "trace_id": (turn_trace or session_id)})
         finally:
             if not assistant_emitted:
                 # 显式"停止":保留本 step 已流出的正文(用户屏幕上已看到的部分,不能丢);
@@ -618,7 +636,8 @@ class AgentLoop:
                 })
             use_ev = self._emit("usage", {"model": self._effective_model, "prompt_tokens": _prompt_tokens,
                                           "completion_tokens": _completion_tokens, "cost_estimate": None,
-                                          "ttft_ms": _ttft, "run_ms": _run_ms, "tokens_per_second": tps})
+                                          "ttft_ms": _ttft, "run_ms": _run_ms, "tokens_per_second": tps,
+                                          "trace_id": (turn_trace or session_id)})
             end_ev = self._emit("turn_end", {"turn": 1, "reason": reason, "elapsed_ms": _run_ms,
                                              "ttft_ms": _ttft, "tokens_per_second": tps})
             if not aborted:
@@ -634,13 +653,13 @@ class AgentLoop:
                 _sampled = _sample_rate > 0 and random.random() < _sample_rate
                 if _snap_enabled and (_snap_bad_cond or _sampled):
                     yield self._emit("badcase_snapshot", {
-                        "reason": reason, "model": self._effective_model,
+                        "reason": reason, "model": self._effective_model, "trace_id": (turn_trace or session_id),
                         "system": self.system, "conversation": conversation,
                         "completion": _last_completion,
                         "prompt_tokens": _prompt_tokens, "completion_tokens": _completion_tokens,
                         "run_ms": _run_ms})
                 yield end_ev
-            logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason, extra={"session_id": session_id, "trace_id": session_id})
+            logger.info("turn end sid=%s steps=%d reason=%s", session_id, n_steps, reason, extra={"session_id": session_id, "trace_id": (turn_trace or session_id)})
 
     def _estimate_conversation(self, conversation: list[dict]) -> int:
         return sum(estimate_tokens(str(m.get("content") or "")) for m in conversation)
@@ -721,12 +740,12 @@ class AgentLoop:
         """
         tool = self.tools.get(name)
         if not tool:
-            return "（无此工具）", None, False, "unknown_tool"
+            return "（无此工具）", None, False, "unknown_tool", {}
         _bad_args = validate_tool_arguments(tool, args)
         if _bad_args:
             # 参数不合契约:不执行,把可操作的诊断回给模型(它才知道该补哪个字段)。
             logger.warning("工具参数不合契约 tool=%s args=%s → invalid_arguments", name, _short(args))
-            return _bad_args, None, False, "invalid_arguments"
+            return _bad_args, None, False, "invalid_arguments", {}
         try:
             if _handler_accepts_session(tool["handler"]):
                 raw = tool["handler"](args, start_idx, session_id=session_id)
@@ -738,11 +757,13 @@ class AgentLoop:
             return ("【检索服务不可用】当前无法访问知识库数据。请如实告知用户:"
                     "抱歉,当前知识库数据暂不可用,我无法给出有数据支撑的回答,为避免不准确信息,请稍后重试或转人工坐席;"
                     "严禁编造任何条款内容、数字或责任范围。",
-                    None, False, "retrieval_unavailable")
+                    None, False, "retrieval_unavailable", {})
         except Exception as e:
             logger.exception("tool %s failed", name)
-            return f"工具「{name}」调用失败,未取得结果,请基于已有资料回答。", None, False, "tool_error"
+            return f"工具「{name}」调用失败,未取得结果,请基于已有资料回答。", None, False, "tool_error", {}
         if isinstance(raw, dict) and ("content" in raw or "reference" in raw):
-            return str(raw.get("content") or ""), raw.get("reference"), True, None
-        return str(raw), raw, True, None
+            # handler 可附带 tool_meta(如检索四段耗时),供 tool_result/retrieval 事件展示
+            meta = raw.get("tool_meta") if isinstance(raw.get("tool_meta"), dict) else {}
+            return str(raw.get("content") or ""), raw.get("reference"), True, None, meta
+        return str(raw), raw, True, None, {}
 

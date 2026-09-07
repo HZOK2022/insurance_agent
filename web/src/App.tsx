@@ -58,9 +58,11 @@ function formatClock(iso?: string): string {
 }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 // trace 面板:按 turn→step 分组下钻(L0 回合指标 / L1 每步明细 / L2 原始事件)
-interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[]; chunks?: any[] }
+interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[]; chunks?: any[]; elapsed_ms?: number; timings?: Record<string, number> }
 interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number }
-interface TraceTurn { turn: number; steps: TraceStep[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number }
+interface TraceTurn { turn: number; trace_id?: number; steps: TraceStep[]; compactions?: TraceCompaction[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number; badcase?: any }
+// 压缩可见性(M3):一次压缩 = 摘要 + 被压掉的原文(shadowed_seqs 指向 append-only events,原文可还原)
+interface TraceCompaction { summary: string; chars_saved?: number; reason?: string; shadowed: { seq: number; role: string; text: string }[] }
 
 function inline(seg: string, ns: string, citIdx: Set<number>, onCite: (idx: number) => void, activeIdx: number | null): ReactNode[] {
   const out: ReactNode[] = []
@@ -202,17 +204,30 @@ function traceChips(t: TraceTurn): { cls: string; label: string }[] {
   else if (c > 0) chips.push({ cls: g < c ? "bad" : "ok", label: `引用×${c}${g < c ? ` (仅${g}有据,${c - g}引用了未召回块)` : " 全有据"}` })
   return chips
 }
-function TraceView({ turns }: { turns: TraceTurn[] }) {
+function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; focusTraceId?: number | null; focusTick?: number }) {
   const [open, setOpen] = useState<number | null>(null)
   const [rawOpen, setRawOpen] = useState<number | null>(null)
+  const [flash, setFlash] = useState<number | null>(null)   // 审计/告警"定位某轮"后高亮的 trace_id(轮级)
+  // 跳转:找到对应轮(trace_id = 该轮 turn_start 的 seq)→ 展开 → 滚动可见 → 闪烁 1.8s(focusTick 变化可重复触发)
+  useEffect(() => {
+    if (focusTraceId == null) return
+    const i = turns.findIndex((t) => t.trace_id === focusTraceId)
+    if (i < 0) return
+    setOpen(i); setFlash(focusTraceId)
+    const el = document.getElementById("turn-" + focusTraceId)
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
+    const timer = window.setTimeout(() => setFlash(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [focusTraceId, focusTick]) // eslint-disable-line
   if (!turns.length) return <div className="trace-view"><div className="hint">本轮暂无轨迹</div></div>
   return (
     <div className="trace-view">
       {turns.map((t, i) => (
-        <div key={i} className="trace-turn">
+        <div key={i} className={"trace-turn" + (flash === t.trace_id ? " trace-flash" : "")} id={t.trace_id != null ? "turn-" + t.trace_id : undefined}>
           <div className="trace-turn-head" onClick={() => setOpen(open === i ? null : i)}>
             <span className="tdot" style={{ background: statusColor(t.reason) }} />
             <span className="trace-turn-title">Turn #{i + 1}</span>
+            {t.trace_id != null && <button className="trace-tid" title={"trace #" + t.trace_id + "(轮级,点击复制,排障报这串)"} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(t.trace_id)) }}>trace #{t.trace_id}</button>}
             <span className="trace-turn-meta">
               {t.steps.length}步 · {t.steps.reduce((a, s) => a + s.tools.length, 0)}工具
               {t.elapsed_ms != null ? " · " + fmtDur(t.elapsed_ms) : ""}
@@ -220,12 +235,22 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
               {t.tps != null ? " · " + fmtTps(t.tps) : ""}
               {t.promptTokens != null ? " · " + fmtCtx(t.promptTokens) + "→" + fmtCtx(t.completionTokens) : ""}
             </span>
+            {(() => { const tw = t.steps.reduce((a, s) => a + (s.tools || []).reduce((x, tl) => x + (tl.elapsed_ms || 0), 0), 0); const sw = t.steps.reduce((a, s) => a + (s.elapsed_ms || 0), 0); if (!sw && !tw) return null; return <span className="trace-timing" title="工具 = 各工具真实执行耗时;LLM ≈ 步总耗时 − 工具耗时">工具 {fmtDur(tw)}{sw > 0 ? " · LLM≈" + fmtDur(Math.max(0, sw - tw)) : ""}</span> })()}
             {t.flags.length > 0 && <span className="trace-turn-flags">{t.flags.map((f) => <span key={f} className="trace-flag">{f}</span>)}</span>}
             <span className="trace-turn-chev">{open === i ? "▾" : "▸"}</span>
           </div>
           <div className="trace-chips">{traceChips(t).map((ch, ci) => <span key={ci} className={"trace-chip " + ch.cls}>{ch.label}</span>)}</div>
           {open === i && (
             <div className="trace-turn-body">
+              {t.compactions && t.compactions.length > 0 && t.compactions.map((cp, ci) => (
+                <details key={"cp" + ci} className="trace-collapse trace-comp">
+                  <summary className="trace-step-line trace-comp-head"><span className="trace-k">压缩</span>{cp.shadowed.length > 0 ? "压掉 " + cp.shadowed.length + " 条 · " : ""}{cp.chars_saved != null ? "省 " + cp.chars_saved + " 字 · " : ""}{cp.reason === "context-overflow" ? "溢出压缩" : cp.reason === "pressure" ? "压力压缩" : "压缩"}{cp.summary ? " · 摘要见展开" : ""}</summary>
+                  <div className="trace-comp-body">
+                    {cp.summary ? <div className="trace-comp-sec"><b>压缩摘要(模型看到的)</b><pre className="trace-full">{cp.summary}</pre></div> : null}
+                    {cp.shadowed.length > 0 && <div className="trace-comp-sec"><b>被压掉的原文({cp.shadowed.length} 条,仍留事件日志可回放)</b>{cp.shadowed.map((m, mi) => <div key={mi} className="trace-comp-msg"><i>{(m.role === "user" ? "用户" : m.role === "assistant" ? "助手" : "?") + " · L" + m.seq}</i><span>{m.text || "(无文本)"}</span></div>)}</div>}
+                  </div>
+                </details>
+              ))}
               {t.steps.map((s, si) => (
                 <div key={si} className="trace-step">
                   <div className="trace-step-head">Step {s.step}{s.elapsed_ms != null ? " · " + fmtDur(s.elapsed_ms) : ""}</div>
@@ -246,8 +271,9 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
                       <span className="tool-name">{tl.tool}</span>
                       <span className="trace-tool-args">{JSON.stringify(tl.args)}</span>
                       {tl.query != null ? <span className="trace-tool-query">{tl.query}{tl.chunkCount != null ? " · " + tl.chunkCount + "块" : ""}</span> : null}
-                      <span className={"tool-status" + (tl.ok === false ? " failed" : "")}>{tl.ok === false ? "失败" : "✓"}</span>
+                      <span className={"tool-status" + (tl.ok === false ? " failed" : "")}>{tl.ok === false ? "失败" : "✓"}{tl.elapsed_ms != null ? " " + fmtDur(tl.elapsed_ms) : ""}</span>
                       {tl.error ? <span className="trace-tool-err">{tl.error}</span> : null}
+                      {tl.timings && (Object.keys(tl.timings).length > 0) && <div className="trace-tool-stages">{[["embed", "嵌入"], ["dense", "稠密"], ["bm25", "BM25"], ["rerank", "重排"]].map(([k, label]) => tl.timings![k] != null ? <span key={k} className="kb-tag">{label} {fmtDur(tl.timings![k])}</span> : null)}</div>}
                       {tl.sections && tl.sections.length > 0 && <div className="trace-tool-hits">{tl.sections.map((s, k) => <span key={k} className="kb-tag">{s}</span>)}</div>}
                       {tl.chunks && tl.chunks.length > 0 && (
                         <div className="trace-tool-chunks">
@@ -282,7 +308,7 @@ function TraceView({ turns }: { turns: TraceTurn[] }) {
   )
 }
 
-function Center({ messages, input, setInput, busy, send, onStop, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onStop: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void }) {
+function Center({ messages, input, setInput, busy, send, onStop, onCite, activeCite, title, trace, activeTab, setActiveTab, ctxUsage, model, setModel, cfgWindow, sessionId, audit, onRefreshAudit, focusTraceId, focusTick, onOpenTrace }: { messages: Msg[]; input: string; setInput: (s: string) => void; busy: boolean; send: () => void; onStop: () => void; onCite: (msgId: string, idx: number) => void; activeCite: { msgId: string; idx: number } | null; title: string; trace: TraceTurn[]; activeTab: "chat" | "trace" | "audit"; setActiveTab: (t: "chat" | "trace" | "audit") => void; ctxUsage: { used: number; window: number; system: number; tools: number; messages: number; compression: boolean } | null; model: string; setModel: (m: string) => void; cfgWindow: number; sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefreshAudit: () => void; focusTraceId?: number | null; focusTick?: number; onOpenTrace?: (traceId: number) => void }) {
   const win = cfgWindow || ctxUsage?.window || 0   // cfgWindow(实时 /api/config)优先,避免历史 request_context 固化的旧窗口盖过新配置
   const ctxPct = ctxUsage && win > 0 ? Math.min(100, Math.round((ctxUsage.used / win) * 100)) : 0
   const [modelMenu, setModelMenu] = useState(false)
@@ -316,8 +342,8 @@ function Center({ messages, input, setInput, busy, send, onStop, onCite, activeC
     {activeTab === "chat"
       ? <div className="messages" ref={listRef} onScroll={onScroll}>{messages.length === 0 && <div className="hint">问一个保险问题,例如:重疾险的责任免除包括哪些?</div>}{(() => { const rows: ReactNode[] = []; let i = 0; while (i < messages.length) { const m = messages[i]; if (m.role === "user" || m.role === "answer" || m.role === "note") { rows.push(<div key={m.id} className={"message " + (m.role === "answer" ? "assistant" : m.role)} data-time-hover-root>{renderRow(m)}</div>); i += 1; continue } const grp: Msg[] = []; let j = i; while (j < messages.length && (messages[j].role === "think" || messages[j].role === "text" || messages[j].role === "tool")) { grp.push(messages[j]); j += 1 } const hasAnswer = j < messages.length && messages[j].role === "answer"; const ansRun = hasAnswer ? messages[j].runMs : undefined; const label = hasAnswer ? (ansRun != null ? ("任务耗时 " + fmtElapsed(ansRun)) : (busy ? "任务进行中…" : "会话中断")) : (busy ? "任务进行中…" : "会话中断"); rows.push(<div key={"g" + i} className="message assistant" data-time-hover-root><div className="ans-wrap"><details className="process-group" open={!hasAnswer}><summary className="process-summary"><span className="process-label">{label}</span></summary><div className="process-body">{grp.map((g) => (<div key={g.id} className="message assistant" data-time-hover-root>{renderRow(g)}</div>))}</div></details></div></div>); i = j } return rows })()}{!atBottom && messages.length > 0 && (<button className="jump-bottom" onClick={jumpToBottom} aria-label="回到底部" title="回到底部"><I><polyline points="6 9 12 15 18 9"/></I></button>)}</div>
       : activeTab === "trace"
-      ? <TraceView turns={trace} />
-      : <AuditView sessionId={sessionId} audit={audit} onRefresh={onRefreshAudit} />}
+      ? <TraceView turns={trace} focusTraceId={focusTraceId} focusTick={focusTick} />
+      : <AuditView sessionId={sessionId} audit={audit} onRefresh={onRefreshAudit} onOpenTrace={onOpenTrace} />}
         <div className="input-wrap"><div className="composer"><div className="composer-top"><textarea className="composer-input" rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="给保险助手发消息" /></div><div className="composer-bottom"><div className="composer-tools"><button className="tool-btn"><I><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></I><span>Workspace Write</span></button></div><div className="composer-right"><div className="model-wrap"><div className="model-select" onClick={() => setModelMenu((m) => !m)} title="选择模型"><span className="model-dot"></span><span className="model-name">{model}</span><I><path d="M6 9l6 6 6-6"/></I></div>{modelMenu && (<><span className="ctx-backdrop" onClick={() => setModelMenu(false)} /><div className="model-menu">{["deepseek-v4-flash", "deepseek-v4-pro"].map((m) => (<div key={m} className={"model-item" + (m === model ? " active" : "")} onClick={() => { setModel(m); setModelMenu(false) }}><span>{m}</span>{m === model ? <span className="model-check">✓</span> : null}</div>))}</div></>)}</div><button className="ctx-toggle" title="上下文用量" onClick={() => setCtxPop((p) => !p)}><svg className="ctx-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="#edf1f7" strokeWidth="4"/><circle cx="18" cy="18" r="15.5" fill="none" stroke="#5686fe" strokeWidth="4" strokeLinecap="round" strokeDasharray={String(2 * Math.PI * 15.5)} strokeDashoffset={String(2 * Math.PI * 15.5 * (1 - ctxPct / 100))} transform="rotate(-90 18 18)"/><text x="18" y="21" textAnchor="middle" fontSize="8" fill="#0f1115">{ctxPct}%</text></svg></button>{ctxPop && (<><span className="ctx-backdrop" onClick={() => setCtxPop(false)} /><div className="ctx-pop"><div className="ctx-usage"><div className="ctx-head"><span>上下文已用 <b>{ctxPct}%</b></span><span className="ctx-total">{fmtCtx(ctxUsage?.used ?? 0)} / {fmtCtx(win)}</span></div><div className="ctx-bar"><div className="ctx-fill" style={{ width: ctxPct + "%" }} /></div><div className="ctx-rows"><div className="ctx-row"><span className="ctx-dot sys" />系统提示词<span className="ctx-val">{fmtCtx(ctxUsage?.system)}</span></div><div className="ctx-row"><span className="ctx-dot tool" />工具<span className="ctx-val">{fmtCtx(ctxUsage?.tools)}</span></div><div className="ctx-row"><span className="ctx-dot msg" />对话消息<span className="ctx-val">{fmtCtx(ctxUsage?.messages)}</span></div></div></div></div></>)}{busy
   ? <button className="stop-btn" onClick={onStop} title="停止生成" aria-label="停止生成"><I><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></I></button>
   : <button className="send-btn" onClick={send} disabled={busy || !input.trim()}><I><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></I></button>}</div></div></div></div>
@@ -336,6 +362,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"chat" | "trace" | "audit">("chat")
   const [audit, setAudit] = useState<{ items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null>(null)
   const loadAudit = async () => { if (!activeId) { setAudit(null); return }; try { const [a, m, o] = await Promise.all([getAudit(activeId), getSessionMetrics(activeId), getObservability()]); setAudit({ items: a.items, sessionMetrics: m, overall: o }) } catch { setAudit({ items: [], sessionMetrics: null, overall: null }) } }
+  // M0:审计/告警"定位某轮"→ 切到轨迹 tab 并高亮该轮(trace_id = 该轮 turn_start 的 seq;focusTick 让同一轮可重复触发)
+  const [focusTraceId, setFocusTraceId] = useState<number | null>(null)
+  const [focusTick, setFocusTick] = useState(0)
+  const openTraceInTab = (traceId: number) => { setFocusTraceId(traceId); setFocusTick((x) => x + 1); setActiveTab("trace") }
   useEffect(() => { if (activeTab === "audit") loadAudit() }, [activeTab, activeId]) // eslint-disable-line
   const [sideW, setSideW] = useState(SIDEBAR_DEFAULT)
   const [sideCollapsed, setSideCollapsed] = useState(false)
@@ -436,22 +466,28 @@ export default function App() {
     let tstep: TraceStep | null = null
     let lastTool: TraceTool | null = null
     let retrieved: Set<string> | null = null
+    // M3 压缩明细:记录每轮 摘要/被压原文(shadowed_seqs 指向的原文在 append-only events 里可还原)
+    const seqText = new Map<number, { role: string; text: string }>()
+    let compInfo: { summary: string; shadowed: number[]; reason?: string } | null = null
     evs.forEach((e) => {
       const t = e.type, p = e.payload || {}
-      if (t === "turn_start") { turn = { turn: 1, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; turns.push(turn); tstep = null; lastTool = null; retrieved = new Set() }
+      if (t === "turn_start") { turn = { turn: 1, trace_id: e.seq, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; turns.push(turn); tstep = null; lastTool = null; retrieved = new Set() }
       else if (t === "step_start") { tstep = { step: p.step ?? 1, reasoning: "", text: "", tools: [] }; turn?.steps.push(tstep); lastTool = null }
       else if (t === "assistant_chunk") { if (tstep) { const k = p.kind, d = p.delta || ""; if (k === "reasoning") tstep.reasoning += d; else if (k === "text") tstep.text += d } }
       else if (t === "tool_call") { lastTool = { tool: p.tool, args: p.args }; tstep?.tools.push(lastTool); if (turn && (p.tool === "search_knowledge" || p.tool === "session_history_search")) turn.nSearchTools = (turn.nSearchTools || 0) + 1 }
-      else if (t === "tool_result") { if (lastTool) { lastTool.ok = p.ok; lastTool.error = p.error; lastTool.truncated = p.result_truncated; if (turn && p.ok === false) turn.failCount = (turn.failCount || 0) + 1 } }
+      else if (t === "tool_result") { if (lastTool) { lastTool.ok = p.ok; lastTool.error = p.error; lastTool.truncated = p.result_truncated; lastTool.elapsed_ms = p.elapsed_ms; if (turn && p.ok === false) turn.failCount = (turn.failCount || 0) + 1 } }
       else if (t === "retrieval") {
-        if (lastTool) { lastTool.query = p.query; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.chunks = cs; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
+        if (lastTool) { lastTool.query = p.query; lastTool.timings = p.timings || undefined; const cs = p.chunks || []; lastTool.chunkCount = cs.length; lastTool.chunks = cs; lastTool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")); }
         if (turn) { turn.nRetrieval = (turn.nRetrieval || 0) + 1; const cs = p.chunks || []; if (!cs.length) turn.nEmpty = (turn.nEmpty || 0) + 1; cs.forEach((c: any) => retrieved?.add(c.chunk_id)) }
       }
-      else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } }
+      else if (t === "user_message") { if (e.seq != null) seqText.set(e.seq, { role: "user", text: p.text || "" }) }
+      else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } if (e.seq != null) seqText.set(e.seq, { role: "assistant", text: ((p.blocks || []) as any[]).map((b: any) => b.t === "ul" || b.t === "ol" ? (b.items || []).join("；") : (b.text || "")).join(" ").trim() }) }
       else if (t === "step_end") { if (tstep) tstep.elapsed_ms = p.elapsed_ms }
       else if (t === "usage") { if (turn) { turn.promptTokens = p.prompt_tokens; turn.completionTokens = p.completion_tokens } }
       else if (t === "turn_end") { if (turn) { turn.reason = p.reason; turn.elapsed_ms = p.elapsed_ms; turn.ttft_ms = p.ttft_ms; turn.tps = p.tokens_per_second } }
-      else if (t === "compaction_start" || t === "compaction_end") { if (turn && !turn.flags.includes("压缩")) turn.flags.push("压缩") }
+      else if (t === "compaction_summary") { compInfo = { summary: p.summary || "", shadowed: (p.shadowed_seqs || []) as number[], reason: p.reason } }
+      else if (t === "compaction_end") { if (compInfo && turn) { if (!turn.compactions) turn.compactions = []; turn.compactions.push({ summary: compInfo.summary, chars_saved: p.chars_saved, reason: compInfo.reason || p.reason, shadowed: compInfo.shadowed.map((s) => ({ seq: s, role: (seqText.get(s) || {}).role || "?", text: (seqText.get(s) || {}).text || "" })).filter((m) => m.role !== "?" || !!m.text) }); } compInfo = null; if (turn && !turn.flags.includes("压缩")) turn.flags.push("压缩") }
+      else if (t === "compaction_start") { if (turn && !turn.flags.includes("压缩")) turn.flags.push("压缩") }
       else if (t === "llm_retry") { if (turn) { const c = turn.flags.findIndex((f) => f.startsWith("重试")); if (c >= 0) { const m = turn.flags[c].match(/\d+/); turn.flags[c] = "重试×" + (m ? parseInt(m[0], 10) + 1 : 2) } else turn.flags.push("重试×1") } }
       else if (t === "guard_triggered") { if (turn && !turn.flags.includes("护栏")) turn.flags.push("护栏") }
       if (turn) turn.raw.push({ type: t, payload: p })
@@ -506,20 +542,25 @@ export default function App() {
     let compactionNoteId: string | null = null   // 压缩中的聊天流提示行(压缩结束即移除)
     // ---- live trace:按事件增量构建当前 turn 的轨迹,让"轨迹"tab 流式期间实时可见 ----
     // 用对象容器承载(mutate-in-place + 外层数组浅克隆),避免 TS 对闭包内赋值变量的"never 窄化"误判
-    const lt = { turn: null as TraceTurn | null, step: null as TraceStep | null, tool: null as TraceTool | null }
+    const lt = { turn: null as TraceTurn | null, step: null as TraceStep | null, tool: null as TraceTool | null, retrieved: null as Set<string> | null }
+    let liveComp: { summary: string; reason?: string } | null = null   // live 压缩明细(无原文,原文走回放重建)
     const traceEvent = (e: PEvent) => {
       const t = e.type
       const touch = () => { if (lt.turn) setTrace((prev) => [...prev]) }
-      if (t === "turn_start") { if (!lt.turn) { lt.turn = { turn: 1, steps: [], flags: [], raw: [] }; setTrace((prev) => [...prev, lt.turn as TraceTurn]) } }
+      // 与 loadEvents 回放构建同口径:实时也维护 trace_id 与诊断计数,否则轨迹流式期间徽标/轮号会失真
+      if (t === "turn_start") { if (!lt.turn) { lt.turn = { turn: 1, trace_id: e.seq, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; lt.retrieved = new Set(); setTrace((prev) => [...prev, lt.turn as TraceTurn]) } }
       else if (t === "step_start") { if (lt.turn) { lt.step = { step: e.payload?.step ?? lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step); touch() } }
       else if (t === "assistant_chunk") { const k = e.payload?.kind, d = e.payload?.delta || ""; if (lt.step && (k === "reasoning" || k === "text")) { if (k === "reasoning") lt.step.reasoning += d; else lt.step.text += d } }
-      else if (t === "tool_call") { if (lt.turn) { if (!lt.step) { lt.step = { step: lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step) } lt.tool = { tool: e.payload?.tool, args: e.payload?.args }; lt.step.tools.push(lt.tool); touch() } }
-      else if (t === "tool_result") { if (lt.tool) { lt.tool.ok = e.payload?.ok !== false; lt.tool.error = e.payload?.error; touch() } }
-      else if (t === "retrieval") { if (lt.tool) { lt.tool.query = e.payload?.query; lt.tool.chunkCount = (e.payload?.chunks || []).length } }
+      else if (t === "tool_call") { if (lt.turn) { if (!lt.step) { lt.step = { step: lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step) } lt.tool = { tool: e.payload?.tool, args: e.payload?.args }; lt.step.tools.push(lt.tool); if (e.payload?.tool === "search_knowledge" || e.payload?.tool === "session_history_search") lt.turn.nSearchTools = (lt.turn.nSearchTools || 0) + 1; touch() } }
+      else if (t === "tool_result") { if (lt.tool) { lt.tool.ok = e.payload?.ok !== false; lt.tool.error = e.payload?.error; lt.tool.elapsed_ms = e.payload?.elapsed_ms; if (lt.turn && lt.tool.ok === false) lt.turn.failCount = (lt.turn.failCount || 0) + 1; touch() } }
+      else if (t === "retrieval") { if (lt.tool) { lt.tool.query = e.payload?.query; lt.tool.timings = e.payload?.timings || undefined; const cs = e.payload?.chunks || []; lt.tool.chunkCount = cs.length } if (lt.turn) { lt.turn.nRetrieval = (lt.turn.nRetrieval || 0) + 1; const cs = e.payload?.chunks || []; if (!cs.length) lt.turn.nEmpty = (lt.turn.nEmpty || 0) + 1; cs.forEach((c: any) => lt.retrieved?.add(c.chunk_id)); touch() } }
+      else if (t === "assistant_message") { if (lt.turn) { const cs = e.payload?.citations || []; lt.turn.citeCount = cs.length; lt.turn.groundedCount = cs.filter((c: any) => lt.retrieved?.has(c.chunk_id)).length } }
       else if (t === "step_end") { if (lt.step) { lt.step.elapsed_ms = e.payload?.elapsed_ms; touch() } }
       else if (t === "usage") { if (lt.turn) { lt.turn.promptTokens = e.payload?.prompt_tokens; lt.turn.completionTokens = e.payload?.completion_tokens } }
       else if (t === "turn_end") { if (lt.turn) { const p = e.payload || {}; lt.turn.reason = p.reason; lt.turn.elapsed_ms = p.elapsed_ms; lt.turn.ttft_ms = p.ttft_ms; lt.turn.tps = p.tokens_per_second; touch() } }
-      else if (t === "compaction_start" || t === "compaction_end") { if (lt.turn && !lt.turn.flags.includes("压缩")) { lt.turn.flags.push("压缩"); touch() } }
+      else if (t === "compaction_summary") { if (lt.turn) { liveComp = { summary: e.payload?.summary || "", reason: e.payload?.reason } } }
+      else if (t === "compaction_end") { if (lt.turn && liveComp) { if (!lt.turn.compactions) lt.turn.compactions = []; lt.turn.compactions.push({ summary: liveComp.summary, chars_saved: e.payload?.chars_saved, reason: liveComp.reason || e.payload?.reason, shadowed: [] }); } liveComp = null; if (lt.turn && !lt.turn.flags.includes("压缩")) { lt.turn.flags.push("压缩"); touch() } }
+      else if (t === "compaction_start") { if (lt.turn && !lt.turn.flags.includes("压缩")) { lt.turn.flags.push("压缩"); touch() } }
       else if (t === "guard_triggered") { if (lt.turn && !lt.turn.flags.includes("护栏")) { lt.turn.flags.push("护栏"); touch() } }
     }
     openThink = mid()
@@ -602,7 +643,7 @@ export default function App() {
     )}
     <div className="centerCol" style={{ width: cols.center }}>
       {currentView === "chat" ? (
-        <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} />
+        <Center messages={messages} input={input} setInput={setInput} busy={busy} send={send} onStop={stop} onCite={toggleSource} activeCite={activeCite} title={sessions.find((s2) => s2.id === activeId)?.title || "新会话"} trace={trace} activeTab={activeTab} setActiveTab={setActiveTab} ctxUsage={ctxUsage} model={model} setModel={setModel} cfgWindow={cfgWindow} sessionId={activeId} audit={audit} onRefreshAudit={loadAudit} focusTraceId={focusTraceId} focusTick={focusTick} onOpenTrace={openTraceInTab} />
       ) : currentView === "knowledge" ? (
         <KbManager onBack={() => setCurrentView("chat")} onOpenCompare={() => setCurrentView("compare")} />
       ) : currentView === "diagnose" ? (
@@ -627,7 +668,7 @@ export default function App() {
 }
 function fmtTok(n?: number): string { if (n == null) return "—"; if (n >= 1000) { const v = n / 1000; return "~" + (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + "K" } return String(n) }
 function fmtCost(c?: number | null): string { if (c == null) return "—"; return "$" + Number(c).toFixed(4) }
-function AuditView({ sessionId, audit, onRefresh }: { sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefresh: () => void }) {
+function AuditView({ sessionId, audit, onRefresh, onOpenTrace }: { sessionId: string | null; audit: { items: AuditItem[]; sessionMetrics: Metrics | null; overall: any } | null; onRefresh: () => void; onOpenTrace?: (traceId: number) => void }) {
   const t = audit?.overall?.totals
   const sm = audit?.sessionMetrics
   const [mem, setMem] = useState<PEvent[]>([])
@@ -650,7 +691,7 @@ function AuditView({ sessionId, audit, onRefresh }: { sessionId: string | null; 
             <div className="audit-q"><span className="audit-idx">{i + 1}</span><span className="audit-question">{it.question || "(无问题)"}</span><span className="audit-badges">{it.error ? <span className="badge badge-err">错误</span> : null}{it.approvals > 0 ? <span className="badge badge-ap">审批×{it.approvals}</span> : null}{it.retries > 0 ? <span className="badge badge-rt">重试×{it.retries}</span> : null}</span></div>
             <div className="audit-meta">{it.model ? it.model + " · " : ""}{it.elapsed_ms != null ? ("耗时 " + fmtDur(it.elapsed_ms)) + " · " : ""}{"token " + ((it.prompt_tokens || 0) + (it.completion_tokens || 0)) + " · "}{"成本 " + fmtCost(it.cost)}</div>
             <div className="audit-a">{(it.answer || []).map((b: any) => b.t === "ul" ? (b.items || []).join("；") : (b.text || "")).join(" ") || "—"}</div>
-            <div className="audit-meta2">{"检索×" + (it.retrievals || 0) + " · 引用×" + (it.citations?.length || 0) + " · " + (it.ts ? formatClock(it.ts) : "")}</div>
+            <div className="audit-meta2">{"检索×" + (it.retrievals || 0) + " · 引用×" + (it.citations?.length || 0) + " · " + (it.ts ? formatClock(it.ts) : "")}{it.trace_id != null && onOpenTrace ? <button className="audit-locate" title={"定位到第 " + (i + 1) + " 轮(trace #" + it.trace_id + ")的轨迹"} onClick={() => onOpenTrace(it.trace_id as number)}>定位该轮</button> : null}</div>
           </div>
         ))}
       </div>

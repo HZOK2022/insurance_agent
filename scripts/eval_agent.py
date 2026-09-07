@@ -21,7 +21,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.api.services import container
 from app.api.services.agent_service import run_prompt
 
-EVAL_SET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "eval", "eval_set.json")
+_EVAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "eval")
+EVAL_SET = os.path.join(_EVAL_DIR, "eval_set.json")
+# 扩充集(refuse/injection/boundary/grounded 等,与主集同 schema,存在即并入)
+EVAL_EXTRA = os.path.join(_EVAL_DIR, "eval_set_extra.json")
 
 # 六维打分(结果层 + 边界),0-3
 _SCORE_DIMS = ["groundedness", "faithfulness", "accuracy", "completeness", "safety", "helpfulness"]
@@ -62,14 +65,23 @@ def blocks_to_text(blocks) -> str:
 
 
 def run_case(store, llm, bundle, sid, query):
-    """跑一次 agent,收集答案/引用/轨迹/token/耗时。"""
+    """跑一次 agent,收集答案/引用/轨迹/token/耗时/检索集。
+    retrieval_chunk_ids:本轮全部检索事件返回的 chunk_id 并集 —— 供引用层校验
+    (citations 必须落在该集合内;会话跑完即删,事实全靠这里带出)。"""
     answer, citations, tool_calls, usage, elapsed = "", [], [], None, None
+    retrieved: set[str] = set()
     ts0 = time.time()
     for ev in run_prompt(store, llm, bundle, sid, query):
         t = ev.get("type"); p = ev.get("payload") or {}
         if t == "assistant_message":
             answer = blocks_to_text(p.get("blocks"))
             citations = p.get("citations") or []
+        elif t == "retrieval":
+            # 检索事件快照:chunks[{chunk_id,...}];取并集(一轮可能有多次检索)
+            for ch in (p.get("chunks") or []):
+                cid = ch.get("chunk_id") if isinstance(ch, dict) else None
+                if cid:
+                    retrieved.add(cid)
         elif t == "tool_call":
             tool_calls.append({"tool": p.get("tool"), "args": p.get("args")})
         elif t == "usage":
@@ -77,7 +89,8 @@ def run_case(store, llm, bundle, sid, query):
         elif t == "turn_end":
             elapsed = p.get("elapsed_ms")
     return {"answer": answer, "citations": citations, "tool_calls": tool_calls,
-            "usage": usage, "elapsed_ms": elapsed}
+            "usage": usage, "elapsed_ms": elapsed,
+            "retrieval_chunk_ids": sorted(retrieved)}
 
 
 def judge(llm, query, expected, answer, citations):
@@ -97,20 +110,89 @@ def judge(llm, query, expected, answer, citations):
         return {"error": str(e)}
 
 
+_REPEAT_STD_THRESHOLD = 0.3  # 单维 std > 0.3 → judge 噪声大,分数不视为基线(CITATION_VALIDATION §3)
+
+
+def _stats(values: list) -> tuple:
+    """返回 (mean, std),空序列返回 (None, None)。"""
+    if not values:
+        return None, None
+    n = len(values)
+    m = sum(values) / n
+    var = sum((v - m) ** 2 for v in values) / n
+    return round(m, 2), round(var ** 0.5, 2)
+
+
+def run_repeat(store, llm, bundle, cases, repeat, out):
+    """judge 稳定性:每条 case agent 只跑一次收集回答,judge 独立评 repeat 次。
+    每 case 每维记 mean/std,std>_REPEAT_STD_THRESHOLD 标噪声(分数不进基线)。"""
+    dims = _SCORE_DIMS
+    noisy_cases, per_dim_std = [], {d: [] for d in dims}
+    results = []
+    for i, c in enumerate(cases):
+        sid = store.create_session("eval")["id"]
+        print(f"[{i+1}/{len(cases)}] repeat-judge {c['id']} ({c['type']}) x{repeat} ...")
+        try:
+            case = run_case(store, llm, bundle, sid, c["user_query"])
+        except Exception as e:  # noqa: BLE001
+            case = {"answer": "", "citations": [], "tool_calls": [], "usage": None, "elapsed_ms": None, "error": str(e)}
+        scores = [judge(llm, c["user_query"], c.get("expected", {}), case["answer"], case["citations"])
+                  for _ in range(repeat)]
+        store.delete_session(sid)
+
+        rows = {d: [s.get(d) for s in scores if isinstance(s.get(d), (int, float))] for d in dims}
+        stats = {d: _stats(rows[d]) for d in dims}
+        noisy = {d: sd for d, (_, sd) in stats.items() if sd is not None and sd > _REPEAT_STD_THRESHOLD}
+        if noisy:
+            noisy_cases.append({"id": c["id"], "type": c["type"], "noisy_dims": noisy})
+        for d in dims:
+            if stats[d][1] is not None:
+                per_dim_std[d].append(stats[d][1])
+        results.append({"id": c["id"], "type": c["type"],
+                        "mean": {d: stats[d][0] for d in dims},
+                        "std": {d: stats[d][1] for d in dims},
+                        "scores": scores, "answer": case["answer"], "citations": case["citations"]})
+        print(f"    std={json.dumps(stats, ensure_ascii=False)}")
+
+    report = {
+        "mode": "repeat", "repeat": repeat, "threshold": _REPEAT_STD_THRESHOLD,
+        "count": len(results),
+        "dim_avg_std": {d: _stats(per_dim_std[d])[0] for d in dims},
+        "noisy_cases": noisy_cases,
+        "results": results,
+    }
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=1)
+    print(f"[done] {len(results)} cases x{repeat} -> {out}")
+    print(f"[repeat] dim_avg_std={json.dumps(report['dim_avg_std'], ensure_ascii=False)}"
+          f" noisy_cases={len(noisy_cases)}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--category", default="")
     ap.add_argument("--out", default="eval_report.json")
+    ap.add_argument("--repeat", type=int, default=0,
+                    help=">1 时对每条 case 的 judge 独立评 N 次,输出每维 mean/std(judge 稳定性,不重跑 agent)")
     a = ap.parse_args()
 
     with open(EVAL_SET, encoding="utf-8") as f:
         cases = json.load(f)
+    if os.path.isfile(EVAL_EXTRA):   # 并入扩充集(refuse/injection/boundary/grounded...)
+        with open(EVAL_EXTRA, encoding="utf-8") as f:
+            cases.extend(json.load(f))
     if a.category:
         cats = set(x.strip() for x in a.category.split(",") if x.strip())
         cases = [c for c in cases if c.get("type") in cats]
     if a.limit:
         cases = cases[: a.limit]
+
+    # repeat 模式:judge 稳定性(不重跑 agent),输出独立结构
+    if a.repeat > 1:
+        run_repeat(container.get_store(), container.get_llm(), container.get_insurance_bundle(),
+                   cases, a.repeat, a.out)
+        return
 
     store = container.get_store()
     llm = container.get_llm()

@@ -389,5 +389,66 @@ class WindowBoundTest(_Base):
         asst_idx = next(i for i, e in enumerate(evs) if e["type"] == "assistant_message")
         self.assertGreater(last_rc_idx, asst_idx)
 
+
+class NonRetrieveToolTest(unittest.TestCase):
+    """非检索工具(calculate_premium 等)不得消耗 max_retrieve_per_turn。
+
+    原 bug:_has_kw_tool = "非 session_history_search 即算检索",把 calculate_premium 也计入
+    n_retrieve → 检索上限被算费调用提前消耗,"已检索未完全"在真检索不足上限时提前出现(实测
+    10 轮 force_answer 里 7 轮 search_knowledge 仅 1~3 次、total tool 6~13)。修复后 _has_kw_tool
+    只认 retrieve_tool_names(默认 {"search_knowledge"}),其它工具不占检索额度。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.store = SessionStore(os.path.join(self.dir, "t.db"))
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_premium_calls_do_not_consume_retrieve_budget(self):
+        cfg = types.SimpleNamespace(max_steps_per_turn=12, max_retrieve_per_turn=2, deepseek_model="fake")
+        seen_msgs = []
+
+        class PremiumLLM:
+            def __init__(self):
+                self.calls = 0
+            def chat_stream(self, messages, json_mode=False, tools=None, model=None):
+                seen_msgs.append(messages)
+                self.calls += 1
+                if self.calls <= 6:  # 6 次算费 > max_retrieve=2
+                    yield {"kind": "reasoning", "delta": "算费", "block_index": 0, "ttft_ms": 10}
+                    yield {"kind": "tool-call", "delta": '{"product":"x"}', "block_index": 1, "name": "calculate_premium", "call_id": "p%d" % self.calls}
+                    yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+                else:
+                    yield {"kind": "reasoning", "delta": "好了", "block_index": 0, "ttft_ms": 5}
+                    yield {"kind": "text", "delta": "最终保费", "block_index": 1}
+                    yield {"kind": "usage", "delta": "", "block_index": None, "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+
+        def emit(t, p):
+            ev = make_event(t, p)
+            self.store.append("s1", t, p)
+            return ev
+
+        search_schema = {"type": "function", "function": {"name": "search_knowledge", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
+        premium_schema = {"type": "function", "function": {"name": "calculate_premium", "parameters": {"type": "object", "properties": {"product": {"type": "string"}}, "required": ["product"]}}}
+        tools = {
+            "search_knowledge": {"schema": search_schema, "handler": lambda a, s=0: {"content": "[1] 片段", "reference": [{"chunk_id": "doc:1", "content": "x", "score": 0.9}]}},
+            "calculate_premium": {"schema": premium_schema, "handler": lambda a, s=0: {"content": "保费说明", "reference": {"company": "x"}}},
+        }
+        present = lambda text, refs: ([{"t": "p", "text": text}], [])
+        force = lambda refs: ([{"t": "p", "text": "已检索多次,未获取完整清单"}], [])
+        loop = AgentLoop(PremiumLLM(), "系统", tools, present, cfg, emit=emit, force_answer=force,
+                         retrieve_tool_names={"search_knowledge"})
+        evs = list(loop.turn("s1", "保费多少"))
+        # 关键断言:6 次算费(>max_retrieve=2)不触发"检索已达上限"注入 —— 说明非检索工具不占额度
+        for msgs in seen_msgs:
+            self.assertNotIn("检索次数已达上限", repr(msgs))
+        # 模型可自由调算费(不被检索上限掐掉),共 6 次 tool_call
+        self.assertEqual(sum(1 for e in evs if e["type"] == "tool_call"), 6)
+        # 正常收敛(answer 结束),未走 force_answer 兜底
+        self.assertEqual(evs[-1]["type"], "turn_end")
+        self.assertTrue(all("已检索多次" not in repr(e.get("payload")) for e in evs))
+
 if __name__ == "__main__":
     unittest.main()

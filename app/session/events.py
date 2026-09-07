@@ -38,7 +38,7 @@ def _validate_retrieval(p):
         sc = c.get("score")
         if sc is not None and not isinstance(sc, (int, float)):
             raise ValueError("chunk score 非数字")
-    return {"query": _req(p, "query", str), "chunks": chunks}
+    return {"query": _req(p, "query", str), "chunks": chunks, "timings": p.get("timings")}
 
 
 def _validate_assistant_message(p):
@@ -85,8 +85,11 @@ def _validate_assistant_chunk(p):
     return out
 def _validate_tool_call(p): return {"tool": _req(p, "tool", str), "args": p.get("args")}
 def _validate_tool_result(p):
-    return {"tool": _req(p, "tool", str), "ok": bool(p.get("ok", False)),
-            "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
+    out = {"tool": _req(p, "tool", str), "ok": bool(p.get("ok", False)),
+           "result_truncated": bool(p.get("result_truncated", False)), "error": p.get("error")}
+    if p.get("elapsed_ms") is not None:
+        out["elapsed_ms"] = int(p["elapsed_ms"])
+    return out
 def _validate_approval_request(p): return {"request_id": p.get("request_id"), "tool": _req(p, "tool", str), "args": p.get("args"), "reason": p.get("reason")}
 def _validate_approval_decision(p): return {"request_id": p.get("request_id"), "status": _req(p, "status", str), "edited_args": p.get("edited_args"), "reason": p.get("reason"), "decided_by": p.get("decided_by")}
 def _validate_llm_retry(p):
@@ -133,6 +136,8 @@ def _validate_usage(p):
     for k in ("ttft_ms", "run_ms", "tokens_per_second", "prompt_tokens_cache_hit", "context_used_tokens", "context_window"):
         if k in p and p[k] is not None:
             out[k] = p[k]
+    if p.get("trace_id") is not None:
+        out["trace_id"] = p["trace_id"]
     return out
 def _validate_turn(p):
     out = {}
@@ -146,7 +151,7 @@ def _validate_guard_triggered(p):
 
 def _validate_badcase_snapshot(p):
     # 坏例快照:错误/中断/工具失败/检索弱轮才落(完整 prompt/completion 原文进事件,供"重看模型看到了什么")
-    return {"reason": p.get("reason"), "model": _req(p, "model", str),
+    return {"reason": p.get("reason"), "model": _req(p, "model", str), "trace_id": p.get("trace_id"),
             "system": p.get("system", ""), "conversation": p.get("conversation", []),
             "completion": p.get("completion", ""),
             "prompt_tokens": p.get("prompt_tokens"), "completion_tokens": p.get("completion_tokens"),

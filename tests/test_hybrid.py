@@ -83,5 +83,42 @@ class HybridSearchTest(unittest.TestCase):
         self.assertTrue(all(c.get("product_name") for c in out), "检索块应带产品名")
 
 
+
+class ScoreLadderTest(unittest.TestCase):
+    """A3:检索前序(dense/BM25/融合/rerank 分)落库到每块,供 trace 展示为何召回/排这块。"""
+
+    def test_chunks_carry_ladder_scores(self):
+        idx = BM25Index(CORPUS)
+
+        def rerank_fn(query, docs):
+            out = []
+            for i, d in enumerate(docs):
+                out.append({"index": i, "relevance_score": 0.9 if "投保" in d else 0.2})
+            return out
+
+        out = search_knowledge(FakeEmbedder(), DenseMissesB1Store(), "投保年龄",
+                               top_k=5, top_rerank=3, hybrid=idx, hybrid_weight=0.5, rerank_fn=rerank_fn)
+        self.assertTrue(out, "应有检索结果")
+        for c in out:
+            self.assertIn("dense_score", c)
+            self.assertIn("fused_score", c)
+            self.assertIn("rerank_score", c)
+        # b1 是稠密漏掉、BM25 命中的块 → dense_score 应缺省,但 bm25_score 有值
+        b1 = next((c for c in out if c.get("chunk_id") == "b1"), None)
+        self.assertIsNotNone(b1, "混合应收回 b1")
+        self.assertIsNone(b1.get("dense_score"), "b1 稠密未命中 → dense_score 应为 None")
+        self.assertIsNotNone(b1.get("bm25_score"), "b1 BM25 命中 → bm25_score 有值")
+        self.assertIsNotNone(b1.get("fused_score"), "b1 应有融合分")
+        # rerank 后"投保"相关度最高者应居首
+        self.assertEqual(out[0]["chunk_id"], "b1", "rerank 相关度最高者应居首")
+
+    def test_no_rerank_keeps_dense(self):
+        out = search_knowledge(FakeEmbedder(), DenseMissesB1Store(), "投保年龄",
+                               top_k=5, top_rerank=3, hybrid=BM25Index(CORPUS), hybrid_weight=0.0)
+        self.assertTrue(out)
+        c0 = out[0]
+        self.assertIn("dense_score", c0)              # 纯稠密:dense_score 在
+        self.assertIsNone(c0.get("rerank_score"))  # 无 rerank → rerank_score 为 None
+
 if __name__ == "__main__":
     unittest.main()

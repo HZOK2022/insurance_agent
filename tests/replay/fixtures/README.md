@@ -1,24 +1,28 @@
 # 回放样本(replay fixtures)
 
-> 改 prompt/条款/工具 schema 后必须回归;这是 AGENTS 铁律的一部分。
-> 本目录存放 JSONL 录制:每行 = `{"messages": [...], "response": [...]}`(来自 tests/replay/Recorder)。
-> replay 测试时:用 `ReplayLLM` 重放同样的 `messages`,只比对 `response`(允许微小差异),保证 agent 输出在 prompt/条款/工具微调时仍可控。
+> 改 prompt/检索参数/工具 schema 后的零成本回归:ReplayLLM 重放录好的 LLM 响应,
+> 请求不一致即 AssertionError —— 这就是回归信号(说明你的改动改变了进入 LLM 的内容)。
 
-## 录制方法(供后续补录)
+## 录制 / 回放
 
-```python
-from tests.replay.recorder import Recorder
-from app.api.services.container import get_llm
-llm = Recorder(get_llm())
-# ... 让某段对话走 llm.chat_stream ...
-llm.save("tests/replay/fixtures/<name>.jsonl")
+```bash
+# 录制(真实 LLM + 真实检索,一次几毛钱):
+python scripts/record_replay_fixture.py
+
+# 回放(零 API 成本):
+llm = ReplayLLM(records)                    # tests/replay/replayer.py
+for ev in run_prompt(store, llm, bundle, sid, "尊享e生2025的等待期是多少天?"):
+    ...
 ```
 
 ## 文件清单
 
-| 文件 | 来源 | 用法 |
-|---|---|---|
-| `kb_qa_basic.jsonl` | 5 条 kb 问答 | 改 retrieval chunker / 改 SYSTEM 时回归 |
-| `agent_loop_step_budget.jsonl` | 3 步完成的最小 turn | 改 loop 步数/token 预算时回归 |
+| 文件 | 内容 | 录制时间 | 回归保护范围 |
+|---|---|---|---|
+| `kb_qa_basic.jsonl` | 1 条知识问答(4 次 LLM 调用:检索决策+生成) | 2026-09-07 | SYSTEM prompt / 检索 top_k / 工具 schema / 事件序列 / 引用解析 |
 
-(具体文件由后续录制脚本补;本 README 留空档。)
+## 对拍要点
+
+- 回放后核对事件序列(`turn_start → retrieval ×N → assistant_message → turn_end`)与引用 chunk_id 列表
+- 若改了 SYSTEM prompt → messages 不一致 → ReplayLLM 抛错(**预期**,此时需重录 fixture 再验证生成质量用 eval_run)
+- fixture 依赖知识库内容(chunk_id 引用);知识全量重建后需重录

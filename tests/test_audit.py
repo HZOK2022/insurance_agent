@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from app.audit.queries import history_qa, export_session, audit_overview
-from app.observability.metrics import project_turn_metrics, session_metrics, overall_metrics, timeseries_metrics, estimate_cost, severity_of
+from app.observability.metrics import project_turn_metrics, session_metrics, overall_metrics, timeseries_metrics, anomaly_report, estimate_cost, severity_of
 from app.session.store import SessionStore
 
 
@@ -190,6 +190,88 @@ class TimeseriesTest(unittest.TestCase):
         st.close()
         os.remove(db2)
 
+
+
+class AnomalyReportTest(unittest.TestCase):
+    def setUp(self):
+        self.db = tempfile.mktemp(suffix=".db")
+        self.store = SessionStore(self.db)
+        self.sid = self.store.create_session("u1")["id"]
+
+    def tearDown(self):
+        try:
+            self.store.close()
+        except Exception:
+            pass
+        os.remove(self.db)
+
+    def _turn(self, *, retrieval=None, cite_count=0, reason="completed", elapsed_ms=1000, tool_fail=False, guard=False):
+        st = self.store
+        st.append(self.sid, "turn_start", {"turn": 1})
+        if guard:
+            st.append(self.sid, "guard_triggered", {"kind": "injection"})
+        if retrieval is not None:
+            st.append(self.sid, "retrieval", {"query": "q", "chunks": retrieval})
+        st.append(self.sid, "assistant_message", {"blocks": [{"t": "p", "text": "a"}],
+                                                  "citations": [{"idx": i, "chunk_id": "c%d" % i} for i in range(1, cite_count + 1)]})
+        if tool_fail:
+            st.append(self.sid, "tool_result", {"ok": False, "tool": "send_msg", "error_code": "tool_error"})
+        st.append(self.sid, "turn_end", {"reason": reason, "elapsed_ms": elapsed_ms})
+
+    def _low_chunk(self, score):
+        return {"chunk_id": "c1", "doc_id": "doc", "version": "v1", "section": "s1",
+                "source": "kb", "content": "正文", "score": score}
+
+    def test_error_turn_classified(self):
+        _fill(self.store, self.sid)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["summary"]["total_turns"], 2)
+        self.assertEqual(r["summary"]["anomalies"], 1)
+        self.assertEqual(r["categories"]["error"]["count"], 1)
+        self.assertIn(self.sid, r["categories"]["error"]["samples"])
+
+    def test_low_conf_retrieval(self):
+        self._turn(retrieval=[self._low_chunk(0.2)], cite_count=1)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["retrieval_low_conf"]["count"], 1)
+        self.assertTrue(any("0.20" in h for h in r["categories"]["retrieval_low_conf"]["hints"]))
+
+    def test_retrieval_empty(self):
+        self._turn(retrieval=[], cite_count=0, reason="completed")
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["retrieval_empty"]["count"], 1)
+
+    def test_answer_not_cited(self):
+        # 检索了(高分)但回答一个引用都没有 → answer_not_cited
+        self._turn(retrieval=[self._low_chunk(0.9)], cite_count=0)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["answer_not_cited"]["count"], 1)
+
+    def test_cross_turn_no_retrieval(self):
+        # 无检索却带引用 → cross_turn_no_retrieval
+        self._turn(retrieval=None, cite_count=2)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["cross_turn_no_retrieval"]["count"], 1)
+
+    def test_tool_failure(self):
+        self._turn(retrieval=[self._low_chunk(0.9)], cite_count=1, tool_fail=True)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["tool_failure"]["count"], 1)
+
+    def test_funnel_aggregates(self):
+        self._turn(retrieval=[self._low_chunk(0.9), self._low_chunk(0.8)], cite_count=2)
+        r = anomaly_report(self.store)
+        f = r["funnel"]
+        self.assertEqual(f["with_retrieval_turns"], 1)
+        self.assertEqual(f["retrieval_total"], 1)  # 一次检索事件
+        self.assertEqual(f["cited_turns"], 1)
+        self.assertEqual(f["cited_rate"], 1.0)
+        self.assertEqual(r["categories"]["error"]["count"], 0)  # 本轮正常
+
+    def test_guard_triggered(self):
+        self._turn(retrieval=[self._low_chunk(0.9)], cite_count=1, guard=True)
+        r = anomaly_report(self.store)
+        self.assertEqual(r["categories"]["guard_triggered"]["count"], 1)
 
 class PIIRedactTest(unittest.TestCase):
     def test_redact_pii_masks_patterns(self):

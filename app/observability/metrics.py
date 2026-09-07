@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+import json
 
 from app.session.store import SessionStore
 
@@ -37,13 +38,53 @@ def estimate_cost(price_in_per_1m: float, price_out_per_1m: float,
 def project_turn_metrics(store: SessionStore, session_id: str, *,
                          price_in_per_1m: float = 0.0, price_out_per_1m: float = 0.0) -> list[dict]:
     """把一个会话的事件投影成逐 turn 的遥测记录(照 dsh 的事件→记录投影)。"""
-    turns: list[dict] = []
+    return [turn for _sid, turn in _project_turn_rows(
+        _iter_metric_events(store, session_id=session_id), price_in_per_1m, price_out_per_1m)]
+
+
+# turn 级投影只用这些事件类型(跳过 assistant_chunk / tool_result / request_context 等大 payload 事件,
+# 它们不参与指标投影)。与 anomaly_report 同口径:命中类型一次有序扫描,避免按会话 store.read(sid)
+# 把全部事件(含大量 assistant_chunk)读进来再 json.loads —— 那是"观测总览"慢的根因(几十万行)。
+_METRIC_TYPES = ("turn_start", "user_message", "assistant_message", "step_start", "tool_call",
+                 "retrieval", "approval_request", "llm_retry", "usage", "turn_end")
+
+
+def _iter_metric_events(store: SessionStore, session_id: str | None = None):
+    """只取指标相关事件(按 seq 有序),yield (session_id, ev)。payload 解析为 dict。
+
+    session_id 给定 → 该会话;否则全量(按 session_id, seq 排序)。'?' 占位符由 app.db.DB 按方言 translate。
+    """
+    incl = ",".join("'" + t + "'" for t in _METRIC_TYPES)
+    if session_id is not None:
+        sql = (f"SELECT session_id, seq, type, ts, payload FROM events "
+               f"WHERE type IN ({incl}) AND session_id=? ORDER BY seq")
+        rows = store._conn.execute(sql, (session_id,)).fetchall()
+    else:
+        sql = (f"SELECT session_id, seq, type, ts, payload FROM events "
+               f"WHERE type IN ({incl}) ORDER BY session_id, seq")
+        rows = store._conn.execute(sql).fetchall()
+    for r in rows:
+        yield r["session_id"], {"seq": r["seq"], "type": r["type"], "ts": r["ts"],
+                                "payload": json.loads(r["payload"]) if isinstance(r["payload"], str) else (r["payload"] or {})}
+
+
+def _project_turn_rows(rows, price_in_per_1m: float, price_out_per_1m: float):
+    """把 (session_id, ev) 有序流投影成逐 turn 记录,yield (session_id, turn)。
+
+    状态机与旧 project_turn_metrics 完全一致,仅把"按会话 read 全部事件"换成"只喂指标相关事件",
+    因此聚合结果不变,只是不再读入几十万行 assistant_chunk。仅 turn_end 收尾时才 yield(悬挂 turn 丢弃)。
+    """
+    cur_sid = None
     cur: dict | None = None
-    for ev in store.read(session_id):
+    for sid, ev in rows:
+        if sid != cur_sid:
+            cur_sid = sid
+            cur = None
         t = ev["type"]
         p = ev["payload"] or {}
         if t == "turn_start":
-            cur = {"turn_seq": ev["seq"], "ts": ev["ts"], "question": None, "answer": None,
+            # trace_id = 该轮 turn_start 的 seq(轮级 trace_id,M0):与 usage/badcase 里的 trace_id 同口径
+            cur = {"turn_seq": ev["seq"], "trace_id": ev["seq"], "ts": ev["ts"], "question": None, "answer": None,
                    "citations": [], "model": None, "prompt_tokens": 0, "completion_tokens": 0,
                    "cost": None, "ttft_ms": None, "tps": None, "elapsed_ms": None,
                    "reason": None, "severity": "info", "steps": 0, "tools": 0,
@@ -79,9 +120,9 @@ def project_turn_metrics(store: SessionStore, session_id: str, *,
             if cur["cost"] is None:  # usage 没算就按配置单价估算
                 cur["cost"] = estimate_cost(price_in_per_1m, price_out_per_1m,
                                             cur["prompt_tokens"], cur["completion_tokens"])
-            turns.append(cur)
+            yield cur_sid, cur
             cur = None
-    return turns
+
 
 
 def _agg(turns: list[dict]) -> dict:
@@ -212,3 +253,193 @@ def timeseries_metrics(store: SessionStore, *, granularity: str = "hour",
         })
         cur += step
     return out
+
+
+# ＝＝ P0 异常定位器(A1 + A2):把每个坏轮分类成可行动原因 + 检索→引用漏斗聚合 ＝＝
+# 只读 events(事实源)派生,绝不写历史。分类类别见 _ANOMALY_ORDER。
+_ANOMALY_ORDER = ["error", "guard_triggered", "tool_failure", "retrieval_unavailable",
+                  "retrieval_empty", "retrieval_low_conf", "cross_turn_no_retrieval",
+                  "answer_not_cited", "latency_spike"]
+_ANOMALY_LABEL = {
+    "error": "LLM/会话错误",
+    "guard_triggered": "护栏拦截(注入/PII)",
+    "tool_failure": "工具失败",
+    "retrieval_unavailable": "向量库不可用(检索降级)",
+    "retrieval_empty": "检索 0 命中",
+    "retrieval_low_conf": "检索低置信",
+    "cross_turn_no_retrieval": "无检索却带引用(跨轮/历史)",
+    "answer_not_cited": "检索了但回答0引用",
+    "latency_spike": "延迟尖峰",
+}
+
+
+def _classify_turn(t: dict, low_conf_thresh: float, latency_threshold_ms: float | None) -> str | None:
+    """按优先级给一轮判一个主因类别(取最先命中的一条)。"""
+    if t.get("reason") not in (None, "completed"):
+        return "error"
+    if t.get("guard"):
+        return "guard_triggered"
+    if t.get("tool_failures"):
+        return "tool_failure"
+    if t.get("retrieval_unavailable"):
+        return "retrieval_unavailable"
+    if t.get("retrieval_empty"):
+        return "retrieval_empty"
+    if t.get("retrievals") and t.get("retrieval_max") is not None and t["retrieval_max"] < low_conf_thresh:
+        return "retrieval_low_conf"
+    # 无检索却给了带引用(跨轮/历史引用)——仅依上下文,不可当轮追溯,高危
+    if not t.get("retrievals") and t.get("with_cite"):
+        return "cross_turn_no_retrieval"
+    # 检索了但回答一个引用都没有 → 潜在"检索了却没引用/别处取材"
+    if t.get("retrievals") and t.get("assistant") and not t.get("with_cite"):
+        return "answer_not_cited"
+    if latency_threshold_ms and t.get("elapsed_ms") is not None and t["elapsed_ms"] > latency_threshold_ms:
+        return "latency_spike"
+    return None
+
+
+def _turn_hint(t: dict, cat: str) -> str | None:
+    if cat == "retrieval_low_conf" and t.get("retrieval_max") is not None:
+        return f"检索最高分 {t['retrieval_max']:.2f} < {0.3}"
+    if cat == "retrieval_empty":
+        return "本轮检索 0 命中"
+    if cat == "tool_failure" and t.get("tool_fail_hint"):
+        return t["tool_fail_hint"]
+    if cat == "answer_not_cited":
+        # M2:检索到了(最高分不低)却一个不引用 → "模型没用检索"更明显;给 hint 带分数证据(D79)
+        if t.get("retrieval_max") is not None:
+            return f"检索 {t.get('retrievals')} 次(最高分 {t['retrieval_max']:.2f})但回答 0 引用 → 更像模型没用检索"
+        return f"检索 {t.get('retrievals')} 次但回答 0 引用"
+    if cat == "cross_turn_no_retrieval":
+        return f"本轮无检索,引用 {t.get('cited_count')} 条(历史/跨轮)"
+    if cat == "latency_spike" and t.get("elapsed_ms") is not None:
+        return f"耗时 {t['elapsed_ms'] / 1000:.0f}s"
+    if cat == "guard_triggered":
+        return "护栏拦截(注入/PII)"
+    if cat == "retrieval_unavailable":
+        return "向量库不可用(知识检索降级)"
+    if cat == "error":
+        return "LLM/会话错误"
+    return None
+
+
+def anomaly_report(store: SessionStore, *, price_in_per_1m: float = 0.0,
+                   price_out_per_1m: float = 0.0, low_conf_thresh: float = 0.3,
+                   latency_threshold_ms: float | None = None) -> dict:
+    """生产异常定位:坏轮按主因分类 + trace_id 样本 + why 提示 + 检索→引用漏斗。"""
+    cats = {c: {"count": 0, "samples": [], "hints": []} for c in _ANOMALY_ORDER}
+    funnel = {"answer_turns": 0, "with_retrieval_turns": 0, "retrieval_total": 0,
+              "cited_total": 0, "cited_turns": 0, "cited_rate": None}
+    total_turns = 0
+    # 单次查询只取相关事件类型(跳过 badcase_snapshot / assistant_chunk 等大 payload 事件),
+    # 按 session/seq 排好一次性扫描,避免按会话 N 次 read 往返 + 读入大量级 payload。
+    # 用 events(事实源)而非 list_sessions:sessions 表可能被软删(deleted=1),events 是 append-only
+    # 仍保留,异常定位器必须不漏掉被删会话里的坏轮。
+    rows = store._conn.execute(
+        "SELECT session_id, seq, type, payload FROM events "
+        "WHERE type IN ('turn_start','turn_end','retrieval','assistant_message','tool_result','guard_triggered') "
+        "ORDER BY session_id, seq").fetchall()
+    cur_sid: object = None
+    cur: dict | None = None
+    for row in rows:
+        sid = row["session_id"]
+        if sid != cur_sid:
+            cur_sid = sid
+            cur = None
+        t = row["type"]
+        p = row["payload"] or {}
+        if isinstance(p, str):
+            try:
+                p = json.loads(p)
+            except Exception:
+                p = {}
+            if t == "turn_start":
+                cur = {"reason": None, "guard": 0, "tool_failures": 0, "tool_fail_hint": None,
+                       "retrieval_unavailable": 0, "retrieval_empty": 0, "retrievals": 0,
+                       "retrieval_max": None, "assistant": 0, "cited_count": 0, "with_cite": False,
+                       "elapsed_ms": None}
+            elif cur is None:
+                continue
+            elif t == "retrieval":
+                cur["retrievals"] += 1
+                chunks = p.get("chunks") or []
+                if p.get("error") == "retrieval_unavailable":
+                    cur["retrieval_unavailable"] += 1
+                if not chunks:
+                    cur["retrieval_empty"] += 1
+                else:
+                    sc = [c.get("score") for c in chunks
+                          if isinstance(c, dict) and isinstance(c.get("score"), (int, float))]
+                    if sc:
+                        cur["retrieval_max"] = max(cur["retrieval_max"] or 0, max(sc))
+            elif t == "assistant_message":
+                cur["assistant"] += 1
+                cites = p.get("citations") or []
+                cur["cited_count"] = max(cur["cited_count"], len(cites))
+                if cites:
+                    cur["with_cite"] = True
+            elif t == "tool_result":
+                if p.get("ok") is False:
+                    cur["tool_failures"] += 1
+                    cur["tool_fail_hint"] = f"工具失败: {p.get('tool')} code={p.get('error_code')}"
+            elif t == "guard_triggered":
+                cur["guard"] += 1
+            elif t == "turn_end":
+                cur["elapsed_ms"] = p.get("elapsed_ms")
+                cur["reason"] = p.get("reason")
+                total_turns += 1
+                cat = _classify_turn(cur, low_conf_thresh, latency_threshold_ms)
+                if cat:
+                    rec = cats[cat]
+                    rec["count"] += 1
+                    if sid not in rec["samples"] and len(rec["samples"]) < 5:
+                        rec["samples"].append(sid)
+                    hint = _turn_hint(cur, cat)
+                    if hint and len(rec["hints"]) < 5:
+                        rec["hints"].append(hint)
+                if cur["assistant"]:
+                    funnel["answer_turns"] += 1
+                if cur["retrievals"]:
+                    funnel["with_retrieval_turns"] += 1
+                    funnel["retrieval_total"] += cur["retrievals"]
+                if cur["with_cite"]:
+                    funnel["cited_turns"] += 1
+                    funnel["cited_total"] += cur["cited_count"]
+                cur = None
+    if funnel["with_retrieval_turns"]:
+        funnel["cited_rate"] = round(funnel["cited_turns"] / funnel["with_retrieval_turns"], 4)
+    anomaly_total = sum(c["count"] for c in cats.values())
+    return {
+        "summary": {"total_turns": total_turns, "anomalies": anomaly_total},
+        "categories": {c: {"count": v["count"], "label": _ANOMALY_LABEL[c],
+                           "samples": v["samples"], "hints": v["hints"]} for c, v in cats.items()},
+        "funnel": funnel,
+    }
+
+
+def classify_retrieval_failure(retrieved: list[str], cited: list[str], gold: list[str] | None = None) -> dict | None:
+    """把"检索→回答"没闭环的坏轮细分为可行动根因(M2)。
+
+    - 有 gold(离线评估标注"正确答案应召回哪些块")时:
+      · gold ∩ retrieved 为空       → gold_miss:正确块没进最终返回(漏召,或被 top_k/重排截断)
+      · gold ∩ retrieved 非空但 gold ∩ cited 为空 → model_not_used:块已召回却没引用(修 prompt/引用)
+    - 无 gold(生产在线):检索有命中但回答零引用 → model_not_used(≈ answer_not_cited 的模型侧细化)。
+
+    retrieved: 本轮最终返回的 chunk_id 列表(retrieval 事件 chunks 的 id);
+    cited:     回答引用的 chunk_id 列表;gold: 评估集 per-case 标注;三者均可空。
+    返回 {"kind", "reason"} 或 None(已引用到召回块 / 无需判定)。
+    """
+    rs = set(retrieved or [])
+    cs = set(cited or [])
+    gs = set(gold or [])
+    if gs:
+        if not (rs & gs):
+            return {"kind": "gold_miss",
+                    "reason": "正确块没进最终返回(漏召,或被 top_k/重排截断)"}
+        if not (gs & cs):
+            return {"kind": "model_not_used",
+                    "reason": "正确块已召回但回答未引用(模型没用检索)"}
+        return None
+    if rs and not cs:
+        return {"kind": "model_not_used", "reason": "检索有命中但回答未引用(模型没用检索)"}
+    return None

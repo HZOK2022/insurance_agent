@@ -1,5 +1,5 @@
 export interface Session { id: string; title: string; user_id: string; created_at: string; last_ts?: string }
-export interface PEvent { type: string; payload: any; ts?: string }
+export interface PEvent { type: string; payload: any; ts?: string; seq?: number }
 export interface Citation { idx: number; chunk_id: string }
 export interface Source { chunk_id: string; title: string; content: string }
 
@@ -59,7 +59,7 @@ export const submitApproval = (sid: string, d: ApprovalDecisionIn) =>
   json<{ ok: boolean; request_id: string; status: string }>('/api/sessions/' + sid + '/approval', { method: 'POST', body: JSON.stringify(d) })
 
 // 阶段6:审计查询视图 + 可观测(读 events,只读)
-export interface AuditItem { session_id: string; title: string; user_id: string; ts: string; question: string; answer: any[]; citations: any[]; model: string | null; prompt_tokens: number; completion_tokens: number; cost: number | null; elapsed_ms: number | null; reason: string | null; retrievals: number; approvals: number; retries: number; error: boolean }
+export interface AuditItem { session_id: string; title: string; user_id: string; ts: string; trace_id?: number; question: string; answer: any[]; citations: any[]; model: string | null; prompt_tokens: number; completion_tokens: number; cost: number | null; elapsed_ms: number | null; reason: string | null; retrievals: number; approvals: number; retries: number; error: boolean }
 export interface Metrics { turns: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost: number | null; errors: number; retries: number; approvals: number; avg_ttft_ms: number; avg_tps: number }
 export const getAudit = (sid: string) => json<{ count: number; items: AuditItem[] }>('/api/audit?session_id=' + encodeURIComponent(sid))
 export const getSessionMetrics = (sid: string) => json<Metrics>('/api/observability/' + encodeURIComponent(sid))
@@ -87,6 +87,13 @@ export interface TimeseriesBucket {
 export interface TimeseriesResp { granularity: string; series: TimeseriesBucket[] }
 export const getTimeseries = (granularity: 'hour' | 'day' = 'hour') =>
   json<TimeseriesResp>('/api/metrics/timeseries?granularity=' + granularity)
+
+// ---- 观测大盘 · 生产异常定位(坏轮按主因分类 + 检索→引用漏斗)----
+export interface AnomalyCategory { count: number; label: string; samples: string[]; hints: string[] }
+export interface AnomalyFunnel { answer_turns: number; with_retrieval_turns: number; retrieval_total: number; cited_total: number; cited_turns: number; cited_rate: number | null }
+export interface AnomalyResp { summary: { total_turns: number; anomalies: number }; categories: Record<string, AnomalyCategory>; funnel: AnomalyFunnel }
+export const getAnomalies = (latencyMs?: number) =>
+  json<AnomalyResp>('/api/metrics/anomalies' + (latencyMs ? '?latency_ms=' + latencyMs : ''))
 
 
 // 显式"停止":置后端中止位(不是直接断流——断流后 Starlette 不保证 close 底层生成器,后端会白跑完这一轮)。

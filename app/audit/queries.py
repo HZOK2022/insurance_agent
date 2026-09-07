@@ -38,17 +38,26 @@ def history_qa(store: SessionStore, *, session_id: str | None = None,
     for sid in sids:
         sess = store.get_session(sid) or {}
         cur: dict | None = None
+        cur_turn_seq: int | None = None   # 当前轮 turn_start 的 seq(= 轮级 trace_id,M0)
+        turn_pending = False              # 该 turn_start 是否还没被某条 user_message 消费
         for ev in store.read(sid):
             t = ev["type"]
             p = ev["payload"] or {}
-            if t == "user_message":
+            if t == "turn_start":
+                cur_turn_seq = ev["seq"]
+                turn_pending = True
+                if cur is not None and cur.get("trace_id") is None:
+                    cur["trace_id"] = cur_turn_seq   # 兼容"user_message 先于 turn_start"的历史数据
+                    turn_pending = False
+            elif t == "user_message":
                 if cur:
                     out.append(cur)
                 cur = {"session_id": sid, "title": sess.get("title"), "user_id": sess.get("user_id"),
-                       "ts": ev["ts"], "question": p.get("text"), "answer": None, "citations": [],
+                       "trace_id": (cur_turn_seq if turn_pending else None), "ts": ev["ts"], "question": p.get("text"), "answer": None, "citations": [],
                        "model": None, "prompt_tokens": 0, "completion_tokens": 0, "cost": None,
                        "elapsed_ms": None, "reason": None, "retrievals": 0, "approvals": 0,
                        "retries": 0, "error": False}
+                turn_pending = False
             elif cur is None:
                 continue
             elif t == "retrieval":

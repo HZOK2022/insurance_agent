@@ -33,6 +33,7 @@ def _mysql_ddl() -> list[tuple[str, bool]]:
         ("INSERT IGNORE INTO `meta` (`key`,`value`) VALUES ('schema_version', '1')", False),
         ("CREATE TABLE IF NOT EXISTS events (seq BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(64) NOT NULL, `type` VARCHAR(64) NOT NULL, ts VARCHAR(40) NOT NULL, payload MEDIUMTEXT)", False),
         ("CREATE INDEX idx_events_session ON events(session_id, seq)", True),
+        ("CREATE INDEX idx_events_type ON events(`type`)", True),
         ("CREATE TABLE IF NOT EXISTS sessions (id VARCHAR(64) PRIMARY KEY, title TEXT, user_id VARCHAR(128), created_at VARCHAR(40), status VARCHAR(16) DEFAULT 'active', deleted INT DEFAULT 0)", False),
         ("CREATE TABLE IF NOT EXISTS users (id VARCHAR(64) PRIMARY KEY, username VARCHAR(128) NOT NULL UNIQUE, password_hash VARCHAR(128) NOT NULL, salt VARCHAR(64) NOT NULL, display_name VARCHAR(128) NOT NULL DEFAULT '', created_at VARCHAR(40) NOT NULL, disabled INT NOT NULL DEFAULT 0, `role` VARCHAR(16) NOT NULL DEFAULT 'agent')", False),
         ("CREATE TABLE IF NOT EXISTS auth_tokens (`token` VARCHAR(128) PRIMARY KEY, username VARCHAR(128) NOT NULL, created_at VARCHAR(40) NOT NULL, expires_at VARCHAR(40) NOT NULL)", False),
@@ -76,6 +77,7 @@ class SessionStore:
           session_id TEXT NOT NULL, type TEXT NOT NULL, ts TEXT NOT NULL, payload TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY, title TEXT, user_id TEXT, created_at TEXT, status TEXT DEFAULT 'active',
           deleted INTEGER DEFAULT 0
@@ -271,12 +273,15 @@ class SessionStore:
         ts 与 created_at 同源于 events.utcnow()(ISO8601 毫秒 +00:00),字典序即时间序。
         """
         rows = self._conn.execute(
-            """SELECT s.id, s.title, s.user_id, s.created_at,
-                      (SELECT e.ts FROM events e WHERE e.session_id=s.id ORDER BY e.seq DESC LIMIT 1) AS last_ts
+            """SELECT s.id, s.title, s.user_id, s.created_at, e.ts AS last_ts
                FROM sessions s
+               LEFT JOIN (
+                   SELECT session_id, MAX(seq) AS last_seq FROM events GROUP BY session_id
+               ) m ON m.session_id = s.id
+               LEFT JOIN events e ON e.session_id = m.session_id AND e.seq = m.last_seq
                WHERE (s.deleted IS NULL OR s.deleted=0)
-               ORDER BY COALESCE(last_ts, s.created_at) DESC,
-                        COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.session_id=s.id), 0) DESC""").fetchall()
+               ORDER BY COALESCE(e.ts, s.created_at) DESC,
+                        COALESCE(m.last_seq, 0) DESC""").fetchall()
         return [dict(r_) for r_ in rows]
 
     def get_session(self, sid: str) -> dict | None:

@@ -3,7 +3,7 @@
 // + /api/observability(按会话明细) + /api/metrics/timeseries(时间序列走势)
 // 渲染成一张可看的监控页。从用户菜单「观测」进入。
 import { useEffect, useState } from "react"
-import { getMetrics, getObservability, getTimeseries, type GlobalMetrics, type TimeseriesBucket } from "./lib/api"
+import { getMetrics, getObservability, getTimeseries, getAnomalies, type GlobalMetrics, type TimeseriesBucket, type AnomalyResp } from "./lib/api"
 
 const fmt = (n?: number | null): string => (n == null ? "—" : String(n))
 const fmtTok = (n?: number | null): string => {
@@ -81,6 +81,7 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
   const [rows, setRows] = useState<any[]>([])
   const [ts, setTs] = useState<TimeseriesBucket[]>([])
   const [gran, setGran] = useState<"day" | "hour">("day")
+  const [anom, setAnom] = useState<AnomalyResp | null>(null)
   const [err, setErr] = useState("")
   const [tick, setTick] = useState(0)
 
@@ -104,9 +105,16 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
     return () => { alive = false }
   }, [gran, tick])
 
+  useEffect(() => {
+    let alive = true
+    getAnomalies().then((r) => { if (alive) setAnom(r) }).catch(() => { if (alive) setAnom(null) })
+    return () => { alive = false }
+  }, [tick])
+
   const hasCost = ts.some((b) => b.cost != null)
   const latPts = ts.map((b) => ({ x: b.bucket, v: b.p95_latency_ms ?? b.avg_latency_ms ?? 0 }))
   const metPts = ts.map((b) => ({ x: b.bucket, v: hasCost ? (b.cost ?? 0) : b.total_tokens }))
+  const activeCats = anom ? Object.entries(anom.categories).filter(([, c]) => c.count > 0) : []
 
   return (
     <div className="mon-view">
@@ -141,6 +149,31 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
             {card(m.guard_triggered >= TH.guard ? "bad" : "ok", "护栏拦截", fmt(m.guard_triggered), "注入/PII 等")}
             {card(m.tool_failures >= TH.toolfail ? "warn" : "ok", "工具失败", fmt(m.tool_failures), "tool_result ok=False")}
           </div>
+
+          {/* 生产异常定位:坏轮按主因分类 + trace 直达 + 检索→引用漏斗 */}
+          {anom && (
+            <>
+              <div className="mon-sec-head">生产异常定位
+                <span className="mon-ts-note">共 {anom.summary.total_turns} 轮 · 异常 {anom.summary.anomalies} 轮</span>
+              </div>
+              <div className="mon-anom-sum">
+                <span>有检索 {fmt(anom.funnel.with_retrieval_turns)} 轮</span>
+                <span>引用率 {anom.funnel.cited_rate != null ? (anom.funnel.cited_rate * 100).toFixed(0) + "%" : "—"}</span>
+                <span>检索/引用 {fmtTok(anom.funnel.retrieval_total)}/{fmtTok(anom.funnel.cited_total)}</span>
+              </div>
+              <div className="mon-anom-grid">
+                {activeCats.map(([k, c]) => (
+                  <div key={k} className="mon-anom-card">
+                    <div className="mon-anom-cat"><b>{c.label}</b> · {c.count} 轮</div>
+                    {(c.hints || []).slice(0, 2).map((h, i) => <div key={i} className="mon-anom-hint">· {h}</div>)}
+                    {(c.samples || []).slice(0, 4).map((id) => (
+                      <button key={id} className="kb-tag mon-trace" title={"trace " + id} onClick={() => onOpenSession(id)}>{id.slice(0, 8)}</button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* 按模型 */}
           {Object.keys(m.models || {}).length > 0 && (
