@@ -76,7 +76,7 @@ function SparkLine({ label, points, unit, gran }: { label: string; points: { x: 
   )
 }
 
-export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: (sid: string) => void; onBack: () => void }) {
+export default function MonitorView({ onOpenSession, onOpenSessionTrace, onBack }: { onOpenSession: (sid: string) => void; onOpenSessionTrace?: (sid: string, traceId?: number) => void; onBack: () => void }) {
   const [m, setM] = useState<GlobalMetrics | null>(null)
   const [rows, setRows] = useState<any[]>([])
   const [ts, setTs] = useState<TimeseriesBucket[]>([])
@@ -166,8 +166,12 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
                   <div key={k} className="mon-anom-card">
                     <div className="mon-anom-cat"><b>{c.label}</b> · {c.count} 轮</div>
                     {(c.hints || []).slice(0, 2).map((h, i) => <div key={i} className="mon-anom-hint">· {h}</div>)}
-                    {(c.samples || []).slice(0, 4).map((id) => (
-                      <button key={id} className="kb-tag mon-trace" title={"trace " + id} onClick={() => onOpenSession(id)}>{id.slice(0, 8)}</button>
+                    {(c.samples || []).slice(0, 4).map((s) => (
+                      <button key={s.session_id + "#" + s.trace_id} className="kb-tag mon-trace"
+                        title={"会话 " + s.session_id.slice(0, 12) + (s.trace_id != null ? " · 轮级 trace #" + s.trace_id : "") + " → 直达该轮"}
+                        onClick={() => onOpenSessionTrace ? onOpenSessionTrace(s.session_id, s.trace_id) : onOpenSession(s.session_id)}>
+                        {s.session_id.slice(0, 6)}{s.trace_id != null ? "·#" + s.trace_id : ""}
+                      </button>
                     ))}
                   </div>
                 ))}
@@ -202,15 +206,15 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
             </div>
           ) : <div className="mon-ts-empty">暂无时间序列数据</div>}
 
-          {/* 坏例 trace_id 样本(点 trace_id 可直接进该会话轨迹) */}
+          {/* 坏例所在会话(点进会话轨迹;会话内的每一轮各有 trace #) */}
           {m.samples && (m.samples.error_turns?.length || m.samples.tool_failures?.length || m.samples.degradations?.length) ? (
             <>
-              <div className="mon-sec-head">坏例 trace_id(点进对应会话轨迹)</div>
+              <div className="mon-sec-head">坏例所在会话(点进会话轨迹;轮级在轨迹内看 trace #)</div>
               <div className="mon-tags">
-                {(m.samples.error_turns || []).map((id) => <button key={"e" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={id}>错误 · {id.slice(0, 8)}</button>)}
-                {(m.samples.tool_failures || []).map((id) => <button key={"t" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={id}>工具失败 · {id.slice(0, 8)}</button>)}
-                {(m.samples.degradations || []).map((id) => <button key={"d" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={id}>降级 · {id.slice(0, 8)}</button>)}
-                {(m.samples.retrieval_low_conf || []).map((id) => <button key={"r" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={id}>低置信 · {id.slice(0, 8)}</button>)}
+                {(m.samples.error_turns || []).map((id) => <button key={"e" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>错误 · {id.slice(0, 8)}</button>)}
+                {(m.samples.tool_failures || []).map((id) => <button key={"t" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>工具失败 · {id.slice(0, 8)}</button>)}
+                {(m.samples.degradations || []).map((id) => <button key={"d" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>降级 · {id.slice(0, 8)}</button>)}
+                {(m.samples.retrieval_low_conf || []).map((id) => <button key={"r" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>低置信 · {id.slice(0, 8)}</button>)}
               </div>
             </>
           ) : null}
@@ -223,7 +227,7 @@ export default function MonitorView({ onOpenSession, onBack }: { onOpenSession: 
       <div className="mon-table">
         <div className="mon-tr mon-tr-head"><span>会话</span><span>轮</span><span>token</span><span>成本</span><span>错误</span><span>重试</span><span>平均TTFT</span></div>
         {rows.map((r, i) => (
-          <div key={i} className="mon-tr" onClick={() => onOpenSession(r.session_id)} title={"trace " + r.session_id}>
+          <div key={i} className="mon-tr" onClick={() => onOpenSession(r.session_id)} title={"会话(窗口)id " + r.session_id + " · " + fmt(r.turns) + " 轮,点击查看该会话各轮 trace(轮级 trace # 在其轨迹内)"}>
             <span className="mon-td-title">{(r.title || r.session_id || "—").slice(0, 24)}</span>
             <span>{fmt(r.turns)}</span>
             <span>{fmtTok(r.total_tokens)}</span>

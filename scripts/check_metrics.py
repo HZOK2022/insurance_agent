@@ -70,7 +70,7 @@ def main() -> int:
         if skey:
             tra = samples.get(skey) or []
             if tra:
-                tail = f"  trace_id={','.join(tra)}"
+                tail = f"  会话(session_id)={','.join(tra)}(点进会话轨迹;轮级 trace 见 anomalies)"
         if not _ok:
             alerts += 1
             print(f"[ALERT] {name}: {val}  阈值 {thr}{tail}")

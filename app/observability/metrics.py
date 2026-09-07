@@ -341,11 +341,13 @@ def anomaly_report(store: SessionStore, *, price_in_per_1m: float = 0.0,
         "ORDER BY session_id, seq").fetchall()
     cur_sid: object = None
     cur: dict | None = None
+    cur_trace: int | None = None   # 当前轮 trace_id = turn_start 的 seq(轮级)
     for row in rows:
         sid = row["session_id"]
         if sid != cur_sid:
             cur_sid = sid
             cur = None
+            cur_trace = None
         t = row["type"]
         p = row["payload"] or {}
         if isinstance(p, str):
@@ -354,6 +356,7 @@ def anomaly_report(store: SessionStore, *, price_in_per_1m: float = 0.0,
             except Exception:
                 p = {}
             if t == "turn_start":
+                cur_trace = row["seq"]
                 cur = {"reason": None, "guard": 0, "tool_failures": 0, "tool_fail_hint": None,
                        "retrieval_unavailable": 0, "retrieval_empty": 0, "retrievals": 0,
                        "retrieval_max": None, "assistant": 0, "cited_count": 0, "with_cite": False,
@@ -392,8 +395,10 @@ def anomaly_report(store: SessionStore, *, price_in_per_1m: float = 0.0,
                 if cat:
                     rec = cats[cat]
                     rec["count"] += 1
-                    if sid not in rec["samples"] and len(rec["samples"]) < 5:
-                        rec["samples"].append(sid)
+                    # 样本 = 会话 + 该坏轮的 trace_id(轮级),前端可直达那一轮
+                    sample = {"session_id": sid, "trace_id": cur_trace}
+                    if all(s.get("session_id") != sid or s.get("trace_id") != cur_trace for s in rec["samples"]) and len(rec["samples"]) < 5:
+                        rec["samples"].append(sample)
                     hint = _turn_hint(cur, cat)
                     if hint and len(rec["hints"]) < 5:
                         rec["hints"].append(hint)

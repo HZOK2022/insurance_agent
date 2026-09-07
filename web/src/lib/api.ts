@@ -89,7 +89,8 @@ export const getTimeseries = (granularity: 'hour' | 'day' = 'hour') =>
   json<TimeseriesResp>('/api/metrics/timeseries?granularity=' + granularity)
 
 // ---- 观测大盘 · 生产异常定位(坏轮按主因分类 + 检索→引用漏斗)----
-export interface AnomalyCategory { count: number; label: string; samples: string[]; hints: string[] }
+export interface AnomalySample { session_id: string; trace_id?: number }
+export interface AnomalyCategory { count: number; label: string; samples: AnomalySample[]; hints: string[] }
 export interface AnomalyFunnel { answer_turns: number; with_retrieval_turns: number; retrieval_total: number; cited_total: number; cited_turns: number; cited_rate: number | null }
 export interface AnomalyResp { summary: { total_turns: number; anomalies: number }; categories: Record<string, AnomalyCategory>; funnel: AnomalyFunnel }
 export const getAnomalies = (latencyMs?: number) =>

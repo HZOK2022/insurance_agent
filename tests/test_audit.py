@@ -228,7 +228,13 @@ class AnomalyReportTest(unittest.TestCase):
         self.assertEqual(r["summary"]["total_turns"], 2)
         self.assertEqual(r["summary"]["anomalies"], 1)
         self.assertEqual(r["categories"]["error"]["count"], 1)
-        self.assertIn(self.sid, r["categories"]["error"]["samples"])
+        # 样本 = {session_id, trace_id(该坏轮 turn_start 的 seq)},前端可直达那一轮
+        s = r["categories"]["error"]["samples"]
+        self.assertEqual(len(s), 1)
+        self.assertEqual(s[0]["session_id"], self.sid)
+        # 坏轮 = 最后那轮(其 turn_end reason=error);trace_id = 该轮 turn_start 的 seq
+        starts = [e["seq"] for e in self.store.read(self.sid) if e["type"] == "turn_start"]
+        self.assertEqual(s[0]["trace_id"], starts[-1])
 
     def test_low_conf_retrieval(self):
         self._turn(retrieval=[self._low_chunk(0.2)], cite_count=1)

@@ -66,7 +66,8 @@ def get_metrics() -> dict[str, Any]:
         return json.loads(p) if isinstance(p, str) else (p or {})
 
     def _distinct_sessions(cond: str, limit: int = 5) -> list[str]:
-        # 事件表的 session_id 即 trace_id;取触发该类信号的部分会话供"回放"跳到对应轨迹
+        # 事件表的 session_id = 会话(窗口);轮级 trace_id = 各轮 turn_start 的 seq(见 /api/metrics/anomalies 样本)。
+        # 此处样本取会话,供"回放"跳到该会话轨迹;轮级直达由 anomalies 的 sample.trace_id 承担。
         rows = conn.execute(f"SELECT DISTINCT session_id FROM events WHERE {cond} LIMIT {limit}").fetchall()
         return [r["session_id"] for r in rows if r["session_id"]]
 
