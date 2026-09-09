@@ -100,8 +100,25 @@ export default function MemoryView({ sessionId, onBack }: { sessionId: string | 
 
   const del = async (target: string, key: string) => {
     if (!window.confirm("确定遗忘「" + key + "」?(历史保留,标记已遗忘)")) return
+    const removed = (data?.buckets?.[target] || []).find((e) => e.key === key)
+    // 乐观更新:点击确认立即从列表移除,不等服务器;失败回滚
+    setData((prev) => {
+      if (!prev) return prev
+      const b = prev.buckets[target] || []
+      const r = b.find((e) => e.key === key)
+      return { ...prev, buckets: { ...prev.buckets, [target]: b.filter((e) => e.key !== key) }, counts: { ...prev.counts, [target]: Math.max(0, (prev.counts[target] || 0) - (r?.content?.length || 0)) } }
+    })
     try { await forgetMemory(target, key, target === "session" ? (sessionId || undefined) : undefined); await load() }
-    catch (e: any) { setErr(String(e.message || e)) }
+    catch (e: any) {
+      // 回滚:恢复被遗忘的条目与计数
+      setData((prev) => {
+        if (!prev || !removed) return prev
+        const b = prev.buckets[target] || []
+        if (b.some((x) => x.key === key)) return prev
+        return { ...prev, buckets: { ...prev.buckets, [target]: [...b, removed] }, counts: { ...prev.counts, [target]: (prev.counts[target] || 0) + (removed.content?.length || 0) } }
+      })
+      setErr(String(e.message || e))
+    }
   }
   const compact = async (target: string) => {
     try { const r = await compactMemory(target, target === "session" ? (sessionId || undefined) : undefined); await load(); setErr(r.archived ? "已压实归档 " + r.archived + " 条" : "该桶已在阈值内,无需压缩") }

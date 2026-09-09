@@ -10,7 +10,8 @@
     python scripts/migrate_to_mysql.py --force        # 目标表已非空时先清空再迁(默认拒绝)
     python scripts/migrate_to_mysql.py --dry-run      # 只统计,不改目标
 
-前置:.env 已配 DB_HOST/DB_PORT/DB_USER/DB_PASS/DB_NAME/KNOWLEDGE_DB_NAME/PREMIUM_DB_NAME;
+前置:.env 已配 DB_HOST/DB_PORT/DB_USER/DB_PASS/DB_NAME;
+KNOWLEDGE_DB_NAME/PREMIUM_DB_NAME 可留空(留空=并入 DB_NAME,单库多表);
 目标库已创建(也可为空,脚本建表)。
 """
 from __future__ import annotations

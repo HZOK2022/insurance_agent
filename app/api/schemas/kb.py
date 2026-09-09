@@ -18,6 +18,25 @@ class DocumentItem(BaseModel):
     product_category: Optional[str]
     chunk_count: int
     last_updated: Optional[str]
+    is_valid: bool = True
+    # 展示字段:文档名/产品名/来源(service list_documents 已返回;缺了这些前端只能回退 doc_id)
+    title: Optional[str] = None
+    product_name: Optional[str] = None
+    source: Optional[str] = None
+    version: Optional[str] = None
+
+
+class SetDocumentValidRequest(BaseModel):
+    """切换文档生效/失效"""
+    is_valid: bool
+
+
+class SetDocumentValidResponse(BaseModel):
+    """切换文档生效/失效响应"""
+    ok: bool
+    doc_id: str
+    is_valid: bool
+    message: str
 
 
 class DocumentListResponse(BaseModel):
@@ -64,21 +83,25 @@ class ChunkListResponse(BaseModel):
     items: list[ChunkItem]
 
 
+class ProductsResponse(BaseModel):
+    """按已上传文档聚合的产品列表(供上传页"产品"下拉框去重;空=无产品)"""
+    products: list[str]
+
+
 class IngestTextRequest(BaseModel):
     """摄取文本文档请求"""
     text: str = Field(..., min_length=1, description="文档内容")
-    product_name: str = Field(..., min_length=1, description="产品名称(唯一;doc_id=它)")
-    doc_id: Optional[str] = Field(None, description="文档ID(旧字段;缺省=product_name)")
-    version: str = Field(default="v1", description="文档版本")
+    product_name: str = Field(default="", description="产品名称(归属列:产品下拉;空=不关联产品)")
+    version: str = Field(default="v1", description="文档版本(如 v1/v2,条款改版可手动标注)")
     doc_type: Optional[str] = Field(None, description="文档类型")
     product_category: Optional[str] = Field(None, description="保险类别")
-    title: Optional[str] = Field(None, description="文档标题")
+    title: Optional[str] = Field(None, description="文档标题(展示用,不进身份键)")
     source: Optional[str] = Field(None, description="来源路径或描述")
     text_splitter: Optional[str] = Field(None, description="切块方式: structured|character|paragraph")
     chunk_size: Optional[int] = Field(None, description="切块字符数上限(覆盖 config)")
     overlap: Optional[int] = Field(None, description="切块重叠字符数(覆盖 config)")
     chunk_max_tokens: Optional[int] = Field(None, description="结构层级 token 预算(覆盖 config)")
-    force: bool = Field(False, description="同名产品内容不同时强制覆盖(需确认)")
+    min_heading_level: Optional[int] = Field(None, description="md 标题层级门槛(仅 markdown 生效;≤该深度才成块,覆盖 config)")
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -105,7 +128,7 @@ class IngestTextResponse(BaseModel):
     chunks_written: int
     chunks_embedded: int
     message: str
-    conflict: bool = False
+    duplicate: bool = False
 
 class OutlineNode(BaseModel):
     """大纲节点(层级树)"""
@@ -174,12 +197,12 @@ class UploadPreviewResponse(BaseModel):
     overlap: int = 0
     outline: list[StructNode] = []
     chunks: list[UploadChunkNode] = []
+    content_fp: str = ""
 
 
 class IngestionCommitRequest(BaseModel):
     """确认索引:提交预览得到的 chunks/outline(不再解析),服务端写库+嵌入+Qdrant"""
-    product_name: str = Field(..., min_length=1, description="产品名称(唯一;doc_id=它)")
-    doc_id: Optional[str] = Field(None, description="文档ID(旧字段;缺省=product_name)")
+    product_name: str = Field(default="", description="产品名称(归属列:产品下拉;空=不关联产品)")
     title: Optional[str] = None
     version: str = "v1"
     product_category: Optional[str] = None
@@ -189,5 +212,5 @@ class IngestionCommitRequest(BaseModel):
     text_splitter: str = "structured"
     outline: list[StructNode] = []
     chunks: list[UploadChunkNode] = Field(..., min_length=1)
-    force: bool = Field(False, description="同名产品内容不同时强制覆盖(需确认)")
+    content_fp: str = Field(default="", description="预览阶段算好的原文指纹(commit 无原文,doc_id 由它派生;缺省回退 chunks_fp)")
 

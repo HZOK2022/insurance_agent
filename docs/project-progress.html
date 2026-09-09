@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><title>保险销售客服知识助手 - 项目进度</title>
+<style>
+body{font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;max-width:920px;margin:24px auto;padding:0 20px;color:#1a1a1a;line-height:1.6}
+h1{font-size:22px;border-bottom:2px solid #333;padding-bottom:8px}
+h2{font-size:17px;margin-top:28px;color:#222}
+.tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;margin-left:6px}
+.done{background:#e6f6e9;color:#1a7f37}.doing{background:#fff4db;color:#b8860b}.todo{background:#eee;color:#888}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{border:1px solid #ddd;padding:6px 10px;text-align:left;font-size:14px}
+th{background:#f6f6f6}
+ul{margin:6px 0 0;padding-left:20px}
+li{margin:2px 0}
+.muted{color:#777;font-size:13px}
+</style>
+</head>
+<body>
+<h1>保险销售客服知识助手 · 项目进度</h1>
+<p class="muted">单机单进程 Python agent(保险销售知识助手)。架构参考 DeepSeek Harness 核心模块,砍掉扩展性机器,保留脊梁与不变式。</p>
+
+<h2>一、核心模块(架构 v3 @9)</h2>
+<table>
+<tr><th>模块</th><th>状态</th></tr>
+<tr><td>③ 知识检索(摄取/Qdrant/混合/重排/类别)</td><td><span class="tag done">已跑通</span> 混合(BM25+稠密)+bge重排+按保险类别软圈定</td></tr>
+<tr><td>① Agent Loop(ReAct)</td><td><span class="tag done">已重构</span> 核心+业务层解耦</td></tr>
+<tr><td>② LLM 客户端(DeepSeek 流式+重试)</td><td><span class="tag done">已建</span></td></tr>
+<tr><td>④ 会话与上下文(append-only 日志 + 压缩)</td><td><span class="tag done">已建</span> 窗口/保尾压头/回放/引用跨轮复用</td></tr>
+<tr><td>⑦ 服务化外壳(FastAPI+SSE)</td><td><span class="tag done">已建</span> 真流式 8181</td></tr>
+<tr><td>⑤ 写审批护栏</td><td><span class="tag done">已实现</span> ApprovalCenter+审批卡</td></tr>
+<tr><td>⑥ 可观测 + ⑨ 审计</td><td><span class="tag done">已建</span> 指标聚合/审计查询导出/PII 脱敏</td></tr>
+<tr><td>⑧ 【新增】知识库管理(增删改查/摄取/管理页)</td><td><span class="tag doing">已实现</span> API+前端 KbManager(前端待真机 build)</td></tr>
+</table>
+
+<h2>二、最近完成(记忆 + 解析)</h2>
+<ul>
+<li><b>记忆系统</b>(可插拔,<code>MEMORY_ENABLED</code> 默认关)
+  <ul>
+  <li>P1 本会话历史检索 <code>session_history_search</code>(会话 id 系统注入,杜绝跨会话)</li>
+  <li>P2.0 跨会话记忆(<code>memory_entries</code> 表 + save/search/forget 工具 + MEMORY_SYSTEM 指令 + 开关)</li>
+  <li>P2.2 压实(保 redline/按优先级归档/超限触发)</li>
+  </ul>
+</li>
+<li><b>知识库管理</b>:后端 /api/kb(list/ingest/delete/reindex)+ 前端 KbManager(管理员)
+  <ul>
+  <li>结构化分块(编号 regex + 层级路径 + 超长降级 + 按 doc_type 路由,不引 LangChain)</li>
+  <li>解析层接 <b>MarkItDown</b>(pdf/docx/xlsx → 结构化 md);失败降级原库</li>
+  <li>接入 <b>MinerU 在线 API</b>(<code>MINERU_API_KEY</code> 留白;空则 MarkItDown)做高精度/扫描件/层级解析</li>
+  </ul>
+</li>
+<li><b>护栏</b>:注入检测 / RAG 投毒隔离 / 输出 PII 脱敏 / 写审批 / 诚实拒答</li>
+<li><b>评测</b>:40 条评估集 + LLM-judge 六维(质量门)</li>
+</ul>
+
+<h2>三、进行中 / 下一步</h2>
+<ul>
+<li><b>文档结构树抽取</b>(从 chunks 的 section 聚合成 level_1/2/3 树,存 doc_structure 表) —— 规划中</li>
+<li><b>解析三路对比工具(已上)</b>:同一份 pdf 可分别用 mineru / markitdown / pdfplumber 解析并对比(scripts/compare_parsers.py,含结构行统计 + “脱#→编号 regex”切块预览;见 D57)</li>
+<li><b>结构感知切块细化</b>:MinerU md 标题实测被拍平(1×#+298×##)→ 层级靠“脱 # + 编号 regex(部分>条>子项)”重建 —— 方向确定,精细切块(继承父栈/同类合并/阈值对齐 512 token)待实现</li>
+<li><b>前端验收</b>:KbManager(知识管理页)待真机 <code>npm run build</code> + Ctrl+F5</li>
+<li><b>记忆</b>:P2.3 客服画像“我的偏好”面板(前端,待真机)</li>
+</ul>
+
+<h2>四、关键约束(不动)</h2>
+<ul>
+<li>黄金法则:SQLite=事实源 · Qdrant 可重建 · Redis 可丢</li>
+<li>铁律:模型可见⟺已记录(事件先注册) · 上限集中 config · events 只 INSERT</li>
+<li>不引 LangChain 全家桶;单机单进程;回答可追溯(引用绑定版本)</li>
+</ul>
+<p class="muted">测试:全量 <code>python -m unittest discover -s tests</code>(rag_env)204 项通过。更多详见 docs/、STATUS.md、DECISIONS.md。</p>
+</body>
+</html>

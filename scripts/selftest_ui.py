@@ -22,7 +22,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 CHROME = os.environ.get("SELFTEST_CHROME",
     "C:/Users/mi/AppData/Local/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-win64/chrome-headless-shell.exe")
-PORT = int(os.environ.get("SELFTEST_PORT", "8181"))
+# 默认 8199(避开开发者常驻的 8181);可用 SELFTEST_PORT 覆盖
+PORT = int(os.environ.get("SELFTEST_PORT", "8199"))
 URL = "http://127.0.0.1:" + str(PORT)
 
 

@@ -51,6 +51,35 @@ def is_supported(path: str) -> bool:
     return ext in _SUPPORTED_EXTS
 
 
+def parse_md_front_matter(text: str) -> tuple[dict, str]:
+    """解析 md 文件头的 front-matter(`---` 包裹的 key: value 块),返回 (meta_dict, 正文)。
+
+    约定:文件首行(trim 后)为 `---`,其后到下一个 `---` 之间的行按 `key: value` 解析,
+    支持 category/version/product_name 等;其余忽略(不引 yaml 依赖)。无 front-matter 时返回 ({} ,原文)。
+    front-matter 从正文剥离,避免检索片段被元数据污染。只做确定性解析,不抛异常。"""
+    rest = (text or "").strip()
+    if not rest.startswith("---"):
+        return {}, text
+    body = rest[3:]
+    end = body.find("\n---")
+    if end == -1:
+        # 文件头是 `---` 但没有结束标记 → 不是 front-matter,原样返回
+        return {}, text
+    head = body[:end]
+    main = body[end + 4:].strip("\n")
+    meta: dict = {}
+    for line in head.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        k = k.strip().lower()
+        v = v.strip().strip("'\"")
+        if k in ("category", "version", "product_name", "product_category"):
+            meta[k] = v
+    return meta, main
+
+
 # ---------------- 三个独立后端(每个失败返回 None,不抛) ----------------
 
 def _markitdown_text(path: str) -> str | None:
@@ -215,15 +244,23 @@ def build_docs(path: str, category: str = "", backend: str | None = None) -> lis
         return []
     base = os.path.splitext(os.path.basename(path))[0]
     ext = os.path.splitext(path)[1].lower()
-    # 保险类别:优先显式 category,否则按 doc_id 关键词判定
-    cat = category or classify_product_category(base, base)
     doc_type = _DOC_TYPE.get(ext, "policy_document")
+    fm: dict = {}
+    if ext == ".md":
+        # md 可带 front-matter(category/version 等);front-matter 从正文剥离,避免污染检索片段
+        fm, text = parse_md_front_matter(text)
+    # 保险类别:优先级 显式 category > front-matter category > 文件名关键词
+    cat_from_fm = fm.get("product_category") or fm.get("category") or ""
+    cat = category.strip() if category.strip() else cat_from_fm
+    if not cat:
+        cat = classify_product_category(base, base)
+    version = (fm.get("version") or "v1") if ext == ".md" else "v1"
     return [{
         "text": text,
         "meta": {
             "chunk_id": base,
             "doc_id": base,
-            "version": "v1",
+            "version": version,
             "section": "",
             "doc_type": doc_type,
             "source": path,

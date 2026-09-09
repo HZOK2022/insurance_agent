@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Harness Replica</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --sidebar-bg: #f7f8fa;
+      --border: #e5e7eb;
+      --text: #111827;
+      --text-secondary: #6b7280;
+      --text-tertiary: #9ca3af;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --selected-bg: #eff6ff;
+      --hover-bg: #f3f4f6;
+      --code-bg: #f9fafb;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+      --header-h: 52px;
+      --sidebar-w: 260px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .top-header {
+      height: var(--header-h);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4f8cff 0%, #2563eb 100%);
+      display: grid; place-items: center;
+      color: #fff; font-weight: 700; font-size: 13px;
+    }
+    .brand { display: flex; align-items: baseline; gap: 6px; }
+    .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+    .brand-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+      color: var(--text-secondary); border: 1px solid var(--border);
+      padding: 1px 4px; border-radius: 4px;
+    }
+    .session-title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 14px; font-weight: 500;
+      padding: 6px 10px; border-radius: var(--radius-md);
+      cursor: pointer; transition: background .15s;
+    }
+    .session-title:hover { background: var(--hover-bg); }
+    .header-right {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .header-btn {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; color: var(--text-secondary);
+      padding: 6px 10px; border-radius: var(--radius-md);
+      cursor: pointer; transition: background .15s;
+    }
+    .header-btn:hover { background: var(--hover-bg); }
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      background: #e5e7eb; display: grid; place-items: center;
+      font-size: 12px; color: var(--text-secondary); cursor: pointer;
+    }
+
+    /* Main */
+    .main {
+      display: flex; flex: 1; overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-w);
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      flex-shrink: 0;
+    }
+    .sidebar-top {
+      padding: 12px;
+    }
+    .new-session {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; padding: 8px 0;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      background: var(--bg); color: var(--text);
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      box-shadow: var(--shadow-sm); transition: border-color .15s, background .15s;
+    }
+    .new-session:hover { border-color: #d1d5db; background: #fafafa; }
+    .workspace-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 6px;
+      color: var(--text-secondary); font-size: 12px; font-weight: 500;
+    }
+    .workspace-actions { display: flex; gap: 8px; }
+    .workspace-actions svg { cursor: pointer; }
+    .workspace-actions svg:hover { color: var(--text); }
+    .tree {
+      flex: 1; overflow-y: auto;
+      padding: 0 8px 12px;
+    }
+    .tree-folder, .tree-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px 6px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer; font-size: 13px;
+      transition: background .15s;
+      position: relative;
+    }
+    .tree-folder:hover, .tree-item:hover { background: var(--hover-bg); }
+    .tree-folder { font-weight: 500; color: var(--text); }
+    .tree-item { color: var(--text-secondary); padding-left: 28px; }
+    .tree-item.active {
+      background: var(--selected-bg);
+      color: var(--text);
+    }
+    .tree-item.active::before {
+      content: "";
+      position: absolute; left: 0; top: 4px; bottom: 4px;
+      width: 3px; border-radius: 0 3px 3px 0;
+      background: var(--primary);
+    }
+    .tree-item .meta {
+      margin-left: auto; font-size: 11px; color: var(--text-tertiary);
+      white-space: nowrap;
+    }
+    .chevron { transition: transform .15s; flex-shrink: 0; }
+    .chevron.open { transform: rotate(90deg); }
+    .sidebar-bottom {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+    }
+    .settings-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: var(--radius-sm);
+      cursor: pointer; font-size: 13px; color: var(--text-secondary);
+      transition: background .15s;
+    }
+    .settings-btn:hover { background: var(--hover-bg); color: var(--text); }
+
+    /* Chat area */
+    .chat {
+      flex: 1; display: flex; flex-direction: column;
+      min-width: 0; background: var(--bg);
+    }
+    .tabs {
+      display: flex; gap: 20px;
+      padding: 0 24px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab {
+      padding: 12px 4px 10px; font-size: 14px; font-weight: 500;
+      color: var(--text-secondary); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: color .15s;
+      position: relative;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .messages {
+      flex: 1; overflow-y: auto;
+      padding: 24px 24px 0;
+    }
+    .message {
+      max-width: 800px; margin: 0 auto 24px;
+    }
+    .message.user { margin-bottom: 16px; }
+    .message-text {
+      font-size: 14.5px; line-height: 1.7;
+      color: var(--text); white-space: pre-wrap;
+    }
+    .message-text strong { font-weight: 600; }
+    .code-block {
+      margin-top: 10px;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      background: var(--code-bg); overflow: hidden;
+    }
+    .code-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px;
+      background: #f3f4f6; border-bottom: 1px solid var(--border);
+      font-size: 12px; color: var(--text-secondary);
+    }
+    .code-copy {
+      display: flex; align-items: center; gap: 4px;
+      cursor: pointer; transition: color .15s;
+    }
+    .code-copy:hover { color: var(--text); }
+    .code-body {
+      padding: 12px 14px;
+      font-family: "SF Mono", Monaco, "Cascadia Code", "Fira Code", Consolas, monospace;
+      font-size: 13px; line-height: 1.6;
+      color: var(--text); white-space: pre;
+      overflow-x: auto;
+    }
+    .code-comment { color: #6b7280; }
+
+    .message-actions {
+      display: flex; gap: 12px; margin-top: 10px;
+    }
+    .msg-action {
+      display: flex; align-items: center; gap: 4px;
+      padding: 4px 6px; border-radius: var(--radius-sm);
+      color: var(--text-tertiary); font-size: 12px;
+      cursor: pointer; transition: color .15s, background .15s;
+    }
+    .msg-action:hover { color: var(--text-secondary); background: var(--hover-bg); }
+
+    /* Input area */
+    .input-wrap {
+      padding: 12px 24px 16px;
+      flex-shrink: 0;
+    }
+    .composer {
+      max-width: 800px; margin: 0 auto;
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      background: var(--bg);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .composer-top {
+      display: flex; align-items: flex-end; gap: 10px;
+      padding: 10px 12px;
+    }
+    .composer-actions-left {
+      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+    }
+    .composer-btn {
+      width: 30px; height: 30px; border-radius: 50%;
+      display: grid; place-items: center;
+      border: none; background: transparent; color: var(--text-secondary);
+      cursor: pointer; transition: background .15s, color .15s;
+    }
+    .composer-btn:hover { background: var(--hover-bg); color: var(--text); }
+    .composer-input {
+      flex: 1; min-height: 24px; max-height: 160px;
+      border: none; outline: none; resize: none;
+      font-family: inherit; font-size: 14px; line-height: 1.5;
+      background: transparent; color: var(--text);
+      padding: 4px 0;
+    }
+    .composer-input::placeholder { color: var(--text-tertiary); }
+    .composer-bottom {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px 10px;
+    }
+    .composer-tools {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tool-btn {
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: var(--radius-md);
+      border: 1px solid transparent; background: transparent;
+      color: var(--text-secondary); font-size: 13px;
+      cursor: pointer; transition: background .15s, border-color .15s;
+    }
+    .tool-btn:hover { background: var(--hover-bg); border-color: var(--border); }
+    .tool-btn svg { color: var(--text-tertiary); }
+    .composer-right {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .model-select {
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: var(--radius-md);
+      color: var(--text-secondary); font-size: 13px;
+      cursor: pointer; transition: background .15s;
+    }
+    .model-select:hover { background: var(--hover-bg); }
+    .model-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #22c55e;
+    }
+    .send-btn {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: none; background: var(--primary); color: #fff;
+      display: grid; place-items: center;
+      cursor: pointer; transition: background .15s;
+    }
+    .send-btn:hover { background: var(--primary-hover); }
+
+    /* Footer stats */
+    .footer-stats {
+      text-align: center;
+      padding: 6px 12px 10px;
+      font-size: 11px; color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    /* SVG icon helpers */
+    .icon { width: 16px; height: 16px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="top-header">
+      <div class="header-left">
+        <div class="logo-icon">d</div>
+        <div class="brand">
+          <span class="brand-name">deepseek</span>
+          <span class="brand-badge">HARNESS</span>
+        </div>
+      </div>
+      <div class="session-title">
+        <span>deepseek harness核心架构八...</span>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="header-right">
+        <div class="header-btn">
+          <span>1 个后台任务</span>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div class="avatar">U</div>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <button class="new-session">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>新会话</span>
+          </button>
+        </div>
+        <div class="workspace-bar">
+          <span>工作区</span>
+          <div class="workspace-actions">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+        <div class="tree">
+          <div class="tree-folder">
+            <svg class="icon chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#9ca3af"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>Obsidian_Store</span>
+          </div>
+          <div class="tree-item">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">视频解析工具打包桌面快捷...</span>
+            <span class="meta">1小时</span>
+          </div>
+          <div class="tree-item">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">English_app</span>
+            <span class="meta">12天</span>
+          </div>
+
+          <div class="tree-folder">
+            <svg class="icon chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#9ca3af"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>deepseek-harness-master</span>
+          </div>
+          <div class="tree-item active">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">deepseek harness核心架构...</span>
+          </div>
+          <div class="tree-item">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">dsh核心架构8大组件概述</span>
+            <span class="meta">2小时</span>
+          </div>
+          <div class="tree-item">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">DSH图片识别支持问题</span>
+            <span class="meta">3小时</span>
+          </div>
+          <div class="tree-item">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">生成视频功能介绍</span>
+            <span class="meta">1天</span>
+          </div>
+          <div class="tree-item">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">梳理代码继承与记忆系统</span>
+            <span class="meta">1天</span>
+          </div>
+          <div class="tree-item">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:20px">三个问题全部核实完毕，逐一</span>
+            <span class="meta">4天</span>
+          </div>
+        </div>
+        <div class="sidebar-bottom">
+          <div class="settings-btn">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>设置</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Chat -->
+      <main class="chat">
+        <div class="tabs">
+          <div class="tab active">对话</div>
+          <div class="tab">轨迹</div>
+        </div>
+
+        <div class="messages">
+          <div class="message user">
+            <div class="message-text">npm 的全局缓存目录（工作区外的路径），不是代码问题。所以请你在本机验收：</div>
+            <div class="code-block">
+              <div class="code-header">
+                <span>sh</span>
+                <span class="code-copy">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  复制
+                </span>
+              </div>
+              <div class="code-body"><span class="code-comment"># 打开 http://localhost:5173，发一句“重疾险责任免除”，自动演一次假对话（检索卡片+流式回答+引用[1]可点）</span>
+cd D:\LLM\insurance-agent\web
+npm install && npm run dev</div>
+            </div>
+          </div>
+
+          <div class="message assistant">
+            <div class="message-text">（想连 mock 后端的完整 SSE 流：另开终端 <code>uvicorn app.main:app --port 8000</code>，Vite 已配好 /api 代理。）</div>
+            <div class="message-text" style="margin-top:14px"><strong>下一步：</strong>你在本机跑通上面命令、确认前端壳能“演假对话”后告诉我，阶段 0 就算验收通过——然后我按 DoD 补学习文档 01 章（契约 + React 壳 + mock），并把 STATUS 阶段 0 标记完成，进入阶段 1（会话地基 + 事件流页）。要不要我现在先把学习文档 01 章写好（不等验收），还是等你确认前端跑通再写？</div>
+            <div class="message-actions">
+              <span class="msg-action">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+              </span>
+              <span class="msg-action">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+              </span>
+              <span class="msg-action">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-wrap">
+          <div class="composer">
+            <div class="composer-top">
+              <div class="composer-actions-left">
+                <button class="composer-btn">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+              <textarea class="composer-input" rows="1" placeholder="给 deepseek harness 发消息"></textarea>
+            </div>
+            <div class="composer-bottom">
+              <div class="composer-tools">
+                <button class="tool-btn">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+                  <span>Workspace Write</span>
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <button class="composer-btn">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+              </div>
+              <div class="composer-right">
+                <div class="model-select">
+                  <span class="model-dot"></span>
+                  <span>deepseek-v4-flash-vision-exp High</span>
+                </div>
+                <button class="composer-btn">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+                <button class="send-btn">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="footer-stats">
+          22 轮 · 100 步 · LLM 47m36s · 工具调用 39m6s · 首 token 平均 2.3s · 86 tok/s · 缓存命中 95% · 输入 15.9M tok · 输出 ...
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+      });
+    });
+
+    // Simple auto-resize textarea
+    const textarea = document.querySelector('.composer-input');
+    textarea.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+    });
+  </script>
+</body>
+</html>

@@ -89,7 +89,7 @@ class ParsePreviewTest(unittest.TestCase):
     def test_commit_upload_writes_chunks(self):
         # commit(D70):用 stub ingester 验证 write_chunks 被调 + mark_bm25_dirty;不碰真实嵌入/Qdrant
         class FakeIngester:
-            def write_chunks(self, meta, chunk_items, outline, on_progress=None, force=False):
+            def write_chunks(self, meta, chunk_items, outline, on_progress=None):
                 return {"chunks_written": len(chunk_items), "chunks_embedded": len(chunk_items),
                         "doc_id": meta.get("doc_id", "")}
         ok, res, msg = kb_service.commit_upload(FakeIngester(), {"doc_id": "d1"},
@@ -99,28 +99,17 @@ class ParsePreviewTest(unittest.TestCase):
         self.assertEqual(res["doc_id"], "d1")
 
 
-    def test_commit_upload_conflict_requires_force(self):
-        # D72:同名产品内容不同,非 force → conflict 不覆盖;force=True → 写入
+    def test_commit_upload_duplicate_blocked(self):
+        # D75:内容与已有文档完全相同 → duplicate 硬拦,commit 不写库
         class FakeIngester:
-            def __init__(self):
-                self.calls = []
-            def write_chunks(self, meta, chunk_items, outline, on_progress=None, force=False):
-                self.calls.append({"meta": dict(meta), "items": chunk_items, "force": force})
-                if not force:
-                    return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": meta.get("doc_id", ""),
-                            "conflict": True, "message": "产品名已存在且内容不同"}
-                return {"chunks_written": len(chunk_items), "chunks_embedded": len(chunk_items),
-                        "doc_id": meta.get("doc_id", "")}
+            def write_chunks(self, meta, chunk_items, outline, on_progress=None):
+                return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": meta.get("doc_id", ""),
+                        "duplicate": True, "message": "内容与已有文档完全相同,未重复入库"}
         ing = FakeIngester()
         items = [{"section": "", "title": "", "content": "abc"}]
         ok, res, msg = kb_service.commit_upload(ing, {"doc_id": "d1"}, items, [])
-        self.assertFalse(ok, "同名产品内容不同且非 force 应拒绝写入")
-        self.assertTrue(res.get("conflict"), "应返回 conflict 标志")
-        ok2, res2, _ = kb_service.commit_upload(ing, {"doc_id": "d1"}, items, [], force=True)
-        self.assertTrue(ok2, "force=True 应允许覆盖写入")
-        self.assertEqual(res2["chunks_written"], 1)
-        # force 标志应正确透传:第一次 False,第二次 True
-        self.assertEqual([c["force"] for c in ing.calls], [False, True])
+        self.assertFalse(ok, "重复内容应拒绝写入")
+        self.assertTrue(res.get("duplicate"), "应返回 duplicate 标志")
 
 
 if __name__ == "__main__":

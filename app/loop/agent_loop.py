@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 from app.utils.text import estimate_tokens, prune_tool_content
-from app.retrieval.errors import RetrievalUnavailable
+from app.retrieval.errors import RetrievalUnavailable, RetrievalClientError
 from app.compaction.compactor import (
     prune_tool_messages, select_keep_tail, build_summary_request,
     collect_summary, truncate_summary, frame_summary,
@@ -420,6 +420,7 @@ class AgentLoop:
                 _pt_before = _prompt_tokens
                 _ct_before = _completion_tokens
                 _step_ttft: float | None = None
+                _llm_t0 = time.perf_counter()   # 单次 LLM 调用计时起点(真实调用耗时,不含压缩/等待)
 
                 for chunk in self._stream_blocks(msgs):
                     if chunk.get("type") == "usage":
@@ -446,16 +447,25 @@ class AgentLoop:
                 if _stopped:
                     break
 
-                # 每次 LLM 调用落一行日志(本步 token 增量/首 token 时延/步耗时/吞吐),便于定位"哪步贵/哪步慢"
-                _step_ms = int((time.time() - (_step_t0 or time.time())) * 1000)
+                # 单次 LLM 调用计时(真实调用 wall time;工具执行在调用完成后,不占 llm_call 的 run_ms)
+                _llm_ms = int((time.perf_counter() - _llm_t0) * 1000)
+                # 每次 LLM 调用落一行日志(本步 token 增量/首 token 时延/调用耗时/吞吐),便于定位"哪步贵/哪步慢"
                 _llm_pt = _prompt_tokens - _pt_before
                 _llm_ct = _completion_tokens - _ct_before
-                _llm_tps = (_llm_ct / (_step_ms / 1000)) if (_llm_ct > 0 and _step_ms > 0) else None
+                _llm_tps = (_llm_ct / (_llm_ms / 1000)) if (_llm_ct > 0 and _llm_ms > 0) else None
                 logger.info("llm step=%s model=%s ptokens=%s ctokens=%s ttft=%s run_ms=%s tps=%s",
                             n_steps, self._effective_model, _llm_pt, _llm_ct,
-                            _step_ttft, _step_ms, _llm_tps,
+                            _step_ttft, _llm_ms, _llm_tps,
                             extra={"session_id": session_id, "trace_id": (turn_trace or session_id),
                                    "model": self._effective_model})
+                # llm_call 事件:单次 LLM 调用(一步 = 一次调用)的 token/耗时独立入日志,
+                # 供 step 级归因(哪步贵/慢/花多少 token)与前端"真实 LLM 耗时"(不再用"步耗时−工具耗时"估算)
+                yield self._emit("llm_call", {
+                    "step": n_steps, "model": self._effective_model,
+                    "prompt_tokens": _llm_pt, "completion_tokens": _llm_ct,
+                    "ttft_ms": _step_ttft, "run_ms": _llm_ms,
+                    "tokens_per_second": _llm_tps,
+                })
 
                 tool_calls = assembler.tool_calls()
                 # D52 知识检索达上限:仅当本轮调“知识检索类”工具才强制收尾;本会话历史检索(回忆)
@@ -751,6 +761,14 @@ class AgentLoop:
                 raw = tool["handler"](args, start_idx, session_id=session_id)
             else:
                 raw = tool["handler"](args, start_idx)
+        except RetrievalClientError:
+            # 检索请求构造/参数非法(代码层 bug,**非**向量库宕机):归 tool_error(告警开发而非运维),
+            # 不误诊为"服务不可用";用户侧仍诚实降级拒答(严禁杜撰)。
+            logger.error("检索工具客户端错误(代码层,非服务宕机) tool=%s → 记 tool_error", name)
+            return ("【检索服务异常】检索请求构造出错,无法访问知识库数据。请如实告知用户:"
+                    "抱歉,当前知识库检索出现异常,我无法给出有数据支撑的回答,为避免不准确信息,请稍后重试或转人工坐席;"
+                    "严禁编造任何条款内容、数字或责任范围。",
+                    None, False, "tool_error", {})
         except RetrievalUnavailable:
             # 检索基础设施(向量库)不可用 → 注入零检索结果,LLM 依 SYSTEM 诚实拒答(严禁杜撰)
             logger.error("检索服务不可用 tool=%s(重试后仍失败)→ 记 retrieval_unavailable", name)

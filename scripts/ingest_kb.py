@@ -25,6 +25,8 @@ def main():
     ap.add_argument("--category", default="", help="保险类别(医疗险/重疾险/意外险/…);缺省按 doc_id 关键词判定")
     ap.add_argument("--parser", default="auto",
                     help="pdf/docx/xlsx 解析后端:auto(默认回退链)| mineru | markitdown | pdfplumber | native(docx/xlsx)")
+    ap.add_argument("--min-heading-level", type=int, default=0,
+                    help="md 结构化切分标题层级门槛(仅 markdown 生效;≤该深度才成块,覆盖 config CHUNK_MIN_HEADING_LEVEL)")
     a = ap.parse_args()
 
     cfg = load()
@@ -43,16 +45,18 @@ def main():
     embedder = build_embedder(cfg)
     ingester = Ingester(kstore, qstore, embedder)
 
+    mhl = a.min_heading_level or 0
     if os.path.isfile(a.path):
         if a.limit:
             print("[skip] --limit 仅对目录模式有效,单文件直接全量摄取")
         if not is_supported(a.path):
             print(f"[skip] 不支持的文件格式: {a.path}")
             return
-        result = ingester.ingest_file(a.path, a.category, a.parser)
+        result = ingester.ingest_file(a.path, a.category, a.parser, min_heading_level=mhl)
         print(f"[done] ingested {result['doc_id']}: {result['chunks_written']} chunks -> SQLite + Qdrant")
     else:
-        result = ingester.ingest_directory(a.path, a.limit, a.category, a.parser)
+        result = ingester.ingest_directory(a.path, a.limit, a.category, a.parser,
+                                           min_heading_level=mhl)
         print(f"[done] 目录 {a.path}: {result['total_files']} 文件 -> {result['total_chunks']} chunks")
 
 

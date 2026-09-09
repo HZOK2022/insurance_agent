@@ -9,13 +9,34 @@ from app.api.schemas.kb import (
     IngestTextRequest, DeleteDocumentResponse,
     ReindexResponse, IngestTextResponse,
     StructNode, DocStructureResponse,
+    ProductsResponse, SetDocumentValidRequest, SetDocumentValidResponse,
 )
 from app.api.services.container import (
     get_knowledge_store, get_qstore, get_ingester
 )
 from app.api.services import kb_service
 
+import logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
+
+
+@router.get("/products", response_model=ProductsResponse)
+def list_products():
+    """产品下拉:读素材表 products(尊享/安盛等真产品),供上传页选择/模糊检索。
+    降级:products 表不可读时回退“已上传文档聚合”(不阻塞)。"""
+    try:
+        from app.config import load as load_cfg
+        from app.businesses.premium import PremiumStore
+        pstore = PremiumStore(cfg=load_cfg())
+        keys = [p["key"] for p in pstore.list_products() if p["key"]]
+        if keys:
+            return ProductsResponse(products=keys)
+    except Exception:
+        pass
+    kstore = get_knowledge_store()
+    return ProductsResponse(products=kb_service.list_products(kstore))
 
 
 @router.get("/documents", response_model=DocumentListResponse)
@@ -57,30 +78,37 @@ def doc_structure(doc_id: str):
 
 @router.post("/ingest/text", response_model=IngestTextResponse)
 def ingest_text(body: IngestTextRequest):
-    """摄取文本文档"""
+    """摄取文本文档。doc_id 由内容指纹派生(D75),产品名/title 仅作展示属性。"""
     ingester = get_ingester()
-    product_name = body.product_name
-    doc_id = product_name   # 产品名唯一,doc_id=产品名
+    product_name = (body.product_name or "").strip()
     meta = {
-        "doc_id": doc_id,
         "product_name": product_name,
         "version": body.version,
         "doc_type": body.doc_type,
         "product_category": body.product_category,
-        "title": body.title or product_name,
-        "source": body.source or f"api-ingest/{product_name}",
+        "title": body.title or product_name or "文档",
+        "source": body.source or "api-ingest",
     }
     ok, result, msg = kb_service.ingest_text(
         ingester, body.text, meta,
         chunk_size=body.chunk_size, overlap=body.overlap, text_splitter=body.text_splitter,
-        chunk_max_tokens=body.chunk_max_tokens, force=body.force)
+        chunk_max_tokens=body.chunk_max_tokens, min_heading_level=body.min_heading_level)
+    if ok and product_name:
+        _register_product_if_new(product_name)
     return IngestTextResponse(
         ok=ok,
         doc_id=result.get("doc_id", ""),
         chunks_written=result.get("chunks_written", 0),
         chunks_embedded=result.get("chunks_embedded", 0),
-        message=msg, conflict=bool(result.get("conflict", False))
+        message=msg, duplicate=bool(result.get("duplicate", False))
     )
+
+
+@router.post("/documents/{doc_id}/valid", response_model=SetDocumentValidResponse)
+def set_document_valid(doc_id: str, body: SetDocumentValidRequest):
+    """切换文档生效/失效(D97):MySQL documents+chunks 与 Qdrant payload 同步置位,同成功同失败。"""
+    ok, msg = kb_service.set_document_valid(get_knowledge_store(), get_qstore(), doc_id, body.is_valid)
+    return SetDocumentValidResponse(ok=ok, doc_id=doc_id, is_valid=body.is_valid, message=msg)
 
 
 @router.delete("/documents/{doc_id}", response_model=DeleteDocumentResponse)
@@ -127,6 +155,24 @@ from app.api.schemas.kb import (
 )
 
 
+def _register_product_if_new(product_name: str) -> None:
+    """上传时:若产品名非空且不在 products 表,注册进去(使其成为下拉项)。fail-safe。
+    产品名唯一由 products.key UNIQUE 保证;自定义新产品名自动入表。"""
+    product_name = (product_name or "").strip()
+    if not product_name:
+        return
+    try:
+        from app.config import load as load_cfg
+        from app.businesses.premium import PremiumStore
+        pstore = PremiumStore(cfg=load_cfg())
+        keys = {p["key"] for p in pstore.list_products()}
+        if product_name not in keys:
+            pstore.register_product(product_name, product_name)
+    except Exception:  # noqa: BLE001
+        # 注册失败不阻塞上传(降级:仅本次生效,不入下拉)
+        pass
+
+
 def _save_upload(upload: UploadFile) -> str:
     """校验扩展名并把上传文件落临时盘,返回路径(调用方负责清理目录)。"""
     name = os.path.basename(upload.filename or "")
@@ -136,15 +182,21 @@ def _save_upload(upload: UploadFile) -> str:
     path = os.path.join(tmpdir, name)
     try:
         with open(path, "wb") as f:
-            f.write(upload.file.read())
-    except Exception:
+            data = upload.file.read()
+            f.write(data)
+    except Exception as e:
         shutil.rmtree(tmpdir, ignore_errors=True)
+        logger.exception("【文件上传】落盘失败:file=%s(err=%r)", name, e,
+                         extra={"op": "kb.upload_save", "file": name})
         raise
+    logger.info("【文件上传】临时文件已落盘:file=%s(大小=%d 字节)", name, len(data),
+                extra={"op": "kb.upload_save", "file": name, "bytes": len(data)})
     return path
 
 
 def _cleanup(path: str) -> None:
     shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+    logger.info("【文件上传】临时目录已清理:%s", os.path.dirname(path), extra={"op": "kb.temp_cleanup"})
 
 
 
@@ -188,9 +240,9 @@ def ingest_file_upload_stream(
     overlap: int = Form(-1),
     chunk_max_tokens: int = Form(0),
     product_name: str = Form(""),
-    force: str = Form(""),
+    min_heading_level: int = Form(0),
 ):
-    """上传文件摄取,SSE 逐帧推进度:chunked/embed(done,total)/qdrant → done|error。"""
+    """上传文件摄取,SSE 逐帧推进度:chunked/embed(done,total)/qdrant → done|error。doc_id 由内容指纹派生(D75)。"""
     if parser not in BACKEND_NAMES:
         raise HTTPException(status_code=400, detail=f"未知解析后端: {parser}")
     path = _save_upload(file)
@@ -206,13 +258,15 @@ def ingest_file_upload_stream(
                 chunk_size=(None if chunk_size <= 0 else chunk_size),
                 overlap=(None if overlap < 0 else overlap),
                 chunk_max_tokens=(None if chunk_max_tokens <= 0 else chunk_max_tokens),
-                product_name=(product_name.strip() or None),
-                force=(str(force).lower() in ("1", "true", "yes")))
+                min_heading_level=(None if min_heading_level <= 0 else min_heading_level),
+                product_name=(product_name.strip() or None))
+            if ok and (product_name.strip()):
+                _register_product_if_new(product_name)
             q.put({"type": "done", "ok": ok, "doc_id": result.get("doc_id", ""),
                    "chunks_written": result.get("chunks_written", 0),
                    "chunks_embedded": result.get("chunks_embedded", 0),
                    "parser": parser_used, "message": msg,
-                   "conflict": bool(result.get("conflict", False))})
+                   "duplicate": bool(result.get("duplicate", False))})
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
         finally:
@@ -238,6 +292,7 @@ def ingest_preview_upload(
     chunk_size: int = Form(0),
     overlap: int = Form(-1),
     chunk_max_tokens: int = Form(0),
+    min_heading_level: int = Form(0),
 ):
     """上传前"预览切块"(不写库、不发嵌入):同一文件按所选解析+切块方式切片,返回目录树 + 切块内容。
     供上传页「预览切块→确认并索引」复用,避免二次解析。"""
@@ -248,28 +303,29 @@ def ingest_preview_upload(
             text_splitter=(None if text_splitter in ("auto", "", "null") else text_splitter),
             chunk_size=(None if chunk_size <= 0 else chunk_size),
             overlap=(None if overlap < 0 else overlap),
-            chunk_max_tokens=(None if chunk_max_tokens <= 0 else chunk_max_tokens))
+            chunk_max_tokens=(None if chunk_max_tokens <= 0 else chunk_max_tokens),
+            min_heading_level=(None if min_heading_level <= 0 else min_heading_level))
         return UploadPreviewResponse(ok=ok, err=err, **{k: result.get(k) for k in (
             "doc_type", "parser", "text_splitter", "chunk_count", "chunk_size",
-            "overlap", "outline", "chunks")})
+            "overlap", "outline", "chunks", "content_fp")})
     finally:
         _cleanup(path)
 
 
 @router.post("/ingest/commit", response_model=None)
 def ingest_commit_stream(body: IngestionCommitRequest):
-    """确认索引:commit 预览得到的 chunks/outline(不再解析),服务端写库 + doc_structure + 嵌入 + Qdrant,SSE 逐帧进度。"""
+    """确认索引:commit 预览得到的 chunks/outline(不再解析),服务端写库 + doc_structure + 嵌入 + Qdrant,SSE 逐帧进度。
+    doc_id 由 body.content_fp(预览阶段指纹)派生;缺省回退 chunks 拼接指纹。"""
     ingester = get_ingester()
-    product_name = body.product_name
-    doc_id = product_name   # 产品名唯一,doc_id=产品名
+    product_name = (body.product_name or "").strip()
     doc_meta = {
-        "doc_id": doc_id,
         "product_name": product_name,
         "version": body.version,
         "doc_type": body.doc_type,
         "product_category": body.product_category or "",
-        "title": body.title or product_name,
-        "source": body.source or f"upload-preview/{product_name}",
+        "title": body.title or product_name or "文档",
+        "source": body.source or "upload-preview",
+        "content_fp": body.content_fp,
     }
     chunk_items = [{"section": c.section, "title": c.title, "content": c.content} for c in body.chunks]
     outline = [{"level": n.level, "title": n.title, "page": n.page, "parent": n.parent} for n in body.outline]
@@ -280,11 +336,13 @@ def ingest_commit_stream(body: IngestionCommitRequest):
             def prog(stage: str, done: int, total: int) -> None:
                 q.put({"type": "progress", "stage": stage, "done": done, "total": total})
             ok, result, msg = kb_service.commit_upload(ingester, doc_meta, chunk_items, outline,
-                                                       on_progress=prog, force=body.force)
+                                                       on_progress=prog)
+            if ok and product_name:
+                _register_product_if_new(product_name)
             q.put({"type": "done", "ok": ok, "doc_id": result.get("doc_id", ""),
                    "chunks_written": result.get("chunks_written", 0),
                    "chunks_embedded": result.get("chunks_embedded", 0), "message": msg,
-                   "conflict": bool(result.get("conflict", False))})
+                   "duplicate": bool(result.get("duplicate", False))})
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
 

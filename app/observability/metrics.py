@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import json
 
 from app.session.store import SessionStore
+from app.util.time import parse_beijing
 
 
 def severity_of(reason: str | None, ok: bool | None = None) -> str:
@@ -175,10 +176,22 @@ def overall_metrics(store: SessionStore, *, price_in_per_1m: float = 0.0,
 
 
 def _parse_ts(ts: str | None) -> datetime | None:
-    """把 ISO8601(带时区)时间戳解析为 aware datetime;失败返回 None。"""
+    """把时间戳解析为 aware datetime(北京时间);失败返回 None。
+
+    兼容两种格式:
+    - 新格式:北京时间字符串 "YYYY-MM-DD HH:mm:ss"
+    - 旧格式:ISO8601(带时区,如 "2026-09-08T12:00:00+00:00")
+    """
     if not ts:
         return None
-    s = ts
+    s = ts.strip()
+    # 新格式:北京时间 "YYYY-MM-DD HH:mm:ss"
+    if len(s) >= 19 and s[4] == "-" and s[10] == " ":
+        try:
+            return parse_beijing(s[:19])
+        except (ValueError, TypeError):
+            pass
+    # 旧格式:ISO8601(带时区)
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     try:
@@ -240,7 +253,7 @@ def timeseries_metrics(store: SessionStore, *, granularity: str = "hour",
         p95_lat = round(lat[max(0, int(len(lat) * 0.95) - 1)], 1) if lat else None
         total = b["prompt_tokens"] + b["completion_tokens"]
         out.append({
-            "bucket": cur.isoformat(),
+            "bucket": cur.strftime("%Y-%m-%d %H:%M:%S"),
             "turns": b["turns"],
             "errors": b["errors"],
             "prompt_tokens": b["prompt_tokens"],

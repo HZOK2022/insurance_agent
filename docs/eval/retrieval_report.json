@@ -1,0 +1,466 @@
+{
+ "config": {
+  "arms": [
+   "dense",
+   "minmax",
+   "rrf"
+  ],
+  "top_k": 20,
+  "top_rerank": 3,
+  "rerank": false
+ },
+ "summary": {
+  "dense": {
+   "recall_pool": 0.8945,
+   "recall_top": 0.6445,
+   "precision_top": 0.5556,
+   "gold_hit": 1.0,
+   "mrr": 0.9028
+  },
+  "minmax": {
+   "recall_pool": 0.9222,
+   "recall_top": 0.5861,
+   "precision_top": 0.5,
+   "gold_hit": 0.9167,
+   "mrr": 0.875
+  },
+  "rrf": {
+   "recall_pool": 0.9222,
+   "recall_top": 0.5861,
+   "precision_top": 0.5,
+   "gold_hit": 0.9167,
+   "mrr": 0.7778
+  }
+ },
+ "count": 12,
+ "skipped": [
+  "rule_001",
+  "rule_002",
+  "rule_003",
+  "rule_004",
+  "rule_005",
+  "calc_001",
+  "calc_002",
+  "calc_003",
+  "calc_004",
+  "calc_005",
+  "adapt_001",
+  "adapt_002",
+  "adapt_003",
+  "compare_001",
+  "compare_002",
+  "compare_003",
+  "compare_004",
+  "honest_001",
+  "honest_002",
+  "honest_003",
+  "honest_004",
+  "compliant_001",
+  "compliant_002",
+  "compliant_003",
+  "compliant_004",
+  "trace_001",
+  "trace_002",
+  "trace_003",
+  "adversarial_001",
+  "adversarial_002",
+  "adversarial_003",
+  "advisor_001",
+  "advisor_002",
+  "advisor_003",
+  "refuse_001",
+  "refuse_002",
+  "refuse_003",
+  "refuse_004",
+  "refuse_005",
+  "refuse_006",
+  "honest_005",
+  "honest_006",
+  "honest_007",
+  "injection_001",
+  "injection_002",
+  "injection_003",
+  "injection_004",
+  "injection_005",
+  "boundary_001",
+  "boundary_002",
+  "boundary_003",
+  "boundary_004",
+  "boundary_005",
+  "boundary_006",
+  "compute_006",
+  "compute_007",
+  "compute_008",
+  "compare_005",
+  "compare_006",
+  "trace_004",
+  "trace_005",
+  "trace_006",
+  "grounded_001",
+  "grounded_002",
+  "grounded_003",
+  "grounded_004"
+ ],
+ "cases": [
+  {
+   "id": "kb_001",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025-产品要点:0",
+    "尊享e生2025:7"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.5,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_002",
+   "type": "kb",
+   "gold": [
+    "安盛天平A款-产品要点:0",
+    "安盛天平卓越馨选(A款):8"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_003",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025-产品要点:0",
+    "尊享e生2025:14",
+    "尊享e生2025:15"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_004",
+   "type": "kb",
+   "gold": [
+    "安盛天平卓越馨选(A款):21",
+    "安盛天平卓越馨选(A款):22",
+    "安盛天平A款-产品要点:0"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 1.0,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_005",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025-产品要点:0",
+    "尊享e生2025:58",
+    "尊享e生2025:59"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_006",
+   "type": "kb",
+   "gold": [
+    "安盛天平A款-产品要点:0",
+    "安盛天平卓越馨选(A款):217"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_d1",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025:157",
+    "尊享e生2025:158",
+    "尊享e生2025:159",
+    "尊享e生2025:160",
+    "尊享e生2025:161"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 0.2,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 0.5
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.2,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 0.5
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.2,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "kb_d2",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025:117",
+    "尊享e生2025:118",
+    "尊享e生2025:121"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_d3",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025:15",
+    "尊享e生2025:16"
+   ],
+   "dense": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.5,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 1.0,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "kb_d4",
+   "type": "kb",
+   "gold": [
+    "安盛天平卓越馨选(A款):12",
+    "安盛天平卓越馨选(A款):13",
+    "安盛天平卓越馨选(A款):14"
+   ],
+   "dense": {
+    "recall_pool": 0.6667,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 0.6667,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 0.6667,
+    "recall_top": 0.3333,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 0.3333
+   }
+  },
+  {
+   "id": "kb_d5",
+   "type": "kb",
+   "gold": [
+    "安盛天平卓越馨选(A款):117",
+    "安盛天平卓越馨选(A款):132",
+    "安盛天平卓越馨选(A款):137"
+   ],
+   "dense": {
+    "recall_pool": 0.6667,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "minmax": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   },
+   "rrf": {
+    "recall_pool": 1.0,
+    "recall_top": 0.6667,
+    "gold_hit": true,
+    "precision_top": 0.6667,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "kb_d6",
+   "type": "kb",
+   "gold": [
+    "尊享e生2025:15",
+    "尊享e生2025:16",
+    "安盛天平卓越馨选(A款):12",
+    "安盛天平卓越馨选(A款):13",
+    "安盛天平卓越馨选(A款):14"
+   ],
+   "dense": {
+    "recall_pool": 0.4,
+    "recall_top": 0.2,
+    "gold_hit": true,
+    "precision_top": 0.3333,
+    "mrr": 0.3333
+   },
+   "minmax": {
+    "recall_pool": 0.4,
+    "recall_top": 0.0,
+    "gold_hit": false,
+    "precision_top": 0.0,
+    "mrr": 0.0
+   },
+   "rrf": {
+    "recall_pool": 0.4,
+    "recall_top": 0.0,
+    "gold_hit": false,
+    "precision_top": 0.0,
+    "mrr": 0.0
+   }
+  }
+ ]
+}

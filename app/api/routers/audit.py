@@ -9,13 +9,27 @@ from app.api.services import container
 from app.audit import queries as audit
 from app.guardrails.redact import redact_obj
 from app.observability import metrics as obs
+from app.util.ttl_cache import TTLCache
 
 router = APIRouter(prefix="/api", tags=["audit"])
+_cache = TTLCache()
 
 
 def _prices():
     cfg = container.get_cfg()
     return cfg.llm_price_input_per_1m, cfg.llm_price_output_per_1m
+
+
+@router.get("/traces/{trace_id}")
+def trace_detail(trace_id: int):
+    """trace # 直达:轮级 trace_id(= 该轮 turn_start 的全局 seq)→ 会话 + 该轮事件切片。
+
+    供排障输入 trace 号直接定位一轮(不依赖先选中会话);容忍传入轮内任意事件 seq(自动锚到所在轮)。
+    """
+    res = container.get_store().trace_events(trace_id)
+    if res is None:
+        return {"ok": False, "error": "trace 不存在"}
+    return {"ok": True, **res}
 
 
 @router.get("/audit")
@@ -44,9 +58,17 @@ def audit_export(sid: str, fmt: str = "jsonl"):
 
 @router.get("/observability")
 def obs_overall():
-    """全局可观测汇总:tokens/成本/错误/重试/审批/平均时延,及 per-session 明细。"""
+    """全局可观测汇总:tokens/成本/错误/重试/审批/平均时延,及 per-session 明细。
+
+    挂进程内 TTL 缓存(metrics_cache_ttl_seconds,0=关):全库聚合是派生只读指标,
+    观测大盘允许 ≤30s 过期;避免每次打开页面重算并长时间持有 DB 锁(阻塞聊天写入)。
+    """
     pin, pout = _prices()
-    return obs.overall_metrics(container.get_store(), price_in_per_1m=pin, price_out_per_1m=pout)
+    ttl = float(int(getattr(container.get_cfg(), "metrics_cache_ttl_seconds", 30) or 0))
+    return _cache.get_or_put(
+        "observability",
+        lambda: obs.overall_metrics(container.get_store(), price_in_per_1m=pin, price_out_per_1m=pout),
+        ttl)
 
 
 @router.get("/observability/{sid}")

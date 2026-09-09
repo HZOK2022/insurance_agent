@@ -14,9 +14,9 @@ import app.db as dbmod
 
 def _mysql_cfg():
     host = os.environ.get("MYSQL_HOST", "127.0.0.1")
+    # 单库多表形态:knowledge/premium 未拆分(留空),store 经 dbmod 空名回退到 db_name
     return SimpleNamespace(db_enabled=True, db_host=host, db_port=3306, db_user="root", db_pass="",
-                           db_name="insurance_agent", knowledge_db_name="insurance_knowledge",
-                           premium_db_name="insurance_premium", sqlite_path="")
+                           db_name="insurance_agent", sqlite_path="")
 
 
 class MysqlStoresTest(unittest.TestCase):

@@ -10,12 +10,12 @@
 ```
 [应用服务器 A]                                    [数据库服务器 B]
   FastAPI + Agent 循环 + 检索 + LLM 客户端           MySQL(事实源,唯一真相)
-  Qdrant(向量索引,同机 localhost,派生/可重建)         ├ 会话/事件/记忆  (db_name)
-  (可选) Redis(缓存/加速,可丢)                       ├ 知识          (knowledge_db_name)
-  /metrics + 结构化日志                              └ 费率          (premium_db_name)
+  Qdrant(向量索引,同机 localhost,派生/可重建)         └ 单库多表(db_name=insurance_agent):
+  (可选) Redis(缓存/加速,可丢)                       会话/事件/记忆 · 知识 · 费率 分表存放
+  /metrics + 结构化日志                               (knowledge/premium 拆分库为演进选项,默认并入)
 ```
 
-- **事实源 = 数据库服务器的 MySQL**(会话/事件/记忆/知识/费率);**SQLite 仅开发/测试回退**(未配 `db_host` 时)。
+- **事实源 = 数据库服务器的 MySQL,默认单库多表**:会话/事件/记忆、知识、费率三类数据在同一个库(`db_name`)里分表存放(如 `events`/`chunks`/`premium_rates`);拆分为 `knowledge_db_name`/`premium_db_name` 独立库**仅**在多应用共享、独立备份等场景需要,配置留空即并入单库。**SQLite 仅开发/测试回退**(未配 `db_host` 时)。
 - **单写者**:只有应用服务器部署写事实源(避免多实例写冲突),events 只 INSERT。
 - **黄金法则**:`MySQL = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的加速层`。易失层(Qdrant/Redis)全空系统照常跑,只是慢。
 
@@ -26,11 +26,11 @@
 - **回答可追溯** — 回答带 `[idx]` 角标,点击定位 chunk 原文(**引用绑定版本**,条款更新不失效);检索片段在注入模型**之前**写入事件日志,历史会话角标永远可点。
 - **上下文管理** — 窗口上限 + 工具结果剪枝 + **保尾压头压缩**(§8.3 座席工作台 checkpoint,pressure/context-overflow 双触发);跨轮引用复用;会话内回源检索(`session_history_search`)。
 - **产品消歧(主动追问)** — 问题依赖具体产品(保费/免赔额/等待期/能否报销等)却无法从上下文确定是哪款时,**主动中断追问**并列出在售产品,用户回答后再继续原问题。
-- **护栏** — 提示注入检测 · RAG 投毒隔离 · 输出系统泄漏掩码 · PII 脱敏 · 写工具人工审批 · 诚实拒答转人工。
-- **审计与可观测** — append-only 事件日志(事实源)+ 历史问答查询/导出(合规留证)+ 指标聚合(`/api/metrics`)+ 观测总览(`/api/observability`)+ 时间序列(`/api/metrics/timeseries`)+ **P0 异常定位器**(坏轮分类 + 检索→引用漏斗)+ 告警脚本。
+- **护栏** — 提示注入检测 · RAG 投毒隔离 · 输出系统泄漏掩码 · PII 脱敏 · 写工具人工审批 · 诚实拒答转人工 · **事实来源守则**(具体事实只以工具返回为准,不凭模型知识/常识补全,不足则再检索或如实说明)。
+- **审计与可观测(自建,非 Langfuse)** — append-only 事件日志(事实源)+ 历史问答查询/导出(合规留证)+ 指标聚合(`/api/metrics`)+ 观测总览(`/api/observability`)+ 时间序列(`/api/metrics/timeseries`)+ **生产异常定位器**(`/api/metrics/anomalies`:坏轮按主因分类 + trace_id 直达 + 检索→引用漏斗)+ **检索分数阶梯**(dense/BM25/融合/rerank 逐块分值)+ **引用↔检索回链**(点 [idx] 看当轮检索块·版本)+ **坏例友好视图**(badcase_snapshot 的 system/对话/回答可读,非 raw JSON)+ **trace_id 一键复制**(回答芯片 + 坏例徽章);`retrieve` 收敛只认真检索工具,算费不占检索上限。告警脚本 `scripts/check_metrics.py`。
 - **会话与鉴权** — 多客服账号(users + auth_tokens,pbkdf2 + 恒定时间比较)+ 登录页;`Authorization: Bearer` 双通道鉴权 + 进程内限流。
 - **记忆系统(可插拔,默认关)** — 三桶记忆(用户画像 / 跨会话沉淀 / 会话限定)+ 管理面板 + 按桶压实;`MEMORY_ENABLED=true` 才启用(关=行为与未加一致,非侵入)。
-- **评测** — 40+ 条评估集(10 类)+ LLM-judge 六维打分 + 程序化引用校验;评估驱动修复;录制-回放测试(改 prompt/条款/工具 schema 必跑)。
+- **评测(版本化)** — 72 条评估集(10 类)+ LLM-judge 六维打分 + 程序化引用校验(`scripts/eval_run.py` 一键编排,L1 质量 + L2 引用,按日归档 `docs/eval/history/`);每次评测绑定 `prompt_version`(SYSTEM 规则 sha256)⇒ 改 prompt 前后可对比;录制-回放测试(改 prompt/条款/工具 schema 必跑)。
 
 ## 技术选型
 
@@ -106,15 +106,18 @@ npm run build                             # 生产构建
 - **事实源**:`DB_ENABLED=true` + `DB_HOST/DB_PORT/DB_USER/DB_PASS/DB_NAME`(生产 MySQL);未配 `DB_HOST` 则回退 SQLite。
 - **嵌入**:`EMBEDDING_BACKEND=local`(默认)或 `api`(在线 SiliconFlow,key 留空复用重排 key)。
 - **记忆**:`MEMORY_ENABLED=true`(默认关)。
-- **登录/鉴权**:`LOGIN_USER`/`LOGIN_PASSWORD`(默认 admin/change-me,正式请改);`API_TOKEN`(接口 Bearer,空=开发模式免鉴权)。
+- **登录/鉴权**:账号与角色存数据库 `users`(`role='admin'` 才是管理员,权限判定只认它);`SEED_ADMIN_USER`/`SEED_ADMIN_PASSWORD` **仅**用于"users 表为空时首次播种",口令留空=跳过播种;`API_TOKEN`(接口 Bearer,空=开发模式免鉴权)。
 - 其余上限/阈值/日志/坏例快照全集中在 `app/config/config.py`,用 `.env` 覆盖。
 
 ## 测试 / 评测 / 运维
 
-- **单元/回放**:`<rag_env>\python.exe -m unittest discover -s tests`(全量,当前 328 项;含录制-回放 `tests/replay`,改 prompt/条款/工具 schema 必跑)。
-- **评测(质量门)**:
-  - `scripts/eval_agent.py` — 跑评估集 → LLM-judge 六维打分 + 违规标记 + 汇总(40+ 条,10 类)。
+- **单元/回放**:`<rag_env>\python.exe -m unittest discover -s tests`(全量,当前 **354 项**;含录制-回放 `tests/replay`,改 prompt/条款/工具 schema 必跑)。
+- **评测(质量门,版本化)**:
+  - `scripts/eval_run.py` — **一键编排**:L1(LLM-judge 六维打分 + 违规标记)+ L2(引用程序化校验)+ 按日归档 `docs/eval/history/`(72 条,10 类;约 30-60 分钟,可 `--limit` 冒烟)。
+  - `scripts/eval_agent.py` — 跑评估集 → LLM-judge 六维打分 + 违规标记 + 汇总 + 写入 **`prompt_version`**(每次评测绑定当时 SYSTEM 规则 sha256)。
   - `scripts/eval_citation.py` — **程序化引用校验**(角标 → 真实 chunk、是否本轮召回、是否支撑断言),独立于 LLM-judge。
+  - `scripts/eval_retrieval.py` — 检索质量(召回/重排/产品·类别圈定)专项校验。
+  - **改 prompt 前后对比**:跑两次 `eval_run.py`(改前/改后各归档),对比两份报告的 `prompt_version` + 分数/违规变化。
 - **观测告警**:`scripts/check_metrics.py`(从 events 聚合,阈值告警,告警带 trace_id 可回放)。
 - **UI 自测**:`python scripts/selftest_ui.py`(build→起后端→造会话→截图)。
 
@@ -122,7 +125,7 @@ npm run build                             # 生产构建
 
 - 架构:docs/architecture-v3.md(图 docs/diagram/agent-v3.html)· 部署:docs/deployment.md · 骨架与 dsh 参照:docs/project-skeleton.md · 契约:docs/contract.md
 - 存储:docs/sqlite-schema.md · docs/qdrant-schema.md · docs/redis-usage.md · MySQL 迁移:docs/learning/13-mysql-migration.md
-- 业务层:docs/businesses.md · 上下文管理:docs/context-management.md · 评测/可观测:docs/evaluation-and-ops.md · 记忆:docs/memory-design.md
+- 业务层:docs/businesses.md · 上下文管理:docs/context-management.md · 评测:docs/evaluation-and-ops.md · **观测:**docs/observability-plan.md · 记忆:docs/memory-design.md
 - 切块:docs/chunking-design.md · MinerU:docs/mineru-api-docs.md · 知识库管理:docs/产品文档-知识库管理.md
 - 学习教程(过程叙事):docs/learning/(00-overview … 14-product-disambiguation)
 

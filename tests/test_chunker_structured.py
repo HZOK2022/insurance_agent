@@ -57,6 +57,66 @@ class StructuredChunkTest(unittest.TestCase):
         self.assertTrue(any("首次投保年龄" in it["section"] for it in items))
         self.assertTrue(any("保障内容" in it["section"] and "保险责任" in it["section"] for it in items))
 
+    def test_md_min_heading_level_default_all(self):
+        # 默认(min_heading_level=6):各 # 标题节独立成块;**单行容器 H1 例外**(D93 治本:
+        # # 投保规则/# 保障内容 无直接正文、只有 H2 子节 → 不立零信息块,经子块前缀保留)。
+        items = chunk_structured(MD, "markdown", chunk_size=1000)
+        sections = [it["section"] for it in items]
+        self.assertNotIn("投保规则", sections)   # 单行容器 H1 不再独立成块
+        self.assertNotIn("保障内容", sections)
+        self.assertIn("投保规则 > 首次投保年龄", sections)
+        self.assertIn("投保规则 > 续保", sections)
+        self.assertIn("保障内容 > 保险责任", sections)
+
+    def test_md_min_heading_level_2_merges_deep(self):
+        # min_heading_level=2:只 H1/H2 成块,H3+ 并入父块(section 仍是父链,标题文本保留在 content)
+        MD3 = "# A\n## A1\n### A1a\n正文甲。\n### A1b\n正文乙。\n## A2\n正文。"
+        items = chunk_structured(MD3, "markdown", chunk_size=1000, min_heading_level=2)
+        sections = [it["section"] for it in items]
+        # A1 成块且包含其下 H3(A1a/A1b) 内容
+        a1 = [it for it in items if it["section"] == "A > A1"][0]
+        self.assertIn("A1a", a1["content"])
+        self.assertIn("A1b", a1["content"])
+        self.assertIn("正文甲。", a1["content"])
+        # H3 不再单独成块
+        self.assertFalse(any(s == "A > A1 > A1a" for s in sections))
+        # A2 成块且含正文
+        a2 = [it for it in items if it["section"] == "A > A2"][0]
+        self.assertIn("正文。", a2["content"])
+
+    def test_txt_not_affected_by_min_heading_level(self):
+        # min_heading_level 仅对 md(pattern_key=md)生效;txt/policy 不受影响,仍按条款编号切
+        items1 = chunk_structured(POLICY, "policy_pdf", chunk_size=1000, min_heading_level=6)
+        items3 = chunk_structured(POLICY, "policy_pdf", chunk_size=1000, min_heading_level=2)
+        self.assertEqual(
+            [it["section"] for it in items1],
+            [it["section"] for it in items3],
+            "policy/policy 不应受 min_heading_level 影响")
+
+    def test_md_front_matter_via_build_docs(self):
+        import os, tempfile
+        from app.retrieval.ingest.reader import build_docs
+        md = "---\ncategory: 医疗险\nversion: v2025\n---\n# 产品\n正文。"
+        p = os.path.join(tempfile.mkdtemp(), "P.md")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(md)
+        docs = build_docs(p, "")
+        meta = docs[0]["meta"]
+        self.assertEqual(meta["product_category"], "医疗险")
+        self.assertEqual(meta["version"], "v2025")
+        # front-matter 被剥离,不污染正文
+        self.assertNotIn("category", docs[0]["text"])
+        self.assertIn("产品", docs[0]["text"])
+
+    def test_md_no_front_matter_defaults(self):
+        import os, tempfile
+        from app.retrieval.ingest.reader import build_docs
+        p = os.path.join(tempfile.mkdtemp(), "Q.md")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("# 无fm\n内容")
+        meta = build_docs(p, "")[0]["meta"]
+        self.assertEqual(meta["version"], "v1")
+
 
     def test_number_item_keeps_parenthetical_ancestor(self):
         # 回归:(一)=6 必须浅于 1.=7,否则 1. 会把（一）弹出祖先栈,子块 section 丢父级,
@@ -158,6 +218,36 @@ class StructuredChunkTest(unittest.TestCase):
         self.assertTrue(any("住院费用" in it["content"] and "门诊费用" in it["content"] for it in items),
                         "子项内容应保留且合并到容器(第六条)之下")
 
+    def test_md_single_line_h1_container_not_standalone_chunk(self):
+        # D93 治本:md 单行 H1(下有 H2)是零信息容器块 → 不立块;标题经子块 section 前缀保留。
+        # 此前 md 整段跳过 _coalesce_units(兄弟合并不适合 md),连带跳过了容器 drop 规则。
+        md = ('# 尊享e生2025 客服话术库\n\n'
+              '## 客户问"买计划一还是计划二"\n\n先问需求再给建议。\n\n'
+              '## 客户问"结节3级能买吗"\n\n告知口径宽松。\n')
+        items = chunk_structured(md, "markdown", chunk_size=1000)
+        self.assertEqual(len(items), 2)
+        # 无"纯标题"零信息块(内容只有标题本身)
+        self.assertFalse(any(it["content"].strip().endswith("客服话术库")
+                             and len(it["content"]) < 40 for it in items),
+                        "单行 H1 容器不得成为独立 chunk")
+        # 标题文本经子块前缀保留(检索锚点不丢)
+        self.assertTrue(all("客服话术库" in it["content"] for it in items))
+        self.assertIn('客户问"买计划一还是计划二"', items[0]["content"])
+        # 不做兄弟合并:两个 H2 节各成一块(QA 一问一块)
+        self.assertIn("先问需求再给建议", items[0]["content"])
+        self.assertIn("告知口径宽松", items[1]["content"])
+
+    def test_md_h1_with_body_and_orphan_h1_kept(self):
+        # 边界①:H1 下直接有正文(非单行容器)→ 保留成块;
+        # 边界②:孤立 H1(无正文)→ 不立空块(标题经前缀承载,无正文=零信息块,D94 过滤)。
+        md1 = "# 标题A\n正文直接跟在H1下\n## 小节\n小节内容"
+        items1 = chunk_structured(md1, "markdown", chunk_size=1000)
+        self.assertTrue(any("正文直接跟在H1下" in it["content"] for it in items1),
+                        "H1 带直接正文时整节保留")
+        md2 = "# 孤立标题"
+        items2 = chunk_structured(md2, "markdown", chunk_size=1000)
+        self.assertEqual(len(items2), 0, "孤立 H1 无正文→不立空块(标题无正文=零信息)")
+
     def test_numbered_parent_container_keeps_numeric_leaf_items(self):
         # 用户场景:`2.重大疾病特殊门诊医疗费用`(层级7)下挂 `(1)(2)(3)`(层级8),子项为单行叶子
         text = ("2.重大疾病特殊门诊医疗费用\n（1）门诊肾透析费；\n"
@@ -167,6 +257,37 @@ class StructuredChunkTest(unittest.TestCase):
         all_content = "\n".join(it["content"] for it in items)
         for t in ("门诊肾透析费", "器官移植后的门诊抗排异治疗费", "化学疗法", "肿瘤靶向疗法的治疗费用"):
             self.assertIn(t, all_content, "单行叶子条目正文不得丢失: " + t)
+
+    def test_heading_not_duplicated_in_content(self):
+        # D94:标题文本已由前缀(path)承载,content 正文首行不得再重复标题(否则标题出现两次)
+        text = "# 产品\n## 保险责任\n7. 特定疾病保险（保额：3 万元）\n赔付规则：按 100% 赔付。\n"
+        items = chunk_structured(text, "markdown", chunk_size=1000)
+        self.assertTrue(items)
+        for it in items:
+            # 前缀里包含标题即可,正文首行不得再以该标题开头
+            title = it["title"]
+            if not title:
+                continue
+            body = it["content"]
+            # 去掉 [prefix] 前缀,看正文首行
+            pfx = f"[{it['section']}] "
+            rest = body[len(pfx):] if body.startswith(pfx) else body
+            first_line = rest.split("\n")[0].strip()
+            self.assertNotEqual(first_line, title,
+                                f"标题 '{title}' 不应在 content 正文首行重复出现(已在前缀里)")
+
+    def test_horizontal_rule_not_creating_empty_chunk(self):
+        # D94:---/*** / ___ 分隔线无检索意义,不得单独成空块,也不得残留在 chunk 末尾
+        text = ("# 产品\n## 保险责任\n### 7. 特定疾病保险\n赔付规则：按 100% 赔付。\n---\n"
+                "### 8. 其他责任\n其他内容。\n")
+        items = chunk_structured(text, "markdown", chunk_size=1000, max_tokens=460)
+        all_content = "\n".join(it["content"] for it in items)
+        self.assertNotIn("---", all_content, "分隔线 --- 不得出现在任何 chunk content 里")
+        # 无空块(content 去掉前缀后应有正文)
+        for it in items:
+            pfx = f"[{it['section']}]"
+            body = it["content"][len(pfx):].strip() if it["content"].startswith(pfx) else it["content"].strip()
+            self.assertTrue(body, f"chunk 不应为空(section={it['section']!r})")
 
     def test_long_clause_line_is_content_not_heading(self):
         # 编号开头的"长条款/句末标点" = 正文,不是标题:不劈开、不进结构树,内容保留

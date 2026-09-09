@@ -2,6 +2,7 @@
 import logging
 import os
 import re
+import sys
 import time
 
 from fastapi import FastAPI, Request
@@ -196,7 +197,12 @@ async def _auth_and_ratelimit(request: Request, call_next):
 
 def create_app() -> FastAPI:
     _c = container.get_cfg()
-    setup_logging(getattr(_c, "log_level", "INFO"), getattr(_c, "log_dir", "data/logs"),
+    _log_dir = getattr(_c, "log_dir", "data/logs")
+    # 测试进程不写生产日志文件:unittest/pytest 下 TestClient import app 会走到这里,
+    # 不拦的话测试噪音会写进 data/logs/app.log 污染生产日志。
+    if "PYTEST_CURRENT_TEST" in os.environ or any(k in " ".join(sys.argv) for k in ("unittest", "pytest")):
+        _log_dir = ""
+    setup_logging(getattr(_c, "log_level", "INFO"), _log_dir,
                   file_format=getattr(_c, "log_file_format", "text"))
     app = FastAPI(title="insurance-agent", version="0.1")
     app.include_router(health.router)
@@ -213,7 +219,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(_auth_and_ratelimit)
     app.middleware("http")(_access_log)   # 最外层访问日志:能记录到鉴权/限流/参数/500 等拒绝
     # 首次启动播种管理员账号(users 为空才播种,不覆盖既有)
-    auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().login_user, container.get_cfg().login_password)
+    auth_service.seed_admin_if_empty(container.get_store(), container.get_cfg().seed_admin_user, container.get_cfg().seed_admin_password)
     # 启动对账:补齐进程崩溃/断电遗留的悬挂 turn(补 turn_end reason=interrupted;失败不阻断启动)
     try:
         _fixed = container.get_store().reconcile_dangling_turns()
@@ -239,6 +245,19 @@ def create_app() -> FastAPI:
     # 让控制台/日志有明确的"启动成功"标志。
     @app.on_event("startup")
     async def _startup_ready():
+        # 调大 anyio 默认线程池(默认 40):Starlette 把同步端点与 SSE 流式生成器都放这里,
+        # SSE 一轮占一个线程直到 turn 结束(最长 120s),20 并发轮 + 轮询会逼近默认上限。
+        # 上限集中 config(铁律4):api_thread_pool_tokens(默认 200)。失败不阻断启动。
+        try:
+            import anyio.to_thread
+            _tokens = max(40, int(getattr(_c, "api_thread_pool_tokens", 200) or 200))
+            _limiter = anyio.to_thread.current_default_thread_limiter()
+            _old = _limiter.total_tokens
+            _limiter.total_tokens = _tokens
+            logging.getLogger("insurance.agent").info(
+                "线程池容量 %s -> %s(SSE 每轮占一个线程,防线程池耗尽)", _old, _tokens)
+        except Exception:
+            logging.getLogger(__name__).exception("调大 anyio 线程池失败(不阻断启动)")
         logging.getLogger("insurance.agent").info(
             "===== 后端已就绪 http://127.0.0.1:8181 (docs: /docs) · db=%s · 访问日志静默路径=%s =====",
             dbmod.dial(_c), ",".join(_QUIET_PREFIXES) if not _API_LOG_VERBOSE else "verbose(全打)",

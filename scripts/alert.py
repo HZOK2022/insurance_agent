@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
@@ -31,14 +31,15 @@ sys.path.insert(0, PROJ)
 
 from app.config import load as load_cfg                     # noqa: E402
 from app.db import get_db, DB                               # noqa: E402
+from app.util.time import beijing_now_dt                    # noqa: E402
 
-# MySQL events 表里 ts 是 DATETIME(ISO 字符串可比);本脚本按 UTC ISO 比较
+# events 表里 ts 是北京时间字符串 "YYYY-MM-DD HH:mm:ss"
 # SQLite 同 .env 没 db_host 时走本地 agent.db
 DB_KIND = "session"  # events 跟会话/事件/记忆同一库
 
 
 def _since_iso(window_h: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=window_h)).strftime("%Y-%m-%dT%H:%M:%S")
+    return (beijing_now_dt() - timedelta(hours=window_h)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _rows(db: DB, sql: str, params: tuple = ()):

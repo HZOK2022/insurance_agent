@@ -1,0 +1,223 @@
+{
+ "tool": "ragas",
+ "version": "0.4.3",
+ "metric": "faithfulness",
+ "judge_llm": {
+  "model": "deepseek-v4-flash",
+  "base_url": "https://api.deepseek.com"
+ },
+ "source": "eval-2026-09-07.json + knowledge chunks",
+ "date": "2026-09-07",
+ "n": 6,
+ "mean_faithfulness": 0.1698,
+ "results": [
+  {
+   "id": "kb_001",
+   "type": "kb",
+   "faithfulness": 0.0
+  },
+  {
+   "id": "kb_002",
+   "type": "kb",
+   "faithfulness": 0.3889
+  },
+  {
+   "id": "kb_003",
+   "type": "kb",
+   "faithfulness": 0.0952
+  },
+  {
+   "id": "kb_004",
+   "type": "kb",
+   "faithfulness": 0.0
+  },
+  {
+   "id": "kb_005",
+   "type": "kb",
+   "faithfulness": 0.175
+  },
+  {
+   "id": "kb_006",
+   "type": "kb",
+   "faithfulness": 0.36
+  }
+ ],
+ "skipped": [
+  {
+   "id": "rule_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "calc_001",
+   "reason": "no chunk text in store"
+  },
+  {
+   "id": "calc_002",
+   "reason": "no chunk text in store"
+  },
+  {
+   "id": "calc_003",
+   "reason": "no chunk text in store"
+  },
+  {
+   "id": "calc_004",
+   "reason": "no chunk text in store"
+  },
+  {
+   "id": "calc_005",
+   "reason": "no chunk text in store"
+  },
+  {
+   "id": "adapt_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "adapt_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compare_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compare_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compliant_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compliant_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compliant_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "adversarial_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "adversarial_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "adversarial_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "advisor_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "refuse_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "refuse_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "refuse_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "refuse_005",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "refuse_006",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_005",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_006",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "honest_007",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "injection_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "injection_002",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "injection_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "injection_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "injection_005",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "boundary_001",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "boundary_003",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "boundary_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "compare_006",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_004",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_005",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "trace_006",
+   "reason": "no retrieval/answer"
+  },
+  {
+   "id": "grounded_003",
+   "reason": "no retrieval/answer"
+  }
+ ]
+}

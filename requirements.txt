@@ -1,0 +1,59 @@
+# 保险销售客服智能副驾驶 (insurance-agent) —— 运行依赖
+#
+# 生成方式：从 app/ 与 scripts/ 的 import 扫描 + 实际运行环境版本锁定
+# 验证环境：Python 3.11.7
+# 说明：原项目未纳入依赖清单，本文件补齐后可独立复现环境（配合 Dockerfile 使用）
+#
+# 安装：
+#   python -m venv .venv && .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# 提示：默认 torch 是 CUDA 版，体积约 2GB+。
+#   纯 CPU 环境（本机开发/内网 CPU 服务器）建议先单独装 CPU 版，能省约 1.8GB：
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   再装其余依赖时跳过 torch 以免被覆盖：
+#     pip install -r requirements.txt --no-deps   # 然后再单独补 sentence-transformers
+#   或者直接用：
+#     pip install $(grep -v '^torch' requirements.txt | grep -v '^#')
+#
+#   若完全不做本地嵌入（EMBEDDING_BACKEND=api 走在线接口），
+#   可直接注释掉 torch / transformers / sentence-transformers 三行。
+
+# ---------- Web 服务 ----------
+fastapi==0.139.0
+uvicorn==0.49.0
+anyio==4.14.2
+
+# ---------- 数据校验 ----------
+pydantic==2.13.4
+jsonschema==4.26.0
+
+# ---------- 事实源 ----------
+# 生产用 MySQL；开发/测试回退 SQLite（标准库 sqlite3，无需安装）
+PyMySQL==1.2.0
+
+# ---------- 向量检索（派生索引，可重建）----------
+qdrant-client==1.18.0
+
+# ---------- 嵌入 / 重排（本地后端）----------
+sentence-transformers==5.6.0
+torch==2.13.0
+transformers==5.15.0
+numpy==2.4.6
+
+# ---------- token 计量 ----------
+tiktoken==0.13.0
+
+# ---------- 知识摄取：文档解析 ----------
+pdfplumber==0.11.10          # PDF 文本层抽取（三路解析后端之一）
+python-docx==1.2.0           # docx
+openpyxl==3.1.5              # xlsx
+markitdown==0.1.7            # 通用文档转 Markdown（三路解析后端之一）
+
+# ---------- HTTP ----------
+requests==2.34.2
+
+# ---------- 可选 ----------
+# MinerU：三路解析后端中的重量级一路，需单独安装且依赖较重，
+#         纯文本层条款 PDF 用不到（pdfplumber 即可），故不列入默认依赖。
+# mineru

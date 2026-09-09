@@ -14,6 +14,9 @@ from types import SimpleNamespace
 from . import events, title
 import app.db as dbmod
 
+import logging
+logger = logging.getLogger(__name__)
+
 SCHEMA_VERSION = 1
 
 
@@ -148,10 +151,15 @@ class SessionStore:
     # ---- events(append-only) ----
     def append(self, session_id: str, type_: str, payload: dict) -> int:
         ev = events.make_event(type_, payload)
-        cur = self._conn.execute(
-            "INSERT INTO events (session_id, type, ts, payload) VALUES (?,?,?,?)",
-            (session_id, ev["type"], ev["ts"], json.dumps(ev["payload"], ensure_ascii=False)))
-        self._conn.commit()
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO events (session_id, type, ts, payload) VALUES (?,?,?,?)",
+                (session_id, ev["type"], ev["ts"], json.dumps(ev["payload"], ensure_ascii=False)))
+            self._conn.commit()
+        except Exception as e:
+            logger.exception("【事件】写入失败:会话 %s 的事件 %s 落库出错(err=%r)", session_id, type_, e,
+                             extra={"op": "session.append", "session_id": session_id, "event_type": type_})
+            raise
         # 首条用户消息 → 自动生成确定性 fallback 标题(照抄 dsh-session-title fallback 语义)
         if type_ == "user_message":
             self._maybe_title_from_first_message(session_id)
@@ -179,6 +187,8 @@ class SessionStore:
             return None
         self._conn.execute("UPDATE sessions SET title=? WHERE id=?", (norm, session_id))
         self._conn.commit()
+        logger.info("【会话】标题已设置:会话 %s → 《%s》", session_id, norm[:40],
+                    extra={"op": "session.set_title", "session_id": session_id})
         return self.get_session(session_id)
 
     def read(self, session_id: str, after_seq: int = 0, limit: int | None = None) -> list[dict]:
@@ -199,6 +209,38 @@ class SessionStore:
     def last_seq(self, session_id: str) -> int:
         row = self._conn.execute("SELECT MAX(seq) AS m FROM events WHERE session_id=?", (session_id,)).fetchone()
         return int(row["m"] or 0)
+
+    def trace_events(self, trace_id: int) -> dict | None:
+        """按轮级 trace_id(= 该轮 turn_start 的全局 seq)取该轮事件切片(供"trace # 直达")。
+
+        容忍传入该轮内任意一条事件的 seq:先解析它所在轮(该会话里最近一次 seq<=trace_id 的
+        turn_start,即包含它的那轮),再从该 turn_start 切到下一轮 turn_start(不含)为止。
+        返回 {"session_id", "trace_id"(=所在轮 turn_start 的 seq), "events"};查不到返回 None。
+        只读 events(事实源),绝不写历史。
+        """
+        sid_row = self._conn.execute("SELECT session_id FROM events WHERE seq=?", (trace_id,)).fetchone()
+        if sid_row is None:
+            return None
+        session_id = sid_row["session_id"]
+        start_row = self._conn.execute(
+            "SELECT MAX(seq) AS s FROM events WHERE session_id=? AND type='turn_start' AND seq<=?",
+            (session_id, trace_id)).fetchone()
+        start = int(start_row["s"]) if start_row and start_row["s"] is not None else None
+        if start is None:
+            return None  # 该 seq 前无 turn_start(理论上不会:会话首事件之前)
+        end_row = self._conn.execute(
+            "SELECT MIN(seq) AS s FROM events WHERE session_id=? AND type='turn_start' AND seq>?",
+            (session_id, start)).fetchone()
+        end = int(end_row["s"]) if end_row and end_row["s"] is not None else self.last_seq(session_id) + 1
+        sql = "SELECT seq, type, ts, payload FROM events WHERE session_id=? AND seq>=? AND seq<? ORDER BY seq"
+        rows = self._conn.execute(sql, (session_id, start, end)).fetchall()
+        out = []
+        for r_ in rows:
+            if r_["type"] not in events.known_types():
+                raise events.UnknownEventError(r_["type"])
+            pl = json.loads(r_["payload"]) if isinstance(r_["payload"], str) else r_["payload"]
+            out.append({"seq": r_["seq"], "type": r_["type"], "ts": r_["ts"], "payload": pl})
+        return {"session_id": session_id, "trace_id": start, "events": out}
 
     def reconcile_dangling_turns(self) -> int:
         """启动对账:补齐因进程崩溃/断电而缺失 turn_end 的悬挂 turn(只 append,遵守 append-only)。
@@ -234,6 +276,8 @@ class SessionStore:
         self._conn.execute("INSERT INTO sessions (id,title,user_id,created_at) VALUES (?,?,?,?)",
                            (sid, title, user_id, now))
         self._conn.commit()
+        logger.info("【会话】新建成功:会话 %s(用户=%s)", sid, user_id or "-",
+                    extra={"op": "session.create", "session_id": sid, "user": user_id or None})
         return {"id": sid, "title": title, "user_id": user_id, "created_at": now}
 
     def delete_sessions_meta(self, ids: list[str]) -> int:
@@ -241,6 +285,8 @@ class SessionStore:
         返回删除条数。用于清理空会话/测试会话,不触碰事件历史。"""
         cur = self._conn.executemany("DELETE FROM sessions WHERE id=?", [(i,) for i in ids])
         self._conn.commit()
+        logger.info("【会话】清理空会话:共删除 %d 个(ids=%s)", cur.rowcount, ",".join(ids[:5]),
+                    extra={"op": "session.delete_meta", "removed": cur.rowcount})
         return cur.rowcount
 
     def prune_empty_sessions(self, keep_id: str = "") -> int:
@@ -261,6 +307,8 @@ class SessionStore:
         ids = [r["id"] for r in rows]
         if not ids:
             return 0
+        logger.info("【会话】清理空会话:将删除 %d 个(保留当前会话 %s)", len(ids), keep_id or "-",
+                    extra={"op": "session.prune_empty", "removed": len(ids)})
         return self.delete_sessions_meta(ids)
 
     def list_sessions(self) -> list[dict]:
@@ -281,7 +329,8 @@ class SessionStore:
                LEFT JOIN events e ON e.session_id = m.session_id AND e.seq = m.last_seq
                WHERE (s.deleted IS NULL OR s.deleted=0)
                ORDER BY COALESCE(e.ts, s.created_at) DESC,
-                        COALESCE(m.last_seq, 0) DESC""").fetchall()
+                        COALESCE(m.last_seq, 0) DESC,
+                        s.id DESC""").fetchall()
         return [dict(r_) for r_ in rows]
 
     def get_session(self, sid: str) -> dict | None:
@@ -292,6 +341,8 @@ class SessionStore:
         """软删除会话(标记 deleted=1,不再出现在列表/视图;events 保留,遵守 append-only 铁律)。"""
         cur = self._conn.execute("UPDATE sessions SET deleted=1, status='deleted' WHERE id=? AND (deleted IS NULL OR deleted=0)", (sid,))
         self._conn.commit()
+        logger.info("【会话】删除结果:会话 %s,成功=%s", sid, cur.rowcount > 0,
+                    extra={"op": "session.delete", "session_id": sid})
         return cur.rowcount > 0
 
     def rename_session(self, sid: str, new_title: str) -> dict | None:
@@ -301,6 +352,8 @@ class SessionStore:
             return None
         self._conn.execute("UPDATE sessions SET title=? WHERE id=? AND (deleted IS NULL OR deleted=0)", (norm, sid))
         self._conn.commit()
+        logger.info("【会话】重命名成功:会话 %s 的标题改为《%s》", sid, norm[:40],
+                    extra={"op": "session.rename", "session_id": sid})
         return self.get_session(sid)
 
     # ---- auth: users + auth_tokens(单写者,与 events/sessions 同库同连接) ----
@@ -315,6 +368,8 @@ class SessionStore:
             "INSERT INTO users (id,username,password_hash,salt,display_name,created_at,role) VALUES (?,?,?,?,?,?,?)",
             (uid, username, password_hash, salt, display_name or username, now, role))
         self._conn.commit()
+        logger.info("【用户】创建成功:账号 %s(角色=%s)", username, role,
+                    extra={"op": "user.create", "user": username})
         return {"id": uid, "username": username, "display_name": display_name or username, "role": role, "created_at": now}
 
     def get_user(self, username: str) -> dict | None:
@@ -328,6 +383,8 @@ class SessionStore:
             "INSERT INTO auth_tokens (token,username,created_at,expires_at) VALUES (?,?,?,?)",
             (token, username, created_at, expires_at))
         self._conn.commit()
+        logger.info("【登录】已签发会话令牌:用户 %s(过期=%s,token=%s…)", username, expires_at, token[:8],
+                    extra={"op": "auth.token_issue", "user": username})
 
     def get_token(self, token: str) -> dict | None:
         row = self._conn.execute(

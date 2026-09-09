@@ -10,22 +10,17 @@ from app.retrieval.embedder import Embedder
 from app.retrieval.knowledge_store import KnowledgeStore
 from app.retrieval.qdrant_store import QdrantStore
 from app.retrieval.ingest.reader import build_docs, read_text, is_supported, _SUPPORTED_EXTS
-from app.retrieval.hash_util import content_hash
+from app.retrieval.hash_util import content_hash, text_fingerprint
 
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 64
 
 
-def _resolve_doc_identity(meta: dict) -> tuple[str, str]:
-    """产品名必填;doc_id = 产品名(产品名唯一)。缺 product_name 时回退 doc_id(向后兼容旧调用)。"""
-    product_name = (meta.get("product_name") or "").strip()
-    doc_id = (meta.get("doc_id") or "").strip()
-    if not product_name:
-        product_name = doc_id
-    if product_name:
-        doc_id = product_name
-    return doc_id, product_name
+def _resolve_product(meta: dict) -> str:
+    """D75:product_name 是文档的归属列(产品下拉),与 doc_id(内容指纹)完全解耦。
+    显式传(含空=不绑定产品)即用;无 key(旧 CLI)视为不绑定。不再回退成 doc_id。"""
+    return (meta.get("product_name") or "").strip()
 
 
 class Ingester:
@@ -36,23 +31,47 @@ class Ingester:
         self.qstore = qstore
         self.embedder = embedder
 
+    def _duplicate_result(self, doc_id: str, label: str) -> dict:
+        return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
+                "duplicate": True, "duplicate_of": label,
+                "message": f"内容与已有文档《{label}》完全相同,未重复入库"}
+
+    def _precheck(self, doc_id: str, fps: tuple[str, ...]) -> dict | None:
+        """D75 判重·写库前拦截(任何存储都不碰):
+        ① 主键级:doc_id 已是"原文归一化内容指纹",同 doc_id 已存在 = 完全相同文档 → duplicate 硬拦;
+        ② 兜底:用指纹候选(含旧口径 chunks_fp)查其他文档命中 → duplicate(兼容存量旧键,防跨键重复)。
+        doc_id=指纹后不存在"同键不同内容",故 conflict/force 覆盖概念已移除——内容不同即指纹不同即新文档。"""
+        if doc_id and self.kstore.get_document(doc_id):
+            return self._duplicate_result(doc_id, doc_id[:12])
+        finder = getattr(self.kstore, "find_doc_by_hash", None)
+        dup = finder(fps, exclude_doc_id=doc_id) if finder else None
+        if dup:
+            label = (dup.get("title") or dup.get("doc_id") or "").strip()
+            return self._duplicate_result(doc_id, label or dup.get("doc_id", ""))
+        return None
+
     def ingest_text(self, text: str, meta: dict, on_progress=None,
                     chunk_size: int | None = None, overlap: int | None = None,
                     text_splitter: str | None = None, chunk_max_tokens: int | None = None,
-                    force: bool = False) -> dict:
+                    min_heading_level: int | None = None) -> dict:
         """摄取原始文本。
         Args:
             text: 文档内容
-            meta: 文档元数据,需包含 doc_id,version,title,doc_type,product_category 等
+            meta: 文档元数据,含 product_name(归属列,可空)、title、version、doc_type、product_category 等。
+                doc_id 不再由调用方指定——它由 text_fingerprint(text) 派生(内容唯一身份,D75)。
             on_progress: 可选回调(stage, done, total),stage in chunked/embed/qdrant
-            chunk_size/overlap/text_splitter/chunk_max_tokens: 覆盖 config 默认(切块口径集中 config,铁律4);
+            chunk_size/overlap/text_splitter/chunk_max_tokens/min_heading_level: 覆盖 config 默认(切块口径集中 config,铁律4);
                 传 None 则取 config。
-        Returns: {chunks_written, chunks_embedded, doc_id}
+        Returns: {chunks_written, chunks_embedded, doc_id}(判重时另带 duplicate + message)
         """
         meta = dict(meta)
-        doc_id, product_name = _resolve_doc_identity(meta)
+        doc_id = text_fingerprint(text)
+        product_name = _resolve_product(meta)
         meta["doc_id"] = doc_id
         meta["product_name"] = product_name
+        # D97:上传默认生效(is_valid=True);version 按 (产品名,文档名) 逻辑组自动序号(粗判归组,杜绝手动五花八门)
+        meta["is_valid"] = True
+        meta["version"] = self.kstore.next_version(product_name, (meta.get("title") or "").strip())
         docs = [{"text": text, "meta": meta}]
         # 切块口径取 config(铁律4:阈值集中 config):结构化路径按 token 预算(chunk_max_tokens),
         # 无结构兜底按 chunk_size 字符滑窗;不再硬编码 512 字符。
@@ -63,19 +82,17 @@ class Ingester:
         ts = getattr(cfg, "text_splitter", "structured") if text_splitter is None else text_splitter
         mt = (int(chunk_max_tokens) if chunk_max_tokens is not None
               else int(getattr(cfg, "chunk_max_tokens", 0) or 0)) or None
+        mhl = (int(min_heading_level) if min_heading_level is not None
+               else int(getattr(cfg, "chunk_min_heading_level", 6) or 6))
         chunks = chunk_documents(docs,
                                  chunk_size=cs, overlap=ov,
-                                 text_splitter=ts, max_tokens=mt)
+                                 text_splitter=ts, max_tokens=mt, min_heading_level=mhl)
         if not chunks:
             return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id}
-        # 同名产品判重:内容不同且非 force → conflict(防覆盖他人文档)
-        new_hash = content_hash(chunks)
-        existing = self.kstore.get_document(doc_id) if doc_id else None
-        if existing and existing.get("content_hash") and existing["content_hash"] != new_hash and not force:
-            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
-                    "conflict": True, "message": "产品名已存在且内容不同(为避免覆盖他人文档,未写入)"}
-        if existing:
-            self._drop_doc(doc_id)
+        # D75 判重:doc_id 即内容指纹,同 doc_id 已存在或指纹匹配他文档 → duplicate 硬拦(不写任何存储)
+        dupe = self._precheck(doc_id, (doc_id, content_hash(chunks)))
+        if dupe:
+            return dupe
         for ch in chunks:
             ch["meta"]["product_name"] = product_name
 
@@ -85,9 +102,11 @@ class Ingester:
             on_progress("chunked", len(chunks), len(chunks))
         self._write_doc_structure(doc_id, text, meta, None)
         if doc_id:
+            doc_title = (meta.get("title") or "").strip() or product_name or "未命名文档"
             self.kstore.upsert_document({"doc_id": doc_id, "product_name": product_name,
                 "product_category": meta.get("product_category", ""), "version": meta.get("version", ""),
-                "title": meta.get("title", ""), "source": meta.get("source", ""), "content_hash": new_hash})
+                "title": doc_title, "source": meta.get("source", ""),
+                "content_hash": doc_id, "is_valid": True})
         # 原子性:SQLite 与 Qdrant 同成功同失败 —— Qdrant 未启动则整单失败并回滚
         if self.qstore.is_down():
             logger.warning("Qdrant 未启动,上传中止(未写入)")
@@ -119,22 +138,28 @@ class Ingester:
                      force: bool = False) -> dict:
         """写入已切好的块(供"预览→确认索引"复用,避免二次解析):赋 chunk_id → SQLite → doc_structure → 嵌入 → Qdrant。
         chunk_items: [{content, section, title}];outline: doc_structure 节点列表(可为 None 则跳过)。
-        product_name 必填(产品名唯一,doc_id=产品名);同产品名**内容不同**且非 force → 返回 conflict,不覆盖。
+        meta 需带 product_name(归属列,可空)、title、version、doc_type;可带 content_fp(preview 阶段算好的
+        原文指纹,commit 路径无原文,doc_id 由它派生;缺省 fallback 到 chunks_fp)。doc_id = 内容唯一身份(D75)。
+        判重:doc_id 即内容指纹,同 doc_id 已存在或指纹匹配他文档 → duplicate 硬拦。
         """
-        doc_id, product_name = _resolve_doc_identity(meta)
-        new_hash = content_hash(chunk_items)
-        existing = self.kstore.get_document(doc_id) if doc_id else None
-        if existing and existing.get("content_hash") and existing["content_hash"] != new_hash and not force:
-            return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": doc_id,
-                    "conflict": True, "message": "产品名已存在且内容不同(为避免覆盖他人文档,未写入)"}
-        if existing:
-            self._drop_doc(doc_id)
+        chunks_fp = content_hash(chunk_items)
+        text_fp = (meta.get("content_fp") or "").strip()
+        doc_id = text_fp or chunks_fp
+        product_name = _resolve_product(meta)
+        dupe = self._precheck(doc_id, (doc_id, chunks_fp))
+        if dupe:
+            return dupe
+        meta = {k: v for k, v in dict(meta).items() if k != "content_fp"}
+        meta["doc_id"] = doc_id
+        meta["product_name"] = product_name
+        # D97:commit 路径上传默认生效;version 按 (产品名,文档名) 逻辑组自动序号(与 ingest_text 同源)
+        meta["is_valid"] = True
+        meta["version"] = self.kstore.next_version(product_name, (meta.get("title") or "").strip())
         chunks = []
         for i, it in enumerate(chunk_items):
             m = dict(meta)
             m["section"] = it.get("section") or m.get("section", "")
             m["title"] = it.get("title") or m.get("title", "")
-            m["product_name"] = product_name
             m["chunk_id"] = f"{doc_id}:{i}" if doc_id else f"chunk:{i}"
             chunks.append({"content": it.get("content", ""), "meta": m})
         if not chunks:
@@ -149,9 +174,11 @@ class Ingester:
                 pass
         # 事实源(SQLite)先落:documents 行
         if doc_id:
+            doc_title = (meta.get("title") or "").strip() or product_name or "未命名文档"
             self.kstore.upsert_document({"doc_id": doc_id, "product_name": product_name,
                 "product_category": meta.get("product_category", ""), "version": meta.get("version", ""),
-                "title": meta.get("title", ""), "source": meta.get("source", ""), "content_hash": new_hash})
+                "title": doc_title, "source": meta.get("source", ""),
+                "content_hash": doc_id, "is_valid": True})
         # 原子性:数据库(SQLite)与 Qdrant 同成功同失败 —— Qdrant 未启动则整单失败并回滚(不写库、不假进度)
         if self.qstore.is_down():
             logger.warning("Qdrant 未启动,上传中止(未写入)")
@@ -207,12 +234,14 @@ class Ingester:
     def ingest_file(self, file_path: str, category: str = "", backend: str | None = None,
                      on_progress=None, chunk_size: int | None = None, overlap: int | None = None,
                      text_splitter: str | None = None, chunk_max_tokens: int | None = None,
-                     product_name: str | None = None, force: bool = False) -> dict:
+                     min_heading_level: int | None = None,
+                     product_name: str | None = None) -> dict:
         """摄取单个文件。
         backend: None=取 config PARSER_BACKEND | auto(回退链)| mineru | markitdown | pdfplumber | native(仅 docx/xlsx)。
         on_progress: 可选回调(stage, done, total),见 ingest_text。
-        chunk_size/overlap/text_splitter/chunk_max_tokens: 覆盖 config 切块口径。product_name: 产品名(必填,doc_id=它)。
-        Returns: {chunks_written, chunks_embedded, doc_id} 或 None(不支持格式)
+        chunk_size/overlap/text_splitter/chunk_max_tokens/min_heading_level: 覆盖 config 切块口径。
+        product_name: 归属列(产品下拉);None=不绑定。doc_id 由内容指纹派生(D75),与产品无关。
+        Returns: {chunks_written, chunks_embedded, doc_id}(判重时另带 duplicate + message)
         """
         if not is_supported(file_path):
             logger.warning("unsupported file: %s", file_path)
@@ -223,18 +252,20 @@ class Ingester:
             logger.warning("parse empty/unsupported backend=%s file=%s", backend, file_path)
             return {"chunks_written": 0, "chunks_embedded": 0, "doc_id": ""}
 
-        if product_name:
+        if product_name is not None:
+            # 显式传参(含空串=不绑定产品,D75)才写 key;None=旧 CLI 调用,走"不绑定"语义
             docs[0]["meta"]["product_name"] = product_name
         result = self.ingest_text(docs[0]["text"], docs[0]["meta"], on_progress,
                                   chunk_size=chunk_size, overlap=overlap, text_splitter=text_splitter,
-                                  chunk_max_tokens=chunk_max_tokens, force=force)
-        _doc = docs[0]["meta"].get("doc_id", "")
-        if _doc:
-            # 文件路径已知:pdf 读内嵌书签(带页码),覆盖 ingest_text 的正则 outline
+                                  chunk_max_tokens=chunk_max_tokens, min_heading_level=min_heading_level)
+        _doc = result.get("doc_id", "")
+        if _doc and not (result.get("duplicate") or result.get("error")):
+            # 文件路径已知:pdf 读内嵌书签(带页码),覆盖 ingest_text 的正则 outline(键=解析后的 doc_id)
             self._write_doc_structure(_doc, docs[0]["text"], docs[0]["meta"], file_path)
         return result
     def ingest_directory(self, dir_path: str, limit: int | None = None, category: str = "",
-                         backend: str | None = None, on_progress=None) -> dict:
+                         backend: str | None = None, on_progress=None,
+                         min_heading_level: int | None = None) -> dict:
         """摄取目录下所有支持的文件。
         Returns: {total_files, total_chunks, docs: [{doc_id, chunks_written}]}
         """
@@ -248,7 +279,7 @@ class Ingester:
 
         result = {"total_files": len(files), "total_chunks": 0, "docs": []}
         for f in files:
-            r = self.ingest_file(f, category, backend, on_progress)
+            r = self.ingest_file(f, category, backend, on_progress, min_heading_level=min_heading_level)
             if r["doc_id"]:
                 result["docs"].append(r)
                 result["total_chunks"] += r["chunks_written"]

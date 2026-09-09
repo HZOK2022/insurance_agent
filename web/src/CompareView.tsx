@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { previewKbParse, type ParsePreviewItem, type OutlineNode } from "./lib/api"
+import { inBranch } from "./lib/branch"
 
 const BACKENDS: { key: string; label: string; note: string }[] = [
   { key: "mineru", label: "MinerU", note: "在线 / 耗额度" },
@@ -11,8 +12,6 @@ const BACKENDS: { key: string; label: string; note: string }[] = [
 function fmt(n: number): string { return n == null ? "—" : String(n) }
 function fmtDurMs(ms: number): string { return ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : ms + "ms" }
 const labelOf = (b: string) => BACKENDS.find((x) => x.key === b)?.label || b
-// 归一化(去全部空白含全角),用于树节点路径 ↔ chunk.section 的容错匹配
-const normS = (s: string) => (s || "").replace(/\u3000/g, "").replace(/\s+/g, "")
 const emptyRow = (b: string) => ({ backend: b, ok: false, err: "解析中…", chars: 0, lines: 0, md_heads: 0, part: 0, article: 0, subitem: 0, numbered: 0, chunks: 0, section_fill_pct: 0, avg_path_len: 0, overlong: 0, excerpt: "", outline: [], text: "", chunks_view: [], elapsed_ms: -1 })
 
 // 给 outline 节点补"完整路径"(按 level 弹栈),供树→chunk 过滤匹配 section 前缀
@@ -79,16 +78,15 @@ export default function CompareView({ onBack, onOpenKb }: { onBack?: () => void;
     for (const { path } of tree) {
       const ids: number[] = []
       for (const c of chunks) {
-        const s = normS(c.section); const p = normS(path)
-        // 同一分支即关联:块在节点之下(子块)或节点在块之下(合并块挂每个叶子标题)
-        if (s && (s.startsWith(p) || p.startsWith(s))) ids.push(c.i)
+        // 段级前缀:块属于该节点分支(祖先块不反向挂入,避免每个节点都关联到根标题块)
+        if (inBranch(c.section, path)) ids.push(c.i)
       }
       m[path] = ids
     }
     return m
   }, [tree, chunks])
   // 子树关联:点某节点 → section 以该节点路径为前缀的块(容器(条)下含更深（一)/1. 的块)
-const shownChunks = filterPath ? chunks.filter((c) => normS(c.section).startsWith(normS(filterPath))) : chunks
+const shownChunks = filterPath ? chunks.filter((c) => inBranch(c.section, filterPath)) : chunks
 
   return (
     <div className="cmp-page">

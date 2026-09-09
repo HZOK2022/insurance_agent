@@ -74,13 +74,23 @@ class Config:
     # 嵌入 token 预算(结构化切块合并/超长降级按"整串含前缀估算 token ≤ 此值"):
     # bge-large-zh 上限 512,给 tokenizer 差异/前缀开销留余量默认 460(430 对边缘条目太紧易被劈两块);换 bge-m3(8192)改大即可
     chunk_max_tokens: int = 460
+    # md 结构化切分标题层级门槛(最深仍单独成块的那级):只对 markdown 生效。
+    # 默认 6=全部 # 标题各自成块(现状);设 2=只按 H1/H2 切,H3+ 并入父块。
+    chunk_min_heading_level: int = 6
     # pdf/docx/xlsx 解析后端:auto(回退链)| mineru | markitdown | pdfplumber | native(docx/xlsx)
     parser_backend: str = "auto"
     # 检索
     top_k: int = 20
     top_k_reranker: int = 3
     relevance_threshold: float = 0.0
+    # >0 才启用混合(惰性构建 BM25);数值仅在 hybrid_fusion=weighted 时参与融合 ——
+    # rrf 按排名融合不需要权重,此时本项只作开关(D82)。
     hybrid_bm25_weight: float = 0.5
+    # 混合检索融合策略:rrf(按排名贡献,不依赖分数分布,默认)| weighted(min-max 归一加权)
+    # 两种均已实现,可切换对比;RRF 为默认因为它能防"单路高分压制另一 modality"。
+    hybrid_fusion: str = "rrf"
+    # RRF 经典平滑常量(文档惯例 60):仅影响融合分数值,不影响排序单调性
+    hybrid_rrf_k: int = 60
     # 重排(external = SiliconFlow)
     reranking_engine: str = "external"          # external | local | ''
     reranking_external_url: str = "https://api.siliconflow.cn/v1/rerank"
@@ -144,10 +154,16 @@ class Config:
     # 鉴权(起步)
     internal_token: str = ""   # 服务内 token(未强制)
     api_token: str = ""        # 接口鉴权 Bearer token;空=开发模式不校验
-    login_user: str = "admin"          # 多用户鉴权:users 表为空时播种的管理员账号;空=不播种
-    login_password: str = "change-me"  # 播种管理员用的口令;正式环境请改 .env(LOGIN_PASSWORD)
+    seed_admin_user: str = "admin_huai"  # 仅"users 表为空"时播种的管理员账号(权限只认数据库 users.role);空=不播种
+    seed_admin_password: str = ""        # 播种口令:默认空=跳过播种,强制显式配置;严禁弱口令
     api_rate_limit: int = 60   # 每客户端窗口内最大请求数(限流)
     api_rate_window_seconds: int = 60  # 限流窗口(秒)
+    # anyio 默认线程池容量(Starlette 把同步端点/SSE 流式生成器放进这里,默认仅 40)。
+    # SSE 每轮占一个线程直到 turn 结束,20 并发轮 + 轮询请求会逼近默认上限 → 调到 200。
+    api_thread_pool_tokens: int = 200
+    # 观测派生指标(/api/metrics 等)进程内 TTL 缓存秒数:观测页非实时大盘,允许 ≤30s 过期;
+    # 0=关闭(每次实时重算)。单实例用进程内缓存即可,不上 Redis(黄金法则:缓存是可丢层)。
+    metrics_cache_ttl_seconds: int = 30
     # 存储(与其它项目不冲突:collection/db 各自独立)
     sqlite_path: str = "data/agent.db"
     premium_db_path: str = "data/premium.db"
@@ -166,9 +182,9 @@ class Config:
     db_port: int = 3306
     db_user: str = ""                    # 数据库账号(仅应用服务器部署用这一个连接,单写者)
     db_pass: str = ""
-    db_name: str = ""                    # 会话/事件/记忆库
-    knowledge_db_name: str = ""          # 知识库(空=用 db_name)
-    premium_db_name: str = ""            # 费率库(空=用 db_name)
+    db_name: str = ""                    # 默认库(单库多表:会话/事件/记忆、知识、费率都在此库分表)
+    knowledge_db_name: str = ""          # 知识拆分库(空=并入 db_name;仅多应用共享/独立备份时再拆)
+    premium_db_name: str = ""            # 费率拆分库(空=并入 db_name;仅多应用共享/独立备份时再拆)
 
 
 _ENV = {
@@ -194,10 +210,13 @@ _ENV = {
     "chunk_size": "CHUNK_SIZE",
     "chunk_overlap": "CHUNK_OVERLAP",
     "chunk_max_tokens": "CHUNK_MAX_TOKENS",
+    "chunk_min_heading_level": "CHUNK_MIN_HEADING_LEVEL",
     "top_k": "TOP_K",
     "top_k_reranker": "TOP_K_RERANKER",
     "relevance_threshold": "RELEVANCE_THRESHOLD",
     "hybrid_bm25_weight": "HYBRID_BM25_WEIGHT",
+    "hybrid_fusion": "HYBRID_FUSION",
+    "hybrid_rrf_k": "HYBRID_RRF_K",
     "reranking_engine": "RERANKING_ENGINE",
     "reranking_external_url": "RERANKING_EXTERNAL_URL",
     "reranking_external_api_key": "RERANKING_EXTERNAL_API_KEY",
@@ -236,10 +255,12 @@ _ENV = {
     "approval_exempt_tools": "APPROVAL_EXEMPT_TOOLS",
     "internal_token": "INTERNAL_TOKEN",
     "api_token": "API_TOKEN",
-    "login_user": "LOGIN_USER",
-    "login_password": "LOGIN_PASSWORD",
+    "seed_admin_user": "SEED_ADMIN_USER",
+    "seed_admin_password": "SEED_ADMIN_PASSWORD",
     "api_rate_limit": "API_RATE_LIMIT",
     "api_rate_window_seconds": "API_RATE_WINDOW_SECONDS",
+    "api_thread_pool_tokens": "API_THREAD_POOL_TOKENS",
+    "metrics_cache_ttl_seconds": "METRICS_CACHE_TTL_SECONDS",
     "llm_price_input_per_1m": "LLM_PRICE_INPUT_PER_1M",
     "llm_price_output_per_1m": "LLM_PRICE_OUTPUT_PER_1M",
     "log_file_format": "LOG_FILE_FORMAT",
@@ -267,6 +288,7 @@ _ENV = {
 }
 
 _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker",
+                  "chunk_min_heading_level",
                   "reranking_external_timeout", "rerank_max_length",
                   "max_steps_per_turn", "context_window", "compaction_max_tokens", "max_retrieve_per_turn", "max_history_search_per_turn", "history_search_top_k", "max_tokens_per_turn", "tool_timeout_seconds",
                   "memory_entry_max_chars", "memory_total_budget_chars", "memory_total_budget_target_chars",
@@ -276,7 +298,7 @@ _POSITIVE_INTS = ("embedding_batch_size", "chunk_size", "top_k", "top_k_reranker
                   "llm_retry_max_tries", "llm_retry_base_delay_ms", "llm_retry_max_delay_ms",
                   "qdrant_retry_max_tries", "qdrant_retry_base_delay_ms", "qdrant_retry_max_delay_ms",
                   "db_port",
-                  "api_rate_limit", "api_rate_window_seconds",
+                  "api_rate_limit", "api_rate_window_seconds", "api_thread_pool_tokens", "metrics_cache_ttl_seconds",
                   "max_tool_result_chars", "tool_result_head_chars", "tool_result_tail_chars",
                   "daily_token_budget_per_user", "log_api_body_chars")
 _NONNEG_INTS = ("chunk_overlap",)
@@ -313,6 +335,10 @@ def _validate(cfg: Config) -> None:
             raise ValueError(f"配置 {name}={getattr(cfg, name)!r} 必须 >= 0")
     if not (0 <= cfg.hybrid_bm25_weight <= 1):
         raise ValueError(f"配置 hybrid_bm25_weight={cfg.hybrid_bm25_weight!r} 必须在 [0,1]")
+    if cfg.hybrid_fusion not in ("rrf", "weighted"):
+        raise ValueError(f"配置 hybrid_fusion={cfg.hybrid_fusion!r} 必须是 'rrf' 或 'weighted'")
+    if cfg.hybrid_rrf_k <= 0:
+        raise ValueError(f"配置 hybrid_rrf_k={cfg.hybrid_rrf_k!r} 必须为正整数")
     for name in ("compaction_threshold_ratio", "compaction_retain_ratio"):
         v = getattr(cfg, name)
         if not (0 < v <= 1):

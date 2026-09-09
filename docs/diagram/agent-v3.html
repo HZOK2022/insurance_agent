@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>保险销售客服知识助手 —— 生产架构 v3</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { background:#eef1f7; }
+  body { font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; width:1720px; color:#1e293b; }
+  .canvas { width:1720px; padding:34px 40px 30px; }
+  .titlebar { display:flex; align-items:center; gap:16px; margin-bottom:6px; }
+  h1 { font-size:33px; color:#0f172a; letter-spacing:1px; }
+  .badge { background:#0f172a; color:#fff; font-weight:700; font-size:22px; padding:5px 16px; border-radius:10px; }
+  .subtitle { font-size:15.5px; color:#64748b; margin-bottom:18px; }
+  .layer { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:13px 18px 15px; box-shadow:0 1px 3px rgba(15,23,42,.06); }
+  .connector { text-align:center; color:#94a3b8; font-size:17px; line-height:1; padding:4px 0; }
+  .lhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .lnum { min-width:30px; height:30px; border-radius:50%; color:#fff; font-weight:700; font-size:16px; display:flex; align-items:center; justify-content:center; }
+  .ltitle { font-size:20px; font-weight:700; color:#0f172a; }
+  .lsub { font-size:14px; color:#64748b; font-weight:400; }
+  .row { display:flex; align-items:stretch; gap:10px; flex-wrap:wrap; }
+  .chip { background:#f8fafc; border:1px solid #dbe3ee; border-radius:10px; padding:7px 14px; font-size:14px; text-align:center; }
+  .chip b { display:block; font-size:15.5px; color:#0f172a; }
+  .chip span { font-size:12.5px; color:#64748b; }
+  #l7 .lnum { background:#0284c7; } #l7 { border-top:4px solid #0284c7; }
+  #l1 .lnum { background:#7c3aed; } #l1 { border-top:4px solid #7c3aed; }
+  #l9 .lnum { background:#ca8a04; } #l9 { border-top:4px solid #ca8a04; }
+  .kernel { background:linear-gradient(180deg,#faf8ff,#fff); }
+  .orch { border:2px dashed #c4b5fd; background:#f5f3ff; border-radius:12px; padding:11px 14px 13px; }
+  .otitle { font-size:16px; font-weight:700; color:#5b21b6; margin-bottom:9px; }
+  .flow { display:flex; align-items:center; gap:7px; }
+  .fchip { background:#fff; border:1.5px solid #a78bfa; color:#4c1d95; border-radius:9px; padding:6px 10px; font-size:13.5px; font-weight:600; text-align:center; line-height:1.35; }
+  .fchip small { display:block; font-weight:400; color:#7c6fa8; font-size:11.5px; }
+  .farrow { color:#8b5cf6; font-size:16px; font-weight:700; }
+  .pillars { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .pillar { border-radius:12px; padding:11px 14px; font-size:14px; line-height:1.55; color:#334155; }
+  .pt { font-size:17px; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+  .ctx { font-family:Consolas,monospace; font-size:13px; background:rgba(255,255,255,.8); padding:1px 7px; border-radius:6px; font-weight:600; }
+  .pillar ul { list-style:none; }
+  .pillar li { padding-left:15px; position:relative; margin-bottom:3px; }
+  .pillar li::before { content:"•"; position:absolute; left:2px; }
+  .law { margin-top:5px; font-weight:700; font-size:13.5px; }
+  #p8 { background:#ecfeff; border:1.5px solid #67e8f9; } #p8 .pt, #p8 li::before { color:#155e75; } #p8 .ctx { color:#0e7490; }
+  #p2 { background:#ecfdf5; border:1.5px solid #6ee7b7; } #p2 .pt, #p2 li::before { color:#065f46; } #p2 .ctx { color:#047857; }
+  #p3 { background:#fffbeb; border:1.5px solid #fcd34d; } #p3 .pt, #p3 li::before { color:#92400e; } #p3 .ctx { color:#b45309; }
+  #p4 { background:#f0fdfa; border:1.5px solid #5eead4; } #p4 .pt, #p4 li::before { color:#115e59; } #p4 .ctx { color:#0f766e; } #p4 .law { color:#0f766e; }
+  #p5 { background:#fff1f2; border:1.5px solid #fda4af; } #p5 .pt, #p5 li::before { color:#9f1239; } #p5 .ctx { color:#be123c; }
+  #p6 { background:#eef2ff; border:1.5px solid #c7d2fe; } #p6 .pt, #p6 li::before { color:#312e81; } #p6 .ctx { color:#4338ca; }
+  #isql { background:#eff6ff; border:1.5px solid #93c5fd; } #isql .pt, #isql li::before { color:#1e3a8a; } #isql .ctx { color:#1d4ed8; } #isql .law { color:#1d4ed8; }
+  #iqd { background:#f5f3ff; border:1.5px solid #c4b5fd; } #iqd .pt, #iqd li::before { color:#4c1d95; } #iqd .ctx { color:#6d28d9; } #iqd .law { color:#6d28d9; }
+  #ird { background:#fef2f2; border:1.5px solid #fca5a5; } #ird .pt, #ird li::before { color:#7f1d1d; } #ird .ctx { color:#b91c1c; } #ird .law { color:#b91c1c; }
+  .banner { background:#0f172a; color:#fff; border-radius:10px; padding:8px 16px; font-size:14.5px; font-weight:700; text-align:center; margin-bottom:12px; }
+  .reactnote { margin-top:8px; font-size:12.5px; color:#5b21b6; background:#ede9fe; border-radius:7px; padding:5px 10px; line-height:1.5; }
+  .loopwrap { display:flex; gap:16px; align-items:stretch; }
+  .looplist { flex:1; display:flex; flex-direction:column; gap:4px; font-size:13.5px; line-height:1.4; color:#3b3b4d; }
+  .looplist .lst b { color:#5b21b6; display:inline-block; min-width:22px; font-weight:700; }
+  .reactcyc { width:430px; flex-shrink:0; border:1.5px dashed #a78bfa; background:#fff; border-radius:10px; padding:9px 12px; }
+  .rct { font-size:13px; font-weight:700; color:#5b21b6; margin-bottom:6px; }
+  .flowv { display:flex; align-items:center; gap:6px; margin-bottom:7px; }
+  .fc { background:#f5f3ff; border:1px solid #c4b5fd; border-radius:8px; padding:4px 8px; font-size:12.5px; font-weight:600; color:#4c1d95; text-align:center; line-height:1.3; }
+  .fc small { display:block; font-weight:400; color:#7c6fa8; font-size:11px; }
+  .fa { color:#8b5cf6; font-weight:700; font-size:14px; }
+  .rcn { font-size:12px; color:#7c6fa8; background:#f5f3ff; border-radius:6px; padding:4px 8px; }
+  .footer { margin-top:16px; background:#0f172a; color:#e2e8f0; border-radius:14px; padding:14px 20px; font-size:14.5px; line-height:1.75; }
+  .footer b { color:#7dd3fc; }
+  .ft { color:#fff; font-weight:700; font-size:16px; margin-bottom:4px; }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="titlebar"><span class="badge">agent</span><h1>保险销售客服知识助手 —— 生产架构(v3)</h1></div>
+  <div class="subtitle">Python · 单机单进程 · DeepSeek API · 引用角标可点击定位 chunk · 读放行 / 写审批 —— 7 模块 + 审计层 + 3 件基础设施</div>
+
+  <div class="layer" id="l7">
+    <div class="lhead"><div class="lnum">⑦</div><div class="ltitle">服务化外壳 —— FastAPI + SSE 入口</div><div class="lsub">调用方:客服工作台 · 独立 Web 页(嵌入客服系统可后续)</div></div>
+    <div class="row">
+      <div class="chip" style="background:#f0f9ff;border-color:#7dd3fc"><b>FastAPI + SSE</b><span>流式回答 · 断连即取消</span></div>
+      <div class="chip"><b>会话并发隔离</b><span>asyncio · 每会话独立循环</span></div>
+      <div class="chip"><b>鉴权</b><span>内部 token</span></div>
+      <div class="chip"><b>限流 / token 预算</b><span>Redis 计数器(见加速层)</span></div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer kernel" id="l1">
+    <div class="lhead"><div class="lnum">①</div><div class="ltitle">Agent Loop —— turn / step 生命周期(dsh 同款)</div><div class="lsub">此流程就是 dsh 的 loop:接单→备料→准入→干活→落账 · 三重硬上限 · 取消传播 · 429/5xx 退避</div></div>
+    <div class="orch">
+      <div class="otitle">Agent Loop = turn / step 生命周期 —— 完整过程(不止 ReAct)</div>
+      <div class="loopwrap">
+        <div class="looplist">
+          <div class="lst"><b>①</b> 接单:开回合,收下消息和排队输入</div>
+          <div class="lst"><b>②</b> 备料:拼上下文,列出可用工具</div>
+          <div class="lst"><b>③</b> 准入闸 = agent/pre-step(系统判断):改"进模型的对话消息",或拦掉 —— 独立于 ReAct</div>
+          <div class="lst"><b>④</b> 干活:进入 ReAct 循环(右);"再来一轮"的判断就在循环里</div>
+          <div class="lst"><b>⑤</b> 落账:关回合,全程记录;外部可随时叫停</div>
+          <div class="lst" style="color:#a5b4fc;font-size:12px">dsh 术语:①turn/start · ③agent/pre-step · ⑤turn/end · turn-stopping=外部叫停</div>
+        </div>
+        <div class="reactcyc">
+          <div class="rct">ReAct 引擎(④)= 干活的循环</div>
+          <div class="flowv">
+            <div class="fc">思考<small>检索知识⑧+模型请求②</small></div>
+            <div class="fa">→</div>
+            <div class="fc">行动<small>调用API工具③ 读放行/写审批</small></div>
+            <div class="fa">→</div>
+            <div class="fc">观察<small>回填落日志④ 角标可点</small></div>
+          </div>
+          <div class="rcn">要不要再来一轮?= 工具欠结果 / 又有新消息 → 再来一轮;都不欠 → 输出回答+引用收尾(续停就是循环自己,不另设判断步)</div>
+        </div>
+      </div>
+      <div class="reactnote">两处"改写",别混:<b>检索查询改写</b>(⑧ 内部,改搜索词,为搜得准)· <b>输入消息改写</b>(③ 准入闸 = agent/pre-step,改进模型的对话,为控模型看到什么)</div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer">
+    <div class="pillars">
+      <div class="pillar" id="p8">
+        <div class="pt">⑧ 知识检索(核心) <span class="ctx">retrieval</span></div>
+        <ul>
+          <li>三条摄取管道:条款 PDF / 结构化 / FAQ</li>
+          <li>chunk_id 稳定 · 按版本+时间过滤</li>
+          <li>混合检索:稠密 + 稀疏(BM25)</li>
+          <li>检索查询改写:改写搜索词,让检索更准</li>
+          <li>原文快照在 SQLite,点角标可取</li>
+        </ul>
+      </div>
+      <div class="pillar" id="p2">
+        <div class="pt">② LLM 客户端 <span class="ctx">llm-client</span></div>
+        <ul>
+          <li>DeepSeek API · 流式输出</li>
+          <li>结构化输出:answer + citations[]</li>
+          <li>重试 / 熔断 · 畸形 JSON 容错</li>
+          <li>token 计量,成本可见</li>
+        </ul>
+      </div>
+      <div class="pillar" id="p3">
+        <div class="pt">③ 工具层 <span class="ctx">tools</span></div>
+        <ul>
+          <li>外部 API 封装:读放行 / 写审批</li>
+          <li>Pydantic 校验 · 每工具超时</li>
+          <li>结果截断:上限加完整结果</li>
+          <li>工具结果 = 不可信输入</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer">
+    <div class="pillars">
+      <div class="pillar" id="p4">
+        <div class="pt">④ 会话与上下文 <span class="ctx">sessions</span></div>
+        <ul>
+          <li>append-only 日志:只 INSERT</li>
+          <li>崩溃恢复:从日志续跑</li>
+          <li>窗口管理:旧工具结果裁剪</li>
+          <li>检索+回答快照入日志(角标可点)</li>
+        </ul>
+        <div class="law">铁律:模型可见 ⇔ 已记录</div>
+      </div>
+      <div class="pillar" id="p5">
+        <div class="pt">⑤ 安全护栏 <span class="ctx">guardrails</span></div>
+        <ul>
+          <li>审批面:写入型 API 工具</li>
+          <li>知识查询只读,不审批</li>
+          <li>执行隔离:容器 / cwd 监狱</li>
+          <li>输出预算(byte / token)</li>
+        </ul>
+      </div>
+      <div class="pillar" id="p6">
+        <div class="pt">⑥ 可观测 <span class="ctx">observability</span></div>
+        <ul>
+          <li>结构化步骤日志 + trace_id</li>
+          <li>延迟 / token / 成本全记录</li>
+          <li>回放测试(录制-回放,VCR)</li>
+          <li>离线排障:无需复现</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l9">
+    <div class="lhead"><div class="lnum">⑨</div><div class="ltitle">审计 / 追溯层</div><div class="lsub">由会话日志查询视图构成(铁律 1 免费提供)· 可追溯是硬需求</div></div>
+    <div class="row">
+      <div class="chip" style="background:#fefce8;border-color:#fde047"><b>回答+引用+检索快照可查</b><span>按客服 / 时间 / 产品</span></div>
+      <div class="chip" style="background:#fefce8;border-color:#fde047"><b>引用角标 → chunk_id</b><span>点击定位原文,含历史版本</span></div>
+      <div class="chip" style="background:#fefce8;border-color:#fde047"><b>审计导出</b><span>合规留证 · 监管 / 内审</span></div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer">
+    <div class="banner">黄金法则:SQLite = 事实源 · Qdrant = 可重建的派生索引 · Redis = 可丢失的加速层 —— 易失层全空,系统照常跑</div>
+    <div class="pillars">
+      <div class="pillar" id="isql">
+        <div class="pt">SQLite <span class="ctx">事实源</span></div>
+        <ul>
+          <li>会话日志 · 审计 · token 账本</li>
+          <li>原文快照 + 历史版本(引用寻址)</li>
+          <li>WAL · append-only · 单写者</li>
+          <li>schema 版本 fail-closed</li>
+        </ul>
+        <div class="law">使用者:④ ⑥ ⑨</div>
+      </div>
+      <div class="pillar" id="iqd">
+        <div class="pt">Qdrant <span class="ctx">派生索引</span></div>
+        <ul>
+          <li>知识向量 · 稠密 + 稀疏混合</li>
+          <li>只索引当前生效版本</li>
+          <li>payload:产品/版本/生效日期/来源</li>
+          <li>换嵌入模型 = 全量重建</li>
+        </ul>
+        <div class="law">使用者:⑧(可从 SQLite 重建)</div>
+      </div>
+      <div class="pillar" id="ird">
+        <div class="pt">Redis <span class="ctx">易失加速</span></div>
+        <ul>
+          <li>嵌入缓存 · 幂等工具缓存(TTL)</li>
+          <li>限流 / token 预算 · 锁与热态</li>
+          <li>不缓存 LLM 补全与被依赖的读</li>
+          <li>单进程阶段无需 pub/sub</li>
+        </ul>
+        <div class="law">使用者:② ③ ⑦(清空即恢复)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="ft">四条铁律</div>
+    <b>① 模型可见 ⇔ 已记录</b>:检索片段+引用+回答全落 SQLite,历史角标永远可点&nbsp;&nbsp;|&nbsp;&nbsp;<b>② 易失层可随时清空</b>:Redis / Qdrant 全空照常跑;事实源只有 SQLite<br>
+    <b>③ 回答必须可追溯</b>:不确定就拒答转人工;引用绑定版本,条款更新不失效&nbsp;&nbsp;|&nbsp;&nbsp;<b>④ 上限加在完整结果上</b>:步数 / token / 字节 + 每客服 token 预算
+  </div>
+</div>
+</body>
+</html>

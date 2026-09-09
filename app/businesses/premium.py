@@ -11,12 +11,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
 from typing import Any
 
 import app.db as dbmod
+
+logger = logging.getLogger(__name__)
 
 PRODUCT_XX = "尊享e生2025"                        # key(稳定业务键,LLM 引用)
 PRODUCT_XX_NAME = "尊享 e 生·中高端医疗保险 PLUS（2025版）（年缴版）"
@@ -71,6 +74,63 @@ def _num(val):
         return None
 
 
+def _dim_value_variants(v):
+    """生成 dims 单个值的候选正则形式(供费率精确匹配未命中时的宽松匹配)。
+
+    背景:模型常把档位枚举(字符串)传成数字(如 deductible=15000)或带单位/千分位的
+    数字串,而费率表 dims 存的是中文档位字符串(如 "1.5万"/"5000元"/"计划一")。
+    这里把数字解释成常见中文档位写法,供 get_rate 兜底重查;非数值标量原样返回。
+    只做确定性转换,不臆造。
+    """
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        s = str(v).strip() if isinstance(v, str) else v
+        if not isinstance(s, str):
+            return {v}
+        cand = {v, s}
+        if s.endswith("元") and len(s) > 1:
+            cand.add(s[:-1])                 # "5000元" → "5000"
+        try:
+            num = float(s.replace(",", "").strip())
+            if num.is_integer():
+                cand |= _dim_value_variants(int(num))
+        except ValueError:
+            pass
+        return cand
+    n = float(v)
+    cand = {v}
+    if not n.is_integer():
+        return cand
+    i = int(n)
+    cand.add(str(i))
+    cand.add(f"{i}元")
+    if i % 10000 == 0:
+        cand.add(f"{i // 10000}万")          # 30000 → "3万"
+    else:
+        cand.add(f"{i / 10000:g}万")         # 15000 → "1.5万";5000 → "0.5万"
+        cand.add(f"{i:,}")                    # 15000 → "15,000"
+        cand.add(f"{i:,}元")                  # 15000 → "15,000元"
+    return cand
+
+
+def _dims_candidates(dims):
+    """对 dims 各值取候选,笛卡尔积得到候选 dims 集合(最多 ~8 个,受控)。"""
+    if not isinstance(dims, dict) or not dims:
+        return []
+    from itertools import product
+    keys = list(dims.keys())
+    value_sets = [_dim_value_variants(dims[k]) for k in keys]
+    # 只保留与原始 dims 不同的组合作为候选
+    out = []
+    for combo in product(*value_sets):
+        cand = dict(zip(keys, combo))
+        if cand == dims:
+            continue
+        out.append(cand)
+        if len(out) >= 8:
+            break
+    return out
+
+
 def _fmt_dims(dims):
     if not dims:
         return ""
@@ -113,6 +173,22 @@ class PremiumStore:
           calc_config TEXT,
           source     TEXT
         );
+        CREATE TABLE IF NOT EXISTS hospital_list (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          list_key    TEXT NOT NULL,
+          region      TEXT NOT NULL DEFAULT '',
+          province    TEXT NOT NULL DEFAULT '',
+          city        TEXT NOT NULL DEFAULT '',
+          district    TEXT NOT NULL DEFAULT '',
+          nature      TEXT NOT NULL DEFAULT '',
+          direct_type TEXT NOT NULL DEFAULT '',
+          hospital    TEXT NOT NULL,
+          address     TEXT NOT NULL DEFAULT '',
+          specialty   TEXT NOT NULL DEFAULT '',
+          hours       TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_hospital_list_key ON hospital_list(list_key, city);
+        CREATE INDEX IF NOT EXISTS idx_hospital_hospital ON hospital_list(list_key, hospital);
         CREATE TABLE IF NOT EXISTS premium_rates (
           id          INTEGER PRIMARY KEY AUTOINCREMENT,
           product_key TEXT NOT NULL,
@@ -145,6 +221,21 @@ class PremiumStore:
             f"  rules TEXT,"
             f"  calc_config TEXT,"
             f"  source TEXT)",
+            "CREATE TABLE IF NOT EXISTS hospital_list ("
+            "  id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+            "  list_key VARCHAR(191) NOT NULL,"
+            "  region VARCHAR(64) NOT NULL DEFAULT '',"
+            "  province VARCHAR(191) NOT NULL DEFAULT '',"
+            "  city VARCHAR(191) NOT NULL DEFAULT '',"
+            "  district VARCHAR(191) NOT NULL DEFAULT '',"
+            "  nature VARCHAR(64) NOT NULL DEFAULT '',"
+            "  direct_type VARCHAR(64) NOT NULL DEFAULT '',"
+            "  hospital VARCHAR(255) NOT NULL,"
+            "  address TEXT NULL,"
+            "  specialty TEXT NULL,"
+            "  hours TEXT NULL)",
+            "CREATE INDEX idx_hospital_list_key ON hospital_list(list_key, city)",
+            "CREATE INDEX idx_hospital_hospital ON hospital_list(list_key, hospital)",
             f"CREATE TABLE IF NOT EXISTS premium_rates ("
             f"  id INTEGER PRIMARY KEY AUTO_INCREMENT,"
             f"  product_key VARCHAR(64) NOT NULL,"
@@ -173,7 +264,23 @@ class PremiumStore:
             self._mysql_ddl()
         else:
             self.conn.executescript(self._ddl())
+        self._migrate_product_hospital_col()
         self.conn.commit()
+
+    def _migrate_product_hospital_col(self):
+        """给已存在的 products 表补 hospital_list_key 列(fail-safe:列已存在则跳过 + 不抛异常)。
+        背景:products 用 CREATE IF NOT EXISTS,历史库无该列;需显式 ALTER 迁移(MySQL8.0.16 不支持 ADD IF NOT EXISTS)。"""
+        try:
+            if self._is_mysql:
+                cols = {r["Field"] for r in self.conn.execute("SHOW COLUMNS FROM products").fetchall()}
+                if "hospital_list_key" not in cols:
+                    self.conn.execute("ALTER TABLE products ADD COLUMN hospital_list_key VARCHAR(191) NULL")
+            else:
+                cols = {r[1] for r in self.conn.execute("PRAGMA table_info(products)").fetchall()}
+                if "hospital_list_key" not in cols:
+                    self.conn.execute("ALTER TABLE products ADD COLUMN hospital_list_key TEXT")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("migrate products.hospital_list_key failed(忽略): %s", e)
 
     def upsert_product(self, key, name, kb_doc_id, version, coverage, rules, calc_config, source):
         pk = self._q("key")
@@ -193,6 +300,30 @@ class PremiumStore:
                      coverage=excluded.coverage, rules=excluded.rules, calc_config=excluded.calc_config""",
                 (key, name, kb_doc_id, version, coverage, rules,
                  json.dumps(calc_config, ensure_ascii=False).replace("\n", ""), source))
+        self.conn.commit()
+        logger.info("【费率】产品已保存:key=%s(版本=%s)", key, version,
+                    extra={"op": "premium.upsert_product", "key": key})
+
+    def list_products(self) -> list[dict]:
+        """返回 products 表全部产品 [{key, name}]。供上传页/检索产品下拉 + 模糊检索。只读。"""
+        pk = self._q("key")
+        rows = self.conn.execute(f"SELECT {pk} AS k, name FROM products ORDER BY k").fetchall()
+        return [{"key": r["k"] or "", "name": r["name"] or ""} for r in rows]
+
+    def register_product(self, key: str, name: str = "") -> None:
+        """注册/确保产品存在(供上传时自定义新产品名自动入表成为下拉项;名与 key 同值的最简登记)。"""
+        key = (key or "").strip()
+        if not key:
+            return
+        pk = self._q("key")
+        if self._is_mysql:
+            self.conn.execute(
+                f"INSERT IGNORE INTO products({pk}, name, source) VALUES(?,?,?)",
+                (key, name or key, "kb-upload-registered"))
+        else:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO products(`key`, name, source) VALUES(?,?,?)",
+                (key, name or key, "kb-upload-registered"))
         self.conn.commit()
 
     def upsert_rate(self, product_key, item_key, item_name, dims, age_min, age_max,
@@ -214,6 +345,8 @@ class PremiumStore:
                    DO UPDATE SET premium=excluded.premium, item_name=excluded.item_name, unit=excluded.unit""",
                 (product_key, item_key, item_name, d, age_min, age_max, premium, unit, source, section))
         self.conn.commit()
+        logger.info("【费率】费率已保存:产品=%s,项目=%s,年龄=%s-%s", product_key, item_key, age_min, age_max,
+                    extra={"op": "premium.upsert_rate", "key": product_key})
         row = self.conn.execute(
             """SELECT * FROM premium_rates WHERE product_key=? AND item_key=? AND dims=? AND age_min=? AND age_max=?""",
             (product_key, item_key, d, age_min, age_max)).fetchone()
@@ -230,7 +363,95 @@ class PremiumStore:
                 d = dict(row)
                 d["dims"] = json.loads(d["dims"])
                 return d
+        # 精确匹配未命中 → 对 dims 值做确定性归一化(数字→中文档位/去单位/千分位)兜底重查,
+        # 命中率费表真实存在的那一档才返回;仍无则 None(防"数字档位 vs 字符串档位"误判为无费率)。
+        # 安全性:候选仅由费率表已有维度值组合触发,不会臆造出表里不存在的方案。
+        for cand in _dims_candidates(dims):
+            cur = self.conn.execute(
+                "SELECT * FROM premium_rates WHERE product_key=? AND item_key=? AND ?>=age_min AND ?<=age_max",
+                (product_key, item_key, age, age))
+            for row in cur.fetchall():
+                if json.loads(row["dims"]) == cand:
+                    d = dict(row)
+                    d["dims"] = json.loads(d["dims"])
+                    return d
         return None
+
+    def get_rate_by_id(self, rid):
+        """按费率行主键 id 取行(供引用层校验:calculate_premium 的引用 chunk_id=premium_rates.id)。"""
+        cur = self.conn.execute("SELECT * FROM premium_rates WHERE id=?", (int(rid),))
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["dims"] = json.loads(d["dims"])
+        return d
+
+    def upsert_hospital(self, list_key, region, province, city, district,
+                        nature, direct_type, hospital, address, specialty, hours):
+        """插入一家直付医院(普通 INSERT;幂等由 loader 先删后插保证)。只 INSERT,不删历史。"""
+        self.conn.execute(
+            """INSERT INTO hospital_list(list_key, region, province, city, district, nature, direct_type, hospital, address, specialty, hours)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (list_key, region, province, city, district, nature, direct_type, hospital, address, specialty, hours))
+        return None
+
+    def clear_hospital_list(self, list_key: str) -> None:
+        """清空某清单后再重灌(loader 幂等)。"""
+        self.conn.execute("DELETE FROM hospital_list WHERE list_key=?", (list_key,))
+        self.conn.commit()
+        logger.info("【费率】医院清单已清空:%s", list_key,
+                    extra={"op": "premium.clear_hospital_list", "key": list_key})
+
+    def list_hospitals(self, list_key: str, city: str = "", hospital: str = "",
+                       limit: int = 200) -> list[dict]:
+        """按清单查询直付医院。city/hospital 任一非空做 LIKE 匹配(城市精确、机构模糊);
+        都空则返回该清单前 limit 条(供概述覆盖范围)。只读事实源。
+        返回 [{list_key, region, province, city, hospital, address, specialty, hours, ...}]。"""
+        where = ["list_key=?"]
+        params: list[str] = [list_key]
+        if city.strip():
+            where.append("city=?")
+            params.append(city.strip())
+        if hospital.strip():
+            where.append("hospital LIKE ?")
+            params.append("%" + hospital.strip() + "%")
+        try:
+            params.append(int(limit))
+        except ValueError:
+            limit = 200
+            params[len(params) - 1] = 200
+        sql = ("SELECT * FROM hospital_list WHERE " + " AND ".join(where)
+               + " ORDER BY province, city, id LIMIT ?")
+        cur = self.conn.execute(sql, tuple(params))
+        return [dict(r) for r in cur.fetchall()]
+
+    def hospital_cities(self, list_key: str, limit: int = 50) -> list[dict]:
+        """概述:某清单覆盖的城市/地区分布(国内容前了 LIMIT 内按省聚合,境外按 region)。"""
+        if self._is_mysql:
+            rows = self.conn.execute(
+                "SELECT region, province, city, COUNT(*) n FROM hospital_list "
+                "WHERE list_key=? GROUP BY region, province, city ORDER BY n DESC LIMIT ?",
+                (list_key, limit)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT region, province, city, COUNT(*) n FROM hospital_list "
+                "WHERE list_key=? GROUP BY region, province, city ORDER BY n DESC LIMIT ?",
+                (list_key, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def bind_product_hospital(self, product_key: str, list_key: str) -> None:
+        """给产品绑定其直付医院清单(每产品最多一份,upsert)。"""
+        pk = self._q("key")
+        if self._is_mysql:
+            self.conn.execute(
+                f"UPDATE products SET hospital_list_key=? WHERE {pk}=?",
+                (list_key, product_key))
+        else:
+            self.conn.execute(
+                "UPDATE products SET hospital_list_key=? WHERE `key`=?",
+                (list_key, product_key))
+        self.conn.commit()
 
     def get_product(self, ref):
         """按 key 或 name 查产品。"""
@@ -318,6 +539,10 @@ def calculate_premium(store, args):
     except (TypeError, ValueError):
         family = 1
     content, store_rows = calc(store, key, age, items, family)
+    if not store_rows and items:
+        # 全部方案都未命中费率:明确标"未查到费率",禁止模型据此臆造保额/保费数字。
+        content += ("\n\n【费用提示】所有方案均未命中费率表,请勿臆造任何保费/金额数字;"
+                    "如实告知用户当前无法给出精确保费,并请其确认投保计划档位后重算,或转人工报价。")
     ref = []
     for r in store_rows:
         ref.append({
@@ -340,7 +565,7 @@ def build_premium_tool(store):
             "items": {"type": "array", "description": "要计算的方案/包,可多选",
                       "items": {"type": "object", "properties": {
                           "item_key": {"type": "string"},
-                          "dims": {"type": "object", "description": "按 description 中该 item_key 的 dims 构造(详见 description)"},
+                          "dims": {"type": "object", "description": "按 description 中该 item_key 的 dims 构造,档位值必须是引号内的字符串字面量(如 \"0元\"/\"15000元\" 而非数字 15000),name 带\"元/万\"单价位的用中文档位串(如 \"1.5万\"),勿传数字或千分位字符串"},
                           "coverage": {"type": "number", "description": "保额(元),仅 critical 需传"},
                       }, "required": ["item_key"]}},
             "family_member_count": {"type": "integer", "description": "家庭单成员数;2人95折,≥3人9折"},
@@ -402,3 +627,110 @@ def load_xx2025_xlsx(store, xlsx_path):
                      "item_dims": {"plan": ["deductible", "plan_variant"], "critical": ["gender"]}},
         source=source)
     return n
+
+
+HOSPITAL_DTH_202506 = "DTH-202506"   # 直付网络医院清单标识(尊享e生2025 绑定)
+
+
+def load_hospital_list_xlsx(store, xlsx_path, list_key: str) -> dict:
+    """从直付医院清单 xlsx 灌入 hospital_list(先删后插,幂等)。
+
+    结构:['说明','国内网络医院','境外网络医院']。国内 9 列(省份/城市/区县/性质/直付类型/机构/地址/特色科室/开放时间),
+    境外 4 列(地区/省份/城市/机构)。统一宽表存储:境外 region=境外、区县/性质/直付/地址/特色/开放均留空。
+    Returns: {list_key, total, domestic, overseas}"""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    store.clear_hospital_list(list_key)
+    dom = oversea = 0
+    # ---- 国内 ----
+    ws = wb["国内网络医院"]
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        cells = ["" if v is None else str(v).strip() for v in row]
+        hospital = cells[5] if len(cells) > 5 else ""
+        if not hospital or hospital in ("医疗机构", "None"):
+            continue
+        store.upsert_hospital(
+            list_key=list_key, region="国内",
+            province=cells[0] if len(cells) > 0 else "",
+            city=cells[1] if len(cells) > 1 else "",
+            district=cells[2] if len(cells) > 2 else "",
+            nature=cells[3] if len(cells) > 3 else "",
+            direct_type=cells[4] if len(cells) > 4 else "",
+            hospital=hospital,
+            address=cells[6] if len(cells) > 6 else "",
+            specialty=cells[7] if len(cells) > 7 else "",
+            hours=cells[8] if len(cells) > 8 else "")
+        dom += 1
+    # ---- 境外 ----
+    ws = wb["境外网络医院"]
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        cells = ["" if v is None else str(v).strip() for v in row]
+        hospital = cells[3] if len(cells) > 3 else ""
+        if not hospital or hospital in ("医疗机构", "None"):
+            continue
+        store.upsert_hospital(
+            list_key=list_key, region="境外",
+            province=cells[1] if len(cells) > 1 else "",
+            city=cells[2] if len(cells) > 2 else "",
+            district="", nature="", direct_type="",
+            hospital=hospital,
+            address="", specialty="", hours="")
+        oversea += 1
+    store.conn.commit()
+    return {"list_key": list_key, "total": dom + oversea, "domestic": dom, "overseas": oversea}
+
+
+def query_hospital(store, args):
+    """按产品+城市/机构 查直付医院清单(结构化精确查询,事实源只读)。"""
+    product = (args.get("product") or "").strip()
+    if not product:
+        avail = "、".join(available_product_keys())
+        return {"content": f"请指定产品(product,填产品 key 或名称)。当前在售:{avail}。", "reference": []}
+    prod = store.get_product(product)
+    if not prod:
+        return {"content": f"产品 {product} 不存在/暂无直付医院清单", "reference": []}
+    list_key = (prod.get("hospital_list_key") or "").strip()
+    if not list_key:
+        return {"content": f"产品 {product} 暂无绑定直付医院清单", "reference": []}
+    city = (args.get("city") or "").strip()
+    hospital = (args.get("hospital") or "").strip()
+    limit = int(args.get("limit") or 100)
+    if limit < 1:
+        limit = 100
+    if city or hospital:
+        rows = store.list_hospitals(list_key, city=city, hospital=hospital, limit=limit)
+    else:
+        rows = store.list_hospitals(list_key, limit=limit)
+    if not rows:
+        return {"content": f"未查到 {product} 符合条件的直付医院(城市={city or '不限'})。请核对城市/机构名,或提供城市后重查。",
+                "reference": []}
+    lines = [f"{product} 直付医院清单({list_key}):"]
+    for r in rows:
+        loc = f"{r.get('region','')} {r.get('province','')} {r.get('city','')} {r.get('district','')}".replace("  ", " ").strip()
+        dt = f"({r.get('direct_type','')})" if r.get("direct_type") else ""
+        lines.append(f"- {r.get('hospital')}{dt} · {loc}")
+        if r.get("address"):
+            lines.append(f"  地址:{r.get('address')}")
+    if len(rows) >= limit:
+        lines.append(f"(已显示前 {limit} 条,可再用 city/hospital 收窄)")
+    return {"content": "\n".join(lines), "reference": []}
+
+
+def build_hospital_tool(store):
+    schema = {"type": "function", "function": {
+        "name": "query_hospital",
+        "description": ("按产品查其直付医院清单(结构化精确查询)。product 传产品 key 或名称;city 传城市(如 北京/上海);"
+                        "hospital 传机构名(模糊)。当客户问\"某产品在某城市有没有/有哪些直付医院\"时调用。"
+                        "不传 city/hospital 返回该清单覆盖范围/前若干家(供概述)。只读。"),
+        "parameters": {"type": "object", "properties": {
+            "product": {"type": "string", "description": "产品 key 或名称(如 尊享e生2025)"},
+            "city": {"type": "string", "description": "城市(如 北京/上海);可空"},
+            "hospital": {"type": "string", "description": "机构名,模糊;可空"},
+            "limit": {"type": "integer", "description": "返回条数上限(默认100)"},
+        }, "required": ["product"]}}}
+
+    def handler(args, start_idx=0, session_id=None):
+        res = query_hospital(store, args or {})
+        return res
+
+    return {"schema": schema, "handler": handler}

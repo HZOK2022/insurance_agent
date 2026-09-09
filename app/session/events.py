@@ -5,14 +5,16 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Callable
+
+from app.util.time import beijing_now
 
 class UnknownEventError(ValueError):
     """日志里出现了未注册的事件类型(拒绝加载)。"""
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    """兼容旧调用:统一返回北京时间 YYYY-MM-DD HH:mm:ss。"""
+    return beijing_now()
 
 _EVENT_TYPES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
@@ -145,6 +147,16 @@ def _validate_turn(p):
         if k in p and p[k] is not None:
             out[k] = p[k]
     return out
+def _validate_llm_call(p):
+    # 单次 LLM 调用(一步 = 一次 chat_stream)的 token/ttft/耗时/吞吐,独立成事件供 step 级归因;
+    # usage 仍是轮末累计汇总(成本/token 报表口径不变)。payload 全为可选缺省字段外的受控键。
+    out = {"step": p.get("step"), "model": _req(p, "model", str),
+           "prompt_tokens": _req(p, "prompt_tokens", int),
+           "completion_tokens": _req(p, "completion_tokens", int)}
+    for k in ("ttft_ms", "run_ms", "tokens_per_second"):
+        if p.get(k) is not None:
+            out[k] = p[k]
+    return out
 def _validate_guard_triggered(p):
     return {"kind": p.get("kind"), "detail": p.get("detail")}
 
@@ -203,6 +215,7 @@ _EVENT_TYPES.update({
     "compaction_end": _validate_compaction_end,
     "approval_request": _validate_approval_request,
     "approval_decision": _validate_approval_decision,
+    "llm_call": _validate_llm_call,
     "usage": _validate_usage,
     "turn_start": _validate_turn,
     "turn_end": _validate_turn,

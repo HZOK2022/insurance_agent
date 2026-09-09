@@ -171,22 +171,31 @@ def is_heading_like(line: str) -> bool:
     return True
 
 
-def _split_into_units(text: str, pattern_key: str) -> list[dict]:
+def _split_into_units(text: str, pattern_key: str, min_heading_level: int = 6) -> list[dict]:
     """按结构行聚合成【语义单元】:新结构行开新单元,普通行累积;记录层级路径。
     md:按 # 层级;非 md(条款/通用):先剥行首 md#(MinerU 把层级拍平成 # 标记)再按编号 regex 匹配,
     使 chunk.section/content 与 doc_structure(probe.build_outline)同口径——**不含 #**(否则 # 混进
-    section/content,且 # 行不匹配编号 regex 导致层级丢失,目录↔chunk 关联失败)。"""
+    section/content,且 # 行不匹配编号 regex 导致层级丢失,目录↔chunk 关联失败)。
+    min_heading_level: 仅对 md 生效的标题层级门槛 = 最深仍单独成块的那级。默认 6 = 全部 # 标题各自成块(现状);
+    设 2 = H1/H2 成块,H3+ 内容并回父块(标题文本仍作为块内内容行保留,section 保持父标题链)。"""
     patterns = _STRUCT_PATTERNS.get(pattern_key, _STRUCT_PATTERNS["generic"])
     units, cur, stack = [], {"path": [], "lines": []}, []
     for raw in (text or "").splitlines():
         s = raw.strip()
         if not s:
             continue
+        # 跳过分隔线(--- / *** / ___):无检索意义,且会在超长切分时单独成空块
+        if re.match(r"^[-*_]{3,}\s*$", s):
+            continue
         if pattern_key == "md":
             m = re.match(r"^(#{1,6})\s*(.*)$", s)
             if m and m.group(2).strip():
                 title = m.group(2).strip()
                 lvl = len(m.group(1))
+                # 低于层级门槛的标题:不开新块,作为内容行并回当前父块(标题文本保留)
+                if lvl > min_heading_level:
+                    cur["lines"].append(title)
+                    continue
                 if cur["lines"]:
                     units.append(cur)
                 stack = [x for x in stack if x[0] < lvl]   # 弹出同级/更深,保留祖先
@@ -220,6 +229,24 @@ def _split_into_units(text: str, pattern_key: str) -> list[dict]:
 _MERGEABLE_LISTY = re.compile(r"^[（(][一二三四五六七八九十]+[）)]|^\d+[．.、]|^[（(]\d+[）)]")
 
 
+def _drop_container_headings(units: list[dict]) -> list[dict]:
+    """规则①(D58,独立供 md 复用):纯容器标题单元(单行,且**确有子单元**——标题文本已通过
+    子块前缀保留)不单独成块;单行叶子条目(无子单元)必须保留,否则正文丢失。
+
+    md 路径此前整段跳过 _coalesce_units(因规则②兄弟合并不适合 md),导致"单行 H1(下有
+    H2)自成一块"零信息块;现 md 单独调用本函数(只 drop 容器,不合并兄弟)。
+    """
+    drop_idx: set[int] = set()
+    for i, u in enumerate(units):
+        if len(u.get("lines") or []) <= 1 and u.get("path"):
+            has_child = any(len(v.get("path") or []) > len(u["path"])
+                            and (v.get("path") or [])[:len(u["path"])] == u["path"]
+                            for v in units[i + 1:])
+            if has_child:
+                drop_idx.add(i)
+    return [u for i, u in enumerate(units) if i not in drop_idx]
+
+
 def _coalesce_units(units: list[dict], chunk_size: int, max_tokens: int | None = None) -> list[dict]:
     """防"切太碎":
     ① 纯容器标题单元(单行,且**确有子单元**——其标题文本已通过子块前缀保留)不单独成块;
@@ -237,16 +264,7 @@ def _coalesce_units(units: list[dict], chunk_size: int, max_tokens: int | None =
             text = " > ".join(parent) + " " + text
         return embedding_tokens(text)
 
-    # ① 只丢"有子单元"的单行容器标题;单行叶子项(无子单元)保留
-    drop_idx: set[int] = set()
-    for i, u in enumerate(units):
-        if len(u.get("lines") or []) <= 1 and u.get("path"):
-            has_child = any(len(v.get("path") or []) > len(u["path"])
-                            and (v.get("path") or [])[:len(u["path"])] == u["path"]
-                            for v in units[i + 1:])
-            if has_child:
-                drop_idx.add(i)
-    body_units = [u for i, u in enumerate(units) if i not in drop_idx]
+    body_units = _drop_container_headings(units)
     out: list[dict] = []
     buf: dict | None = None
     for u in body_units:
@@ -399,11 +417,13 @@ def _cut_by_tokens(body: str, prefix: str, max_tokens: int, key: str) -> list[st
 
 
 def chunk_structured(text: str, doc_type: str, chunk_size: int = 1000, overlap: int = 200,
-                     max_tokens: int | None = None, pattern_key: str | None = None) -> list[dict]:
+                     max_tokens: int | None = None, pattern_key: str | None = None,
+                     min_heading_level: int = 6) -> list[dict]:
     """按结构切一篇(通用):返回 [{content, section, title}]。识别不到结构 → []。
     pattern_key: None=自动探测(md/policy/generic/none);指定则用该约定(md|policy|generic)。
     max_tokens: 给定时,合并/降级按"整串(含前缀)估算 token ≤ max_tokens"(embedding 预算);
-                为 None 时保持旧行为(按 chunk_size 字符上限)。"""
+                为 None 时保持旧行为(按 chunk_size 字符上限)。
+    min_heading_level: 仅 md 生效的标题层级门槛(最深仍单独成块的那级,默认6=全部成块)。"""
     if pattern_key is None:
         key = "md" if doc_type == "markdown" else _detect_pattern_key(text)
     else:
@@ -412,8 +432,12 @@ def chunk_structured(text: str, doc_type: str, chunk_size: int = 1000, overlap: 
         return []
     if key != "md":
         text = _filter_toc_prefix(text)   # 去掉目录/前言等非正文前缀
-    units = _split_into_units(text, key)
-    if key != "md":
+    units = _split_into_units(text, key, min_heading_level)
+    if key == "md":
+        # md 也去掉"单行容器标题"块(单行 H1 下有 H2 时不立块,标题经子块前缀保留);
+        # 但**不做**兄弟合并(_coalesce_units 规则②)——md 的标题节是语义单元,合并会把相邻节混进一块。
+        units = _drop_container_headings(units)
+    else:
         units = _coalesce_units(units, chunk_size, max_tokens)   # 空标题不立块 + 同级短项合并(防切太碎)
     out = []
     for u in units:
@@ -423,15 +447,34 @@ def chunk_structured(text: str, doc_type: str, chunk_size: int = 1000, overlap: 
             pieces = _cut_by_tokens(body, prefix, max_tokens, key)
         else:
             pieces = _cut_by_chars(body, prefix, chunk_size)
+        pfx = f"[{prefix}] " if prefix else ""
+        # 标题文本已由前缀(path)承载:从首片剥掉与 path[-1] 相同的首行,避免 content 里
+        # 标题出现两次(前缀一次 + 正文首行一次)。合并块首行是子标题(≠父 path[-1]),不剥。
+        if pieces and u["path"]:
+            first = pieces[0]
+            rest = first[len(pfx):] if first.startswith(pfx) else first
+            rlines = rest.split("\n")
+            if rlines and rlines[0].strip() == u["path"][-1].strip():
+                rlines = rlines[1:]
+                pieces[0] = (pfx + "\n".join(rlines)).strip()
+        # 过滤剥完标题后无正文的空块(如 heading-only 叶子、或只剩分隔线)
+        def _body(piece):
+            tag = f"[{prefix}]" if prefix else ""
+            if tag and piece.startswith(tag):
+                return piece[len(tag):].strip()
+            return piece.strip()
+        pieces = [p for p in pieces if _body(p)]
         for c in pieces:
             out.append({"content": c, "section": prefix, "title": u["path"][-1] if u["path"] else ""})
     return out
 
 
 def chunk_documents(docs, chunk_size: int = 1000, overlap: int = 200,
-                    text_splitter: str = "structured", max_tokens: int | None = None) -> list[dict]:
+                    text_splitter: str = "structured", max_tokens: int | None = None,
+                    min_heading_level: int = 6) -> list[dict]:
     """按 doc_type 路由;返回 [{content, meta}]。meta 含 section/title/chunk_id 等。
     max_tokens: 结构化路径的 embedding token 预算(见 chunk_structured);None=字符上限。
+    min_heading_level: 仅 md 生效的标题层级门槛(见 chunk_structured)。
     除 rate_table 外一律先尝试"结构切"(自动探测 md/条款/通用编号),识别不出才回退字符切。"""
     out = []
     for d in docs:
@@ -444,7 +487,8 @@ def chunk_documents(docs, chunk_size: int = 1000, overlap: int = 200,
             items = []
             if doc_type != "rate_table":
                 # 结构层级切(自动探测 md/条款/通用编号)
-                items = chunk_structured(text, doc_type, chunk_size, overlap, max_tokens)
+                items = chunk_structured(text, doc_type, chunk_size, overlap, max_tokens,
+                                         min_heading_level=min_heading_level)
             else:
                 # 表格:reader 已输出 "表名" + "列|值" 行;每数据行一个单元
                 items = [{"content": l.strip(), "section": meta.get("title", ""), "title": ""}

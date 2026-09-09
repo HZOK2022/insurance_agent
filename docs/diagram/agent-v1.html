@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>dsh core architecture</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { background:#eef1f7; }
+  body { font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif; width:1720px; color:#1e293b; }
+  .canvas { width:1720px; padding:34px 40px 30px; }
+  .titlebar { display:flex; align-items:center; gap:16px; margin-bottom:6px; }
+  h1 { font-size:33px; color:#0f172a; letter-spacing:1px; }
+  .badge { background:#0f172a; color:#fff; font-weight:700; font-size:22px; padding:5px 14px; border-radius:10px; }
+  .subtitle { font-size:15.5px; color:#64748b; margin-bottom:18px; }
+  .layer { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:13px 18px 15px; box-shadow:0 1px 3px rgba(15,23,42,.06); }
+  .connector { text-align:center; color:#94a3b8; font-size:17px; line-height:1; padding:4px 0; }
+  .lhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .lnum { min-width:30px; height:30px; border-radius:50%; color:#fff; font-weight:700; font-size:16px; display:flex; align-items:center; justify-content:center; }
+  .ltitle { font-size:20px; font-weight:700; color:#0f172a; }
+  .lsub { font-size:14px; color:#64748b; font-weight:400; }
+  .row { display:flex; align-items:stretch; gap:10px; flex-wrap:wrap; }
+  .chip { background:#f8fafc; border:1px solid #dbe3ee; border-radius:10px; padding:7px 14px; font-size:14px; text-align:center; }
+  .chip b { display:block; font-size:15.5px; color:#0f172a; }
+  .chip span { font-size:12.5px; color:#64748b; }
+  .arrow { align-self:center; color:#94a3b8; font-size:20px; font-weight:700; }
+  .note { margin-top:9px; font-size:13.5px; color:#475569; background:#f1f5f9; border-radius:8px; padding:6px 12px; }
+  #l1 .lnum { background:#2563eb; } #l1 { border-top:4px solid #2563eb; }
+  #l2 .lnum { background:#4f46e5; } #l2 { border-top:4px solid #4f46e5; }
+  #l3 .lnum { background:#7c3aed; } #l3 { border-top:4px solid #7c3aed; }
+  #l4 .lnum { background:#ea580c; } #l4 { border-top:4px solid #ea580c; }
+  #l5 .lnum { background:#0891b2; } #l5 { border-top:4px solid #0891b2; }
+  #l6 .lnum { background:#475569; } #l6 { border-top:4px solid #475569; }
+  #l7 .lnum { background:#e11d48; } #l7 { border-top:4px solid #e11d48; }
+  .kernel { background:linear-gradient(180deg,#faf8ff,#fff); }
+  .orch { border:2px dashed #c4b5fd; background:#f5f3ff; border-radius:12px; padding:11px 14px 13px; margin-bottom:12px; }
+  .otitle { font-size:16px; font-weight:700; color:#5b21b6; margin-bottom:9px; }
+  .flow { display:flex; align-items:center; gap:7px; }
+  .fchip { background:#fff; border:1.5px solid #a78bfa; color:#4c1d95; border-radius:9px; padding:6px 10px; font-size:13.5px; font-weight:600; text-align:center; line-height:1.35; }
+  .fchip small { display:block; font-weight:400; color:#7c6fa8; font-size:11.5px; }
+  .farrow { color:#8b5cf6; font-size:16px; font-weight:700; }
+  .pillars { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .pillar { border-radius:12px; padding:11px 14px; font-size:14px; line-height:1.55; color:#334155; }
+  .pt { font-size:17px; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+  .ctx { font-family:Consolas,monospace; font-size:13px; background:rgba(255,255,255,.8); padding:1px 7px; border-radius:6px; font-weight:600; }
+  .pillar ul { list-style:none; }
+  .pillar li { padding-left:15px; position:relative; margin-bottom:3px; }
+  .pillar li::before { content:"•"; position:absolute; left:2px; }
+  #p1 { background:#ecfdf5; border:1.5px solid #6ee7b7; } #p1 .pt { color:#065f46; } #p1 .ctx { color:#047857; }
+  #p2 { background:#fffbeb; border:1.5px solid #fcd34d; } #p2 .pt { color:#92400e; } #p2 .ctx { color:#b45309; }
+  #p3 { background:#f0fdfa; border:1.5px solid #5eead4; } #p3 .pt { color:#115e59; } #p3 .ctx { color:#0f766e; }
+  .law { margin-top:5px; font-weight:700; font-size:13.5px; color:#0f766e; }
+  .seams { display:flex; flex-wrap:wrap; gap:8px; }
+  .seam { background:#fff7ed; border:1px solid #fdba74; color:#9a3412; border-radius:8px; padding:5px 12px; font-size:14px; font-weight:600; }
+  .cards2 { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .icard { background:#f0f9ff; border:1.5px solid #7dd3fc; border-radius:10px; padding:9px 12px; font-size:13.5px; line-height:1.5; color:#0c4a6e; }
+  .icard b { font-size:15px; display:block; margin-bottom:3px; color:#075985; }
+  .guardrow { display:flex; flex-wrap:wrap; gap:8px; }
+  .gchip { background:#fff1f2; border:1px solid #fda4af; color:#9f1239; border-radius:8px; padding:6px 12px; font-size:14px; font-weight:600; }
+  .footer { margin-top:16px; background:#0f172a; color:#e2e8f0; border-radius:14px; padding:14px 20px; font-size:14.5px; line-height:1.75; }
+  .footer b { color:#7dd3fc; }
+  .ft { color:#fff; font-weight:700; font-size:16px; margin-bottom:4px; }
+  code { font-family:Consolas,monospace; background:rgba(148,163,184,.18); padding:0 5px; border-radius:5px; font-size:.92em; }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="titlebar"><span class="badge">dsh</span><h1>DeepSeek Harness 核心架构骨架</h1></div>
+  <div class="subtitle">基于 Cordis 的全插件 Agent Harness —— 一切皆插件 · 无特权内核 · 事件即扩展点（依据 docs/architecture.md 与各包 README 整理）</div>
+
+  <div class="layer" id="l1">
+    <div class="lhead"><div class="lnum">①</div><div class="ltitle">交付形态 —— 一套代码，一个启动器，五个入口</div><div class="lsub">所有 Node 应用都从 dsh CLI 按命名 Profile 启动</div></div>
+    <div class="row">
+      <div class="chip" style="background:#eff6ff;border-color:#93c5fd"><b>dsh CLI（apps/cli）</b><span>唯一应用启动器</span></div>
+      <div class="arrow">→</div>
+      <div class="chip"><b>web</b><span>浏览器 GUI（dsh web）</span></div>
+      <div class="chip"><b>headless</b><span>一次性任务</span></div>
+      <div class="chip"><b>sdk / sdk-minimal</b><span>JSON-RPC 服务</span></div>
+      <div class="chip"><b>acp</b><span>自动化协议服务</span></div>
+    </div>
+    <div class="note">apps/web 只是 <code>dsh web</code> 服务的 Vite 前端构建产物；python SDK 包装的也是同一个 <code>dsh --profile sdk</code> —— 并不存在四套独立程序</div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l2">
+    <div class="lhead"><div class="lnum">②</div><div class="ltitle">组装/配置 —— profile → bundle → patch 逐层覆盖</div><div class="lsub">每个行为都能被上层替换</div></div>
+    <div class="row">
+      <div class="chip"><b>profile</b><span>命名组合 + 有序 bundle 列表</span></div>
+      <div class="arrow">→</div>
+      <div class="chip"><b>bundle</b><span>dsh-base 共享首层 + web-app / headless / sdk-app / acp-app</span></div>
+      <div class="arrow">→</div>
+      <div class="chip"><b>cordis.patch.yml</b><span>用户层 / --patch 覆盖（按 id 整行替换）</span></div>
+    </div>
+    <div class="note">凭据 <code>credentials</code> 同样分层读取（env / .env / 用户配置）—— 模型适配器、工具、沙箱策略全部可从配置换掉</div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer kernel" id="l3">
+    <div class="lhead"><div class="lnum">③</div><div class="ltitle">Cordis 插件内核</div><div class="lsub">注册即 effect（卸载即撤销）· 无特权内核，扩展 = 在旁边挂插件 · 三类事件域：session/*（持久事实）· agent/*（飞行中）· 能力事件（fs/* tools/* …）</div></div>
+    <div class="orch">
+      <div class="otitle">编排核心：core/agent（ctx.agents 生命周期 + 注册表）· core/agent-loop（ctx.agentLoop 默认驱动）· core/scope（每 agent 作用域注册）</div>
+      <div class="flow">
+        <div class="fchip">收件箱 inbox<small>消息唤醒 / 注入等待</small></div>
+        <div class="farrow">→</div>
+        <div class="fchip">turn/start<small>开回合</small></div>
+        <div class="farrow">→</div>
+        <div class="fchip">拼装 prompt + 工具 schema<small>system-prompt 分区 + schemas()</small></div>
+        <div class="farrow">→</div>
+        <div class="fchip">agent/pre-step<small>瀑布：改写进模型的消息 / 拒绝(输入消息改写)</small></div>
+        <div class="farrow">→</div>
+        <div class="fchip">step：模型请求 ↔ 工具调用 <b style="color:#6d28d9">（ReAct）</b><small>llm/stream 流式 · tools 三段管线 · 想→做→看 循环</small></div>
+        <div class="farrow">→</div>
+        <div class="fchip">turn/end<small>全程落会话日志</small></div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:#4c1d95;background:#f5f3ff;border-radius:7px;padding:5px 10px;">dsh 无独立检索模块,故这里只有"输入消息改写"(agent/pre-step);"检索查询改写"属你们的 v2/v3 的 ⑧ 知识检索</div>
+      <div style="margin-top:8px;font-size:12.5px;color:#5b21b6;background:#ede9fe;border-radius:7px;padding:5px 10px;">这里的 "step：模型请求 ↔ 工具调用" 就是 <b>ReAct</b> —— 思考(模型请求)→ 行动(工具调用)→ 观察(结果回填)→ 再思考;工具欠结果 / 有新消息就再来一轮,都不欠就收敛输出回答</div>
+    </div>
+    <div class="pillars">
+      <div class="pillar" id="p1">
+        <div class="pt">④ 模型层 <span class="ctx">ctx.llm</span></div>
+        <ul>
+          <li>适配器 seam + 消息/流式词汇</li>
+          <li>提供者：DeepSeek / pi-ai（可再加）</li>
+          <li>core/system-prompt 拼装分区与工具 schema</li>
+        </ul>
+      </div>
+      <div class="pillar" id="p2">
+        <div class="pt">⑤ 工具层 <span class="ctx">ctx.tools</span></div>
+        <ul>
+          <li>作用域化注册表（每 agent 可隔离）</li>
+          <li>把关管线：pre-execute → execute → post-execute</li>
+          <li>超时 / 并发 / 取消；MCP 外部工具也挂这里</li>
+        </ul>
+      </div>
+      <div class="pillar" id="p3">
+        <div class="pt">⑥ 会话/记忆 <span class="ctx">ctx.sessions</span></div>
+        <ul>
+          <li>append-only 事件日志 = 唯一事实源</li>
+          <li>持久化 JSONL/SQLite · 投影 · fork · compaction</li>
+        </ul>
+        <div class="law">铁律：模型可见 ⇔ 已记录</div>
+      </div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l4">
+    <div class="lhead"><div class="lnum">⑦</div><div class="ltitle">能力 Seams —— 服务定义 + 提供者 + 消费者</div><div class="lsub">换提供者 = 换整个能力（本地 ↔ 远程沙箱，代码不变）</div></div>
+    <div class="seams">
+      <span class="seam">shell / bash / pwsh</span><span class="seam">subprocess</span><span class="seam">fs（+策略）</span><span class="seam">terminal</span><span class="seam">web 搜索/抓取</span><span class="seam">skill</span><span class="seam">lsp</span><span class="seam">sandbox 沙箱</span><span class="seam">subagent</span><span class="seam">workflow</span><span class="seam">goal</span><span class="seam">jobs</span><span class="seam">todo / plan</span><span class="seam">compaction</span>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l5">
+    <div class="lhead"><div class="lnum">⑧</div><div class="ltitle">对外集成 —— 三个不同方向的 seam，别混为一谈</div></div>
+    <div class="cards2">
+      <div class="icard"><b>MCP（工具进）</b>外部 MCP 服务器的工具注册进 ctx.tools，命名 mcp__server__tool</div>
+      <div class="icard"><b>子 Agent（向下派）</b>ctx.subagents 多提供者并存：进程内 / ACP / Codex / Claude Code / DSH SDK</div>
+      <div class="icard"><b>ACP（外部进）</b>入站自动化服务器：外部程序经 JSON-RPC stdio 驱动 dsh agent（--profile acp）</div>
+      <div class="icard"><b>Hooks（事件互通）</b>Claude Code / Codex 钩子桥 + 线协议库</div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l6">
+    <div class="lhead"><div class="lnum">⑨</div><div class="ltitle">Web 服务侧（web profile 的组合）</div><div class="lsub">浏览器到达 agent 的通道</div></div>
+    <div class="row">
+      <div class="chip"><b>host/webserver</b><span>HTTP 路由注册表（无 harness 概念）</span></div>
+      <div class="chip"><b>api 网关</b><span>/api JSON-RPC + 实时事件推送帧</span></div>
+      <div class="chip"><b>前端静态 dist</b><span>SPA 托管 + token 换 cookie</span></div>
+    </div>
+  </div>
+  <div class="connector">▼</div>
+
+  <div class="layer" id="l7">
+    <div class="lhead"><div class="lnum">⑩</div><div class="ltitle">护栏与可观测 —— 横切所有层</div></div>
+    <div class="guardrow">
+      <span class="gchip">sandbox 进程隔离（spawn 前包 argv）</span>
+      <span class="gchip">审批 / 权限 / 向用户提问</span>
+      <span class="gchip">/api 信任围栏：loopback + 同源 + 415</span>
+      <span class="gchip">遥测 otel</span>
+      <span class="gchip">guard：工具超时 · 重复提醒</span>
+      <span class="gchip">fs 观察策略</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="ft">四条核心铁律</div>
+    <b>① 模型可见 ⇔ 已记录</b>：进入模型请求的内容必须能从日志重建，新输入 ⇒ 新会话事件&nbsp;&nbsp;|&nbsp;&nbsp;<b>② 扩展点优先</b>：新行为挂事件 / seam / profile，不改 agent-loop<br>
+    <b>③ 瀑布监听必须 next()</b>：不调用即短路整条链&nbsp;&nbsp;|&nbsp;&nbsp;<b>④ 大声失败</b>：误配置在加载或最早可解析点报错，绝不静默跳过；注册即 effect，返回 disposer
+  </div>
+</div>
+</body>
+</html>

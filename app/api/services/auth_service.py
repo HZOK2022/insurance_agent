@@ -13,9 +13,10 @@ import hmac
 import secrets
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from app.session import events
+from app.util.time import beijing_now, beijing_now_dt, parse_beijing
 
 _PBKDF2_ROUNDS = 100_000
 _REMEMBER_DAYS = 30
@@ -23,12 +24,13 @@ _SESSION_HOURS = 8
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    """兼容旧调用:统一返回北京时间 YYYY-MM-DD HH:mm:ss。"""
+    return beijing_now()
 
 
 def _expiry(remember: bool) -> str:
     delta = timedelta(days=_REMEMBER_DAYS) if remember else timedelta(hours=_SESSION_HOURS)
-    return (datetime.now(timezone.utc) + delta).isoformat(timespec="milliseconds")
+    return (beijing_now_dt() + delta).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def hash_password(password: str) -> tuple[str, str]:
@@ -87,6 +89,25 @@ def issue_token(store, username: str, remember: bool) -> LoginResult:
                        role=user.get("role", "agent"))
 
 
+def _parse_expiry(s: str):
+    """解析 token 过期时间,兼容两种存储格式:
+    - 北京/裸格式 'YYYY-MM-DD HH:MM:SS[.ffffff]'
+    - ISO 格式 'YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]'(auth_tokens 实际存的是这种)
+    无时区的按北京时间补 tzinfo,统一返回 aware datetime;解析失败返回 None。
+    """
+    from datetime import datetime
+    raw = (s or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=beijing_now_dt().tzinfo)
+    return dt
+
+
 def validate_token(store, token: str) -> str | None:
     """返回 username(有效且未过期)或 None。"""
     if not token:
@@ -94,11 +115,10 @@ def validate_token(store, token: str) -> str | None:
     row = store.get_token(token)
     if row is None:
         return None
-    try:
-        exp = datetime.fromisoformat(row["expires_at"])
-    except ValueError:
+    exp = _parse_expiry(row["expires_at"])
+    if exp is None:
         return None
-    if exp <= datetime.now(timezone.utc):
+    if exp <= beijing_now_dt():
         store.delete_token(token)
         return None
     return row["username"]
@@ -108,15 +128,15 @@ def revoke_token(store, token: str) -> bool:
     return store.delete_token(token) > 0
 
 
-def seed_admin_if_empty(store, login_user: str, login_password: str) -> None:
-    """users 表为空时播种一个管理员账号(来自 config.login_user/login_password)。
-    仅当表为空才播种,绝不覆盖既有账号。"""
+def seed_admin_if_empty(store, seed_user: str, seed_password: str) -> None:
+    """users 表为空时播种一个管理员账号(来自 config.seed_admin_user/seed_admin_password)。
+    仅当表为空才播种,绝不覆盖既有账号;**权限只认数据库 users.role,与此配置无关**。"""
     if store.count_users() > 0:
         return
-    if not login_user or not login_password:
-        print("[auth] users 表为空且无 login_user/login_password 配置,跳过管理员播种;请通过其它方式建账号。",
+    if not seed_user or not seed_password:
+        print("[auth] users 表为空且无 seed_admin_user/seed_admin_password 配置,跳过管理员播种;请通过其它方式建账号。",
               flush=True)
         return
-    create_user(store, login_user, login_password, display_name=login_user, role="admin")
-    warn = "默认弱口令" if login_password in ("change-me", "admin", "password", "123456") else "已配置口令"
-    print(f"[auth] 已播种管理员账号 '{login_user}'({warn})。正式环境请尽快修改口令。", flush=True)
+    create_user(store, seed_user, seed_password, display_name=seed_user, role="admin")
+    warn = "默认弱口令" if seed_password in ("change-me", "admin", "password", "123456") else "已配置口令"
+    print(f"[auth] 已播种管理员账号 '{seed_user}'({warn})。正式环境请尽快修改口令。", flush=True)

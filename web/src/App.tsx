@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { listSessions, createSession, listEvents, deleteSession, renameSession, pruneEmptySessions, sendPrompt, abortPrompt, getConfig, submitApproval, getAudit, getSessionMetrics, getObservability, getMe, type Session, type PEvent, type Citation, type AuditItem, type Metrics } from "./lib/api"
+import { parseBJ, beijingNow, bjParts } from "./lib/time"
 import { logout, getUser, setUser, isAuthed } from "./lib/auth"
 import KbManager from "./KbManager"
 import CompareView from "./CompareView"
@@ -20,9 +21,9 @@ function clamp(v: number, min: number, max: number) { return Math.min(max, Math.
 // 相对时间:<1分钟→刚刚, 然后 分钟/小时/天
 function timeAgo(iso?: string): string {
   if (!iso) return ""
-  const d = new Date(iso).getTime()
-  if (Number.isNaN(d)) return ""
-  const diff = Date.now() - d
+  const d = parseBJ(iso)
+  if (!d) return ""
+  const diff = Date.now() - d.getTime()
   if (diff < 60000) return "刚刚"
   const min = Math.floor(diff / 60000)
   if (min < 60) return min + "分钟前"
@@ -47,19 +48,21 @@ function fmtElapsed(ms?: number): string { if (ms == null) return ""; if (ms < 1
 // 照 dsh formatMessageClock:同日 HH:mm;本年度其它天 {m}月{d}日 HH:mm;跨年 {y}年{m}月{d}日 HH:mm
 function formatClock(iso?: string): string {
   if (!iso) return ""
-  const d = new Date(iso); if (isNaN(d.getTime())) return ""
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  const hhmm = pad(d.getHours()) + ":" + pad(d.getMinutes())
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  const d = parseBJ(iso); if (!d) return ""
+  // 用北京时间"墙钟"字段,而非浏览器本地 getters(否则显示随时区漂移)
+  const b = bjParts(d)
+  const n = bjParts(new Date())
+  const pad = (x: number) => String(x).padStart(2, "0")
+  const hhmm = pad(b.hh) + ":" + pad(b.mm)
+  const sameDay = b.y === n.y && b.m === n.m && b.day === n.day
   if (sameDay) return hhmm
-  const sameYear = d.getFullYear() === now.getFullYear()
-  return sameYear ? `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`
+  const sameYear = b.y === n.y
+  return sameYear ? `${b.m}月${b.day}日 ${hhmm}` : `${b.y}年${b.m}月${b.day}日 ${hhmm}`
 }
 interface Source { idx: number; chunk_id: string; title: string; content: string }
 // trace 面板:按 turn→step 分组下钻(L0 回合指标 / L1 每步明细 / L2 原始事件)
 interface TraceTool { tool: string; args?: any; ok?: boolean; error?: string; truncated?: boolean; query?: string; chunkCount?: number; sections?: string[]; chunks?: any[]; elapsed_ms?: number; timings?: Record<string, number> }
-interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number }
+interface TraceStep { step: number; reasoning: string; text: string; tools: TraceTool[]; elapsed_ms?: number; llmMs?: number; llmPt?: number; llmCt?: number; llmTtft?: number }
 interface TraceTurn { turn: number; trace_id?: number; question?: string; steps: TraceStep[]; compactions?: TraceCompaction[]; reason?: string; elapsed_ms?: number; ttft_ms?: number; tps?: number; promptTokens?: number; completionTokens?: number; flags: string[]; raw: { type: string; payload: any }[]; nRetrieval?: number; nSearchTools?: number; nEmpty?: number; failCount?: number; citeCount?: number; groundedCount?: number; badcase?: any }
 // 压缩可见性(M3):一次压缩 = 摘要 + 被压掉的原文(shadowed_seqs 指向 append-only events,原文可还原)
 interface TraceCompaction { summary: string; chars_saved?: number; reason?: string; shadowed: { seq: number; role: string; text: string }[] }
@@ -208,6 +211,7 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
   const [open, setOpen] = useState<number | null>(null)
   const [rawOpen, setRawOpen] = useState<number | null>(null)
   const [flash, setFlash] = useState<number | null>(null)   // 审计/告警"定位某轮"后高亮的 trace_id(轮级)
+  const [copied, setCopied] = useState<number | null>(null) // 刚复制过轨迹 JSON 的轮(局部"已复制"反馈)
   // 跳转:找到对应轮(trace_id = 该轮 turn_start 的 seq)→ 展开 → 滚动可见 → 闪烁 1.8s(focusTick 变化可重复触发)
   useEffect(() => {
     if (focusTraceId == null) return
@@ -228,6 +232,7 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
             <span className="tdot" style={{ background: statusColor(t.reason) }} />
             <span className="trace-turn-title">Turn #{i + 1}</span>
             {t.trace_id != null && <button className="trace-tid" title={"trace #" + t.trace_id + "(轮级,点击复制,排障报这串)"} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(t.trace_id)) }}>trace #{t.trace_id}</button>}
+            <button className="trace-copy" title="一键复制该轮完整轨迹(JSON:该轮全部原始事件)" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(t.raw, null, 2)); setCopied(t.trace_id ?? i); setTimeout(() => setCopied(null), 1200) }}>{copied === (t.trace_id ?? i) ? "✓ 已复制" : "复制轨迹JSON"}</button>
             <span className="trace-turn-meta">
               {t.steps.length}步 · {t.steps.reduce((a, s) => a + s.tools.length, 0)}工具
               {t.elapsed_ms != null ? " · " + fmtDur(t.elapsed_ms) : ""}
@@ -235,7 +240,16 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
               {t.tps != null ? " · " + fmtTps(t.tps) : ""}
               {t.promptTokens != null ? " · " + fmtCtx(t.promptTokens) + "→" + fmtCtx(t.completionTokens) : ""}
             </span>
-            {(() => { const tw = t.steps.reduce((a, s) => a + (s.tools || []).reduce((x, tl) => x + (tl.elapsed_ms || 0), 0), 0); const sw = t.steps.reduce((a, s) => a + (s.elapsed_ms || 0), 0); if (!sw && !tw) return null; return <span className="trace-timing" title="工具 = 各工具真实执行耗时;LLM ≈ 步总耗时 − 工具耗时">工具 {fmtDur(tw)}{sw > 0 ? " · LLM≈" + fmtDur(Math.max(0, sw - tw)) : ""}</span> })()}
+            {(() => {
+              const tw = t.steps.reduce((a, s) => a + (s.tools || []).reduce((x, tl) => x + (tl.elapsed_ms || 0), 0), 0)
+              const lw = t.steps.reduce((a, s) => a + (s.llmMs || 0), 0)   // llm_call 实测耗时之和(旧数据无此字段 = 0)
+              const sw = t.steps.reduce((a, s) => a + (s.elapsed_ms || 0), 0)
+              const hasLlm = t.steps.some((s) => s.llmMs != null)
+              if (!sw && !tw && !lw) return null
+              // 有 llm_call(新事件)就用实测 LLM 耗时;旧事件无 llm_call 回退"步总耗时−工具耗时"估算
+              const llmTxt = hasLlm ? "LLM " + fmtDur(lw) : (sw > 0 ? "LLM≈" + fmtDur(Math.max(0, sw - tw)) : "")
+              return <span className="trace-timing" title={hasLlm ? "工具 = 各工具真实执行耗时;LLM = 各步 llm_call 实测耗时之和" : "工具 = 各工具真实执行耗时;LLM ≈ 步总耗时 − 工具耗时(旧事件无 llm_call,估算)"}>工具 {fmtDur(tw)}{llmTxt ? " · " + llmTxt : ""}</span>
+            })()}
             {t.flags.length > 0 && <span className="trace-turn-flags">{t.flags.map((f) => <span key={f} className="trace-flag">{f}</span>)}</span>}
             <span className="trace-turn-chev">{open === i ? "▾" : "▸"}</span>
           </div>
@@ -243,6 +257,29 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
           <div className="trace-chips">{traceChips(t).map((ch, ci) => <span key={ci} className={"trace-chip " + ch.cls}>{ch.label}</span>)}</div>
           {open === i && (
             <div className="trace-turn-body">
+              {t.badcase && (() => {
+                const bc = t.badcase
+                const roleName = (r: string) => r === "user" ? "用户" : r === "assistant" ? "助手" : r === "tool" ? "工具结果" : r === "system" ? "系统" : (r || "?")
+                const conv: any[] = Array.isArray(bc.conversation) ? bc.conversation.slice(-40) : []
+                return (
+                  <div className="trace-badcase">
+                    <div className="trace-badcase-head">坏例快照<span className="trace-badcase-meta">{bc.model || ""}{bc.reason ? " · reason=" + bc.reason : ""}{bc.prompt_tokens != null ? " · " + bc.prompt_tokens + "→" + (bc.completion_tokens ?? 0) + " tok" : ""}{bc.run_ms != null ? " · " + fmtDur(bc.run_ms) : ""}</span></div>
+                    <div className="trace-badcase-sec">系统提示(模型看到的,折叠)</div>
+                    <details className="trace-collapse">
+                      <summary className="trace-step-line"><span className="trace-k">system</span>{shorten(bc.system || "", 80)}</summary>
+                      <pre className="trace-full">{bc.system || ""}</pre>
+                    </details>
+                    <div className="trace-badcase-sec">对话({conv.length} 条,role→content,封顶 40 条)</div>
+                    <div className="trace-badcase-conv">
+                      {conv.map((m, mi) => (
+                        <div key={mi} className="trace-badcase-msg"><b>{roleName(m.role)}</b><span className="trace-badcase-cnt">{shorten(String(m.content ?? ""), 300)}</span></div>
+                      ))}
+                    </div>
+                    <div className="trace-badcase-sec">回答(completion,可滚动)</div>
+                    <div className="trace-badcase-ans">{bc.completion || ""}</div>
+                  </div>
+                )
+              })()}
               {t.compactions && t.compactions.length > 0 && t.compactions.map((cp, ci) => (
                 <details key={"cp" + ci} className="trace-collapse trace-comp">
                   <summary className="trace-step-line trace-comp-head"><span className="trace-k">压缩</span>{cp.shadowed.length > 0 ? "压掉 " + cp.shadowed.length + " 条 · " : ""}{cp.chars_saved != null ? "省 " + cp.chars_saved + " 字 · " : ""}{cp.reason === "context-overflow" ? "溢出压缩" : cp.reason === "pressure" ? "压力压缩" : "压缩"}{cp.summary ? " · 摘要见展开" : ""}</summary>
@@ -254,7 +291,7 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
               ))}
               {t.steps.map((s, si) => (
                 <div key={si} className="trace-step">
-                  <div className="trace-step-head">Step {s.step}{s.elapsed_ms != null ? " · " + fmtDur(s.elapsed_ms) : ""}</div>
+                  <div className="trace-step-head">Step {s.step}{s.elapsed_ms != null ? " · " + fmtDur(s.elapsed_ms) : ""}{s.llmMs != null ? " · LLM " + fmtDur(s.llmMs) : ""}{s.llmPt != null ? " · " + fmtCtx(s.llmPt) + "→" + fmtCtx(s.llmCt) : ""}</div>
                   {s.reasoning.trim() !== "" && (
                     <details className="trace-collapse trace-reason-detail">
                       <summary className="trace-step-line trace-reason"><span className="trace-k">思考</span>{shorten(s.reasoning)}</summary>
@@ -280,12 +317,25 @@ function TraceView({ turns, focusTraceId, focusTick }: { turns: TraceTurn[]; foc
                         <div className="trace-tool-chunks">
                           {tl.chunks.map((c: any, k: number) => {
                             const sc = c.score
-                            const low = typeof sc === "number" && sc < 0.3
+                            // D82:RRF 融合分是 1/(k+rank) 量级(约 0.01~0.03),旧的 "分数<0.3 = 低分"
+                            // 判据完全失效(所有块都会被判低分变灰)。改为:有 rank 时按排名判低,
+                            // 只有旧事件(无 rank)才退回分数判据。
+                            const frk = c.fused_rank
+                            const low = frk != null ? Number(frk) > 3 : (typeof sc === "number" && sc < 0.3)
+                            // D82:阶梯优先显示 rank —— RRF 的输入就是排名,#n 比 RRF 分(0.0164)可解释得多;
+                            // 原始分不丢,降级到 title 悬停显示。旧 events 无 rank 字段 → 退回显示分数。
+                            const cell = (r: any, s: any) =>
+                              r != null ? "#" + r : (s == null ? "—" : Number(s).toFixed(2))
+                            const scf = (v: any) => (v == null ? "—" : Number(v).toFixed(3))
+                            const hasLadder = [c.dense_rank, c.bm25_rank, c.fused_rank, c.rerank_rank,
+                                               c.dense_score, c.bm25_score, c.fused_score, c.rerank_score]
+                              .some((v) => v != null)
                             return (
                               <div key={k} className={"trace-chunk" + (low ? " low" : "")}>
-                                <span className={"trace-chunk-score" + (low ? " low" : "")}>{typeof sc === "number" ? sc.toFixed(2) : "?"}</span>
+                                <span className={"trace-chunk-score" + (low ? " low" : "")}>{frk != null ? "#" + frk : (typeof sc === "number" ? sc.toFixed(2) : "?")}</span>
                                 <span className="trace-chunk-doc">{((c.product_name || c.doc_id) || "") + (c.section ? " §" + c.section : "")}</span>
                                 <span className="trace-chunk-snip">{String(c.content || "").slice(0, 80)}</span>
+                                {hasLadder && <span className="trace-chunk-ladder" title={`名次阶梯(D82):d=稠密 b=BM25 f=融合 r=重排;${"\n"}#n = 该路第 n 名;— = 该路未命中/未跑${"\n"}原始分 d:${scf(c.dense_score)} b:${scf(c.bm25_score)} f:${scf(c.fused_score)} r:${scf(c.rerank_score)}`}>d:{cell(c.dense_rank, c.dense_score)} b:{cell(c.bm25_rank, c.bm25_score)} f:{cell(c.fused_rank, c.fused_score)} r:{cell(c.rerank_rank, c.rerank_score)}</span>}
                               </div>
                             )
                           })}
@@ -332,7 +382,7 @@ function Center({ messages, input, setInput, busy, send, onStop, onCite, activeC
     }
     if (m.role === "note") return (<div className="ctx-note"><span className="ctx-note-line">——————————</span><span className="ctx-note-text">{m.text}</span><span className="ctx-note-line">——————————</span></div>)
     // answer
-    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.sources, (idx) => onCite(m.id, idx), activeCite?.msgId === m.id ? activeCite.idx : null, m.id)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}{m.turnTrace != null ? <span className="msg-trace" title={"本轮 trace(轮级) #" + m.turnTrace + " · 点击复制,报问题带这串"}><CopyBtn text={String(m.turnTrace)} />trace:#{m.turnTrace}</span> : null}</div></div>)
+    return (<div className="ans-wrap"><div className="message-text">{renderAnswer(m.blocks, m.sources, (idx) => onCite(m.id, idx), activeCite?.msgId === m.id ? activeCite.idx : null, m.id)}</div><div className="msg-chrome"><CopyBtn text={(m.blocks || []).map((b) => b.t === "ul" ? (b.items || []).join("\n") : b.text || "").join("\n")} />{formatClock(m.time)}{(m.runMs != null || m.ttftMs != null || m.tps != null) ? (<span className="msg-metrics">{(m.runMs != null ? " · 用时 " + fmtD(m.runMs) : "") + (m.ttftMs != null ? " · 首token " + fmtD(m.ttftMs) : "") + (m.tps != null ? " · " + fmtT(m.tps) : "")}</span>) : ""}{sessionId != null ? <span className="msg-trace" title={"会话 trace_id=" + sessionId + (m.turnTrace != null ? " · 轮#" + m.turnTrace : "") + " · 点击复制,报问题带这串"}><CopyBtn text={m.turnTrace != null ? sessionId + "#" + m.turnTrace : sessionId} />trace:{sessionId.slice(0, 8)}{m.turnTrace != null ? "#" + m.turnTrace : ""}</span> : null}</div></div>)
   }
   return (<div className="center">
     <div className="c-head"><div className="c-title">{title}</div><div className="tabs">
@@ -487,6 +537,7 @@ export default function App() {
       else if (t === "user_message") { if (e.seq != null) seqText.set(e.seq, { role: "user", text: p.text || "" }); if (turn && turn.question == null) turn.question = p.text || "" }
       else if (t === "assistant_message") { const cs = p.citations || []; if (turn) { turn.citeCount = cs.length; turn.groundedCount = cs.filter((c: any) => retrieved?.has(c.chunk_id)).length } if (e.seq != null) seqText.set(e.seq, { role: "assistant", text: ((p.blocks || []) as any[]).map((b: any) => b.t === "ul" || b.t === "ol" ? (b.items || []).join("；") : (b.text || "")).join(" ").trim() }) }
       else if (t === "step_end") { if (tstep) tstep.elapsed_ms = p.elapsed_ms }
+      else if (t === "llm_call") { if (tstep) { tstep.llmMs = p.run_ms; tstep.llmPt = p.prompt_tokens; tstep.llmCt = p.completion_tokens; tstep.llmTtft = p.ttft_ms } }
       else if (t === "usage") { if (turn) { turn.promptTokens = p.prompt_tokens; turn.completionTokens = p.completion_tokens } }
       else if (t === "turn_end") { if (turn) { turn.reason = p.reason; turn.elapsed_ms = p.elapsed_ms; turn.ttft_ms = p.ttft_ms; turn.tps = p.tokens_per_second } }
       else if (t === "compaction_summary") { compInfo = { summary: p.summary || "", shadowed: (p.shadowed_seqs || []) as number[], reason: p.reason } }
@@ -494,6 +545,7 @@ export default function App() {
       else if (t === "compaction_start") { if (turn && !turn.flags.includes("压缩")) turn.flags.push("压缩") }
       else if (t === "llm_retry") { if (turn) { const c = turn.flags.findIndex((f) => f.startsWith("重试")); if (c >= 0) { const m = turn.flags[c].match(/\d+/); turn.flags[c] = "重试×" + (m ? parseInt(m[0], 10) + 1 : 2) } else turn.flags.push("重试×1") } }
       else if (t === "guard_triggered") { if (turn && !turn.flags.includes("护栏")) turn.flags.push("护栏") }
+      else if (t === "badcase_snapshot") { if (turn) turn.badcase = p }
       if (turn) turn.raw.push({ type: t, payload: p })
     })
     setMessages(msgs); setActiveCite(null)
@@ -526,7 +578,34 @@ export default function App() {
   useEffect(() => { getConfig().then((c) => setCfgWindow(c.context_window)).catch(() => {}) }, []) // eslint-disable-line  # 挂载时取后端当前配置的上下文窗口
   // 新建会话:清掉其它"没发过消息"的占位会话(keep=新建的这个),保证连点"新建"只留一个
   const newSession = async () => { try { const s = await createSession(currentUid()); await pruneEmptySessions(s.id); const all = await listSessions(); setSessions(all); setActiveId(s.id); activeIdRef.current = s.id; idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; setLoadErr("") } catch { setLoadErr("创建会话失败,请稍后重试") } }
-  const deleteSess = async (id: string) => { try { await deleteSession(id); const all = await listSessions(); setSessions(all); if (activeIdRef.current === id) { idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []; if (all.length) { activeIdRef.current = all[0].id; setActiveId(all[0].id); await loadEvents(all[0].id) } else { const n = await createSession(currentUid()); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n]) } } } catch { setLoadErr("删除会话失败,请稍后重试") } }
+  const deleteSess = async (id: string) => {
+    const removed = sessions.find((x) => x.id === id)
+    const wasActive = activeIdRef.current === id
+    // 乐观更新:侧栏先移除该会话;若是当前会话,立即清空并切到列表首项,不等服务器
+    const rest = sessions.filter((x) => x.id !== id)
+    setSessions(rest)
+    if (wasActive) {
+      idRef.current = 0; setMessages([]); setActiveCite(null); setCtxUsage(null); setTrace([]); retrievalRef.current = []
+      if (rest.length) { activeIdRef.current = rest[0].id; setActiveId(rest[0].id); loadEvents(rest[0].id).catch(() => {}) }
+      else { activeIdRef.current = null; setActiveId(null) }
+    }
+    const rollback = () => {
+      if (!removed) return
+      setSessions((prev) => (prev.some((x) => x.id === id) ? prev : [removed, ...prev]))
+      if (wasActive) { activeIdRef.current = id; setActiveId(id) }
+    }
+    try {
+      await deleteSession(id)
+      const all = await listSessions()
+      setSessions(all)
+      if (wasActive && activeIdRef.current === null) {
+        const n = await createSession(currentUid()); activeIdRef.current = n.id; setActiveId(n.id); setSessions([n])
+      }
+    } catch {
+      rollback()
+      setLoadErr("删除会话失败,请稍后重试")
+    }
+  }
   const renameSess = async (id: string, title: string) => { try { await renameSession(id, title); setSessions(await listSessions()) } catch { setLoadErr("重命名失败,请稍后重试") } }
   const send = async () => {
     const text = input.trim(); if (!text || busy) return
@@ -535,9 +614,9 @@ export default function App() {
     const ctl = new AbortController()
     abortRef.current = ctl
     setInput(""); setBusy(true)
-    setMessages((m) => [...m, { id: mid(), role: "user", text, time: new Date().toISOString() }])
+    setMessages((m) => [...m, { id: mid(), role: "user", text, time: beijingNow() }])
     // 发送即把当前会话乐观置顶,并把 last_ts 置为当前(时间也即时更新,无需等回答结束)
-    setSessions((s) => { const act = s.find((x) => x.id === sid); if (!act) return s; const now = new Date().toISOString(); return [{ ...act, last_ts: now }, ...s.filter((x) => x.id !== sid)] })
+    setSessions((s) => { const act = s.find((x) => x.id === sid); if (!act) return s; const now = beijingNow(); return [{ ...act, last_ts: now }, ...s.filter((x) => x.id !== sid)] })
     // 行模型:openThink=当前"思考"行;openText=当前流式的 text 行(叙述或最终回答);answerId=最终回答行
     let openThink: string | null = null
     let openText: string | null = null
@@ -551,25 +630,28 @@ export default function App() {
     const traceEvent = (e: PEvent) => {
       const t = e.type
       const touch = () => { if (lt.turn) setTrace((prev) => [...prev]) }
+      if (lt.turn) lt.turn.raw.push({ type: t, payload: e.payload || {} })   // 与 loadEvents 回放口径一致,保留该轮原始事件供"复制轨迹JSON"
       // 与 loadEvents 回放构建同口径:实时也维护 trace_id 与诊断计数,否则轨迹流式期间徽标/轮号会失真
-      if (t === "turn_start") { if (!lt.turn) { lt.turn = { turn: 1, trace_id: e.seq, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; lt.retrieved = new Set(); setTrace((prev) => [...prev, lt.turn as TraceTurn]) } }
+      if (t === "turn_start") { if (!lt.turn) { lt.turn = { turn: 1, trace_id: e.seq, steps: [], flags: [], raw: [], nRetrieval: 0, nEmpty: 0, failCount: 0, citeCount: 0, groundedCount: 0 }; lt.retrieved = new Set(); setTrace((prev) => [...prev, lt.turn as TraceTurn]) ; lt.turn.raw.push({ type: t, payload: e.payload || {} }) } }
       else if (t === "user_message") { if (lt.turn && lt.turn.question == null) lt.turn.question = e.payload?.text || ""; touch() }
       else if (t === "step_start") { if (lt.turn) { lt.step = { step: e.payload?.step ?? lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step); touch() } }
       else if (t === "assistant_chunk") { const k = e.payload?.kind, d = e.payload?.delta || ""; if (lt.step && (k === "reasoning" || k === "text")) { if (k === "reasoning") lt.step.reasoning += d; else lt.step.text += d } }
       else if (t === "tool_call") { if (lt.turn) { if (!lt.step) { lt.step = { step: lt.turn.steps.length + 1, reasoning: "", text: "", tools: [] }; lt.turn.steps.push(lt.step) } lt.tool = { tool: e.payload?.tool, args: e.payload?.args }; lt.step.tools.push(lt.tool); if (e.payload?.tool === "search_knowledge" || e.payload?.tool === "session_history_search") lt.turn.nSearchTools = (lt.turn.nSearchTools || 0) + 1; touch() } }
       else if (t === "tool_result") { if (lt.tool) { lt.tool.ok = e.payload?.ok !== false; lt.tool.error = e.payload?.error; lt.tool.elapsed_ms = e.payload?.elapsed_ms; if (lt.turn && lt.tool.ok === false) lt.turn.failCount = (lt.turn.failCount || 0) + 1; touch() } }
-      else if (t === "retrieval") { if (lt.tool) { lt.tool.query = e.payload?.query; lt.tool.timings = e.payload?.timings || undefined; const cs = e.payload?.chunks || []; lt.tool.chunkCount = cs.length } if (lt.turn) { lt.turn.nRetrieval = (lt.turn.nRetrieval || 0) + 1; const cs = e.payload?.chunks || []; if (!cs.length) lt.turn.nEmpty = (lt.turn.nEmpty || 0) + 1; cs.forEach((c: any) => lt.retrieved?.add(c.chunk_id)); touch() } }
+      else if (t === "retrieval") { if (lt.tool) { lt.tool.query = e.payload?.query; lt.tool.timings = e.payload?.timings || undefined; const cs = e.payload?.chunks || []; lt.tool.chunkCount = cs.length; lt.tool.chunks = cs; lt.tool.sections = cs.slice(0, 6).map((c: any) => ((c.product_name || c.doc_id) || "") + " · " + (c.section || c.title || "")) } if (lt.turn) { lt.turn.nRetrieval = (lt.turn.nRetrieval || 0) + 1; const cs = e.payload?.chunks || []; if (!cs.length) lt.turn.nEmpty = (lt.turn.nEmpty || 0) + 1; cs.forEach((c: any) => lt.retrieved?.add(c.chunk_id)); touch() } }
       else if (t === "assistant_message") { if (lt.turn) { const cs = e.payload?.citations || []; lt.turn.citeCount = cs.length; lt.turn.groundedCount = cs.filter((c: any) => lt.retrieved?.has(c.chunk_id)).length } }
       else if (t === "step_end") { if (lt.step) { lt.step.elapsed_ms = e.payload?.elapsed_ms; touch() } }
+      else if (t === "llm_call") { if (lt.step) { lt.step.llmMs = e.payload?.run_ms; lt.step.llmPt = e.payload?.prompt_tokens; lt.step.llmCt = e.payload?.completion_tokens; lt.step.llmTtft = e.payload?.ttft_ms; touch() } }
       else if (t === "usage") { if (lt.turn) { lt.turn.promptTokens = e.payload?.prompt_tokens; lt.turn.completionTokens = e.payload?.completion_tokens } }
       else if (t === "turn_end") { if (lt.turn) { const p = e.payload || {}; lt.turn.reason = p.reason; lt.turn.elapsed_ms = p.elapsed_ms; lt.turn.ttft_ms = p.ttft_ms; lt.turn.tps = p.tokens_per_second; touch() } }
+      else if (t === "badcase_snapshot") { if (lt.turn) { lt.turn.badcase = e.payload || {}; touch() } }
       else if (t === "compaction_summary") { if (lt.turn) { liveComp = { summary: e.payload?.summary || "", reason: e.payload?.reason } } }
       else if (t === "compaction_end") { if (lt.turn && liveComp) { if (!lt.turn.compactions) lt.turn.compactions = []; lt.turn.compactions.push({ summary: liveComp.summary, chars_saved: e.payload?.chars_saved, reason: liveComp.reason || e.payload?.reason, shadowed: [] }); } liveComp = null; if (lt.turn && !lt.turn.flags.includes("压缩")) { lt.turn.flags.push("压缩"); touch() } }
       else if (t === "compaction_start") { if (lt.turn && !lt.turn.flags.includes("压缩")) { lt.turn.flags.push("压缩"); touch() } }
       else if (t === "guard_triggered") { if (lt.turn && !lt.turn.flags.includes("护栏")) { lt.turn.flags.push("护栏"); touch() } }
     }
     openThink = mid()
-    setMessages((m) => [...m, { id: openThink as string, role: "think", reasoning: "", streaming: true, time: new Date().toISOString() }])
+    setMessages((m) => [...m, { id: openThink as string, role: "think", reasoning: "", streaming: true, time: beijingNow() }])
     const closeThink = () => {
       if (!openThink) return
       const id = openThink; openThink = null
@@ -613,7 +695,7 @@ export default function App() {
         else if (e.type === "usage") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)) }
         else if (e.type === "turn_end") { const p = e.payload || {}; if (answerId) setMessages((mm) => mm.map((x) => x.id === answerId ? { ...x, runMs: p.elapsed_ms ?? x.runMs, ttftMs: p.ttft_ms ?? x.ttftMs, tps: p.tokens_per_second ?? x.tps } : x)); setBusy(false); listSessions().then(setSessions).catch(() => {}); }
       }, model, ctl.signal)
-    } catch { } finally { setBusy(false); if (abortTimerRef.current) { window.clearTimeout(abortTimerRef.current); abortTimerRef.current = null } abortRef.current = null; try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (lt.turn && !lt.turn.reason) { lt.turn.reason = "interrupted"; setTrace((prev) => [...prev]) } if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: new Date().toISOString(), turnTrace: lt.turn?.trace_id }]) } } }
+    } catch { } finally { setBusy(false); if (abortTimerRef.current) { window.clearTimeout(abortTimerRef.current); abortTimerRef.current = null } abortRef.current = null; try { setSessions(await listSessions()) } catch { } if (!abandoned) { if (lt.turn && !lt.turn.reason) { lt.turn.reason = "interrupted"; setTrace((prev) => [...prev]) } if (openThink) closeThink(); if (!answerId) { const aId = mid(); answerId = aId; setMessages((m) => [...m, { id: aId, role: "answer", blocks: [{ t: "p", text: "回答生成中断,请重试。" }], citations: [], time: beijingNow(), turnTrace: lt.turn?.trace_id }]) } } }
   }
   // 停止:先让后端置中止位(它会收尾并推 turn_end),再挂一个兜底定时器——
   // 万一后端卡在写工具审批/长调用 5s 内没收尾,直接断流,保证 UI 不永久停在 busy。

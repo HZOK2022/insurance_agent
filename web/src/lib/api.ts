@@ -62,6 +62,9 @@ export const submitApproval = (sid: string, d: ApprovalDecisionIn) =>
 export interface AuditItem { session_id: string; title: string; user_id: string; ts: string; trace_id?: number; question: string; answer: any[]; citations: any[]; model: string | null; prompt_tokens: number; completion_tokens: number; cost: number | null; elapsed_ms: number | null; reason: string | null; retrievals: number; approvals: number; retries: number; error: boolean }
 export interface Metrics { turns: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost: number | null; errors: number; retries: number; approvals: number; avg_ttft_ms: number; avg_tps: number }
 export const getAudit = (sid: string) => json<{ count: number; items: AuditItem[] }>('/api/audit?session_id=' + encodeURIComponent(sid))
+// trace # 直达:轮级 trace_id(= 该轮 turn_start 的全局 seq)→ 会话 + 该轮事件切片(排障输入 trace 号直接定位)
+export interface TraceLookupResp { ok: boolean; error?: string; session_id?: string; trace_id?: number; events?: PEvent[] }
+export const getTraceLookup = (traceId: number) => json<TraceLookupResp>('/api/traces/' + traceId)
 export const getSessionMetrics = (sid: string) => json<Metrics>('/api/observability/' + encodeURIComponent(sid))
 export const getObservability = () => json<{ totals: Metrics & { sessions: number }; per_session: any[] }>('/api/observability')
 
@@ -146,11 +149,16 @@ export const compactMemory = (target: string, sessionId?: string) =>
 // ---- 知识库管理 API (admin-only) ----
 export interface KbDocument {
   doc_id: string; doc_type: string | null; product_category: string | null;
-  chunk_count: number; last_updated: string | null
+  chunk_count: number; last_updated: string | null; is_valid: boolean;
+  title?: string; product_name?: string; version?: string; source?: string
 }
 export interface KbDocumentListResp { total: number; page: number; page_size: number; items: KbDocument[] }
 export const listKbDocuments = (page: number = 1, pageSize: number = 50) =>
   json<KbDocumentListResp>('/api/kb/documents?page=' + page + '&page_size=' + pageSize)
+
+// 产品下拉框选项:按已上传文档聚合(去重、非空)
+export interface KbProductsResp { products: string[] }
+export const listKbProducts = () => json<KbProductsResp>('/api/kb/products')
 
 export interface KbChunk {
   chunk_id: string; doc_id: string; version: string; section: string | null;
@@ -165,14 +173,19 @@ export interface KbStructureResp { doc_id: string; nodes: KbStructNode[] }
 export const getKbStructure = (docId: string) =>
   json<KbStructureResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/structure')
 
-export interface KbIngestTextReq { text: string; product_name: string; doc_id?: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string; text_splitter?: string; chunk_size?: number; overlap?: number; chunk_max_tokens?: number; force?: boolean }
-export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string; conflict?: boolean }
+export interface KbIngestTextReq { text: string; product_name: string; version?: string; doc_type?: string; product_category?: string; title?: string; source?: string; text_splitter?: string; chunk_size?: number; overlap?: number; chunk_max_tokens?: number }
+export interface KbIngestResp { ok: boolean; doc_id: string; chunks_written: number; chunks_embedded: number; message: string; duplicate?: boolean }
 export const ingestKbText = (body: KbIngestTextReq) =>
   json<KbIngestResp>('/api/kb/ingest/text', { method: 'POST', body: JSON.stringify(body) })
 
 export interface KbDeleteResp { ok: boolean; doc_id: string; chunks_deleted: number; points_deleted: number; message: string }
 export const deleteKbDocument = (docId: string) =>
   json<KbDeleteResp>('/api/kb/documents/' + encodeURIComponent(docId), { method: 'DELETE' })
+
+export interface SetDocValidResp { ok: boolean; doc_id: string; is_valid: boolean; message: string }
+export const setKbDocumentValid = (docId: string, isValid: boolean) =>
+  json<SetDocValidResp>('/api/kb/documents/' + encodeURIComponent(docId) + '/valid',
+    { method: 'POST', body: JSON.stringify({ is_valid: isValid }) })
 
 export interface KbReindexResp { ok: boolean; total_chunks: number; embedded: number; message: string }
 export const reindexKb = () =>
@@ -253,12 +266,12 @@ export interface UploadChunkNode { section: string; title: string; content: stri
 export interface UploadPreviewResp {
   ok: boolean; err: string; doc_type: string; parser: string; text_splitter: string;
   chunk_count: number; chunk_size: number; overlap: number;
-  outline: KbStructNode[]; chunks: UploadChunkNode[]
+  outline: KbStructNode[]; chunks: UploadChunkNode[]; content_fp: string
 }
 export interface IngestCommitReq {
-  product_name: string; doc_id?: string; title?: string; version?: string; product_category?: string;
+  product_name: string; title?: string; version?: string; product_category?: string;
   doc_type?: string; source?: string; parser?: string; text_splitter?: string;
-  outline: KbStructNode[]; chunks: UploadChunkNode[]; force?: boolean
+  outline: KbStructNode[]; chunks: UploadChunkNode[]; content_fp: string
 }
 export const previewKbUpload = (fd: FormData) => formPost<UploadPreviewResp>('/api/kb/ingest/preview', fd)
 // commit = SSE:写库+嵌入进度逐帧

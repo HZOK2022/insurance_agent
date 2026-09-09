@@ -91,7 +91,11 @@ def _normalize(x: float, lo: float, hi: float) -> float:
 
 def fuse_and_pick(dense: dict[str, float], bm25: dict[str, float], weight: float,
                   top_k: int) -> list[tuple[str, float]]:
-    """把两路分数 min-max 归一后按 weight 加权融合,返回 top_k (chunk_id, combined_score)。"""
+    """把两路分数 min-max 归一后按 weight 加权融合,返回 top_k (chunk_id, combined_score)。
+
+    注:min-max 融合对"单一 modality 高分"不 fix——bm25 高分块可能压掉 dense 排名靠前的好块。
+    RRF 版本见 rrf_fuse_and_pick(按排名贡献,不依赖分数分布)。
+    """
     ids = set(dense) | set(bm25)
     if not ids:
         return []
@@ -105,3 +109,36 @@ def fuse_and_pick(dense: dict[str, float], bm25: dict[str, float], weight: float
         pairs.append((cid, (1.0 - w) * dn + w * bn))
     pairs.sort(key=lambda x: x[1], reverse=True)
     return pairs[:top_k]
+
+
+def rrf_fuse_and_pick(dense: dict[str, float], bm25: dict[str, float], k: int = 60,
+                      top_k: int = 20) -> list[tuple[str, float]]:
+    """Reciprocal Rank Fusion:把两路排名按 1/(k+rank) 累加成 RRF 分,返回 top_k。
+
+    与 fuse_and_pick 的区别:按"排名"而非"分数分布"融合。因此:
+    - 不依赖 min-max 归一(避开单路高分压制另一个 modality 的问题);
+    - 双路都命中的块 RRF 分更高(1/(k+dense_rank) + 1/(k+bm25_rank));
+    - 仅单路命中但排名靠前的块,也能保住自己的排名贡献(防"dense-only 好块被挤出")。
+    k: 经典常量(默认 60,文档惯例),仅影响融合的平滑,不影响排序单调性。
+    """
+    ids = set(dense) | set(bm25)
+    if not ids:
+        return []
+
+    def _ranked(d: dict[str, float]) -> dict[str, int]:
+        # 按分降序;稳定的无理并列我们用枚举兜底,RRF 只关心位置
+        order = sorted(d.items(), key=lambda x: x[1], reverse=True)
+        return {cid: i + 1 for i, (cid, _v) in enumerate(order)}
+
+    dr = _ranked(dense)
+    br = _ranked(bm25)
+    out: list[tuple[str, float]] = []
+    for cid in ids:
+        s = 0.0
+        if cid in dr:
+            s += 1.0 / (k + dr[cid])
+        if cid in br:
+            s += 1.0 / (k + br[cid])
+        out.append((cid, round(s, 6)))
+    out.sort(key=lambda x: x[1], reverse=True)
+    return out[:top_k]

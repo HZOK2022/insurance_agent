@@ -9,14 +9,18 @@ from __future__ import annotations
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import app.db as dbmod
+from app.util.time import beijing_now
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    """兼容旧调用:统一返回北京时间 YYYY-MM-DD HH:mm:ss。"""
+    return beijing_now()
 
 
 # 记忆优先级(高→低):redline 永不压;归档从最低档(pending)开始
@@ -91,6 +95,8 @@ class MemoryStore:
                 "UPDATE memory_entries SET content=?, confidence=?, updated_at=? WHERE id=?",
                 (content, confidence, now, row["id"]))
             self._conn.commit()
+            logger.info("【记忆】更新成功:用户 %s(桶=%s,类型=%s,键=%s)", user_id, bucket, type_, key,
+                        extra={"op": "memory.save", "user": user_id, "bucket": bucket})
             return {"entry_id": row["id"], "is_new": False, "old_text": old, "key": key, "type": type_, "bucket": bucket}
         eid = uuid.uuid4().hex[:12]
         self._conn.execute(
@@ -99,6 +105,8 @@ class MemoryStore:
             (eid, user_id, bucket, sc, type_, key, content, "active", confidence,
              source_session_id, source_event_seq, now, now))
         self._conn.commit()
+        logger.info("【记忆】新增成功:用户 %s(桶=%s,类型=%s,键=%s)", user_id, bucket, type_, key,
+                    extra={"op": "memory.save", "user": user_id, "bucket": bucket})
         return {"entry_id": eid, "is_new": True, "old_text": None, "key": key, "type": type_, "bucket": bucket}
 
     # ---- 检索 ----
@@ -140,6 +148,8 @@ class MemoryStore:
             params.append(bucket)
         cur = self._conn.execute(q, params)
         self._conn.commit()
+        logger.info("【记忆】遗忘:用户 %s 的「%s」已归档(成功=%s,原因=%s)", user_id, key, cur.rowcount > 0, (reason or "")[:40],
+                    extra={"op": "memory.forget", "user": user_id})
         return cur.rowcount > 0
 
     # ---- 读(bucket 维度)----
@@ -204,6 +214,11 @@ class MemoryStore:
                 if trimmed:
                     self._conn.execute("UPDATE memory_entries SET content=? WHERE id=?", (trimmed, e["id"]))
                     self._conn.commit()
+        if archived:
+            logger.info("【记忆】桶压缩:用户 %s 的 %s 桶归档 %d 条(目标 %d 字符)",
+                        user_id, bucket, len(archived), target_chars,
+                        extra={"op": "memory.compact_bucket", "user": user_id, "bucket": bucket,
+                               "archived": len(archived)})
         return archived
 
     def bucket_frame(self, user_id: str, bucket: str, session_id: str | None = None,
@@ -238,6 +253,9 @@ class MemoryStore:
             self._conn.commit()
             total -= len(r["content"])
             archived.append({"id": r["id"], "key": r["key"], "type": r["type"]})
+        if archived:
+            logger.info("【记忆】压实完成:用户 %s 归档 %d 条(目标 %d 字符)", user_id, len(archived), target_chars,
+                        extra={"op": "memory.consolidate", "user": user_id, "archived": len(archived)})
         return archived
 
     # ---- 常驻注入(红线/偏好/口径,按 token 预算取高优)----

@@ -3,7 +3,7 @@
 // + /api/observability(按会话明细) + /api/metrics/timeseries(时间序列走势)
 // 渲染成一张可看的监控页。从用户菜单「观测」进入。
 import { useEffect, useState } from "react"
-import { getMetrics, getObservability, getTimeseries, getAnomalies, type GlobalMetrics, type TimeseriesBucket, type AnomalyResp } from "./lib/api"
+import { getMetrics, getObservability, getTimeseries, getAnomalies, getTraceLookup, type GlobalMetrics, type TimeseriesBucket, type AnomalyResp } from "./lib/api"
 
 const fmt = (n?: number | null): string => (n == null ? "—" : String(n))
 const fmtTok = (n?: number | null): string => {
@@ -84,6 +84,19 @@ export default function MonitorView({ onOpenSession, onOpenSessionTrace, onBack 
   const [anom, setAnom] = useState<AnomalyResp | null>(null)
   const [err, setErr] = useState("")
   const [tick, setTick] = useState(0)
+  const [traceQ, setTraceQ] = useState("")
+  const [traceErr, setTraceErr] = useState("")
+  const copyId = (id: string) => { navigator.clipboard.writeText(id) }
+  const jumpTrace = async () => {
+    const v = traceQ.trim().replace(/^#/, "")
+    setTraceErr("")
+    if (!/^\d+$/.test(v)) { setTraceErr("请输入数字 trace #(该轮 turn_start 的 seq)"); return }
+    try {
+      const r = await getTraceLookup(parseInt(v, 10))
+      if (!r.ok || !r.session_id || r.trace_id == null) { setTraceErr("trace #" + v + " 不存在(或不在任何会话内)"); return }
+      if (onOpenSessionTrace) onOpenSessionTrace(r.session_id, r.trace_id); else onOpenSession(r.session_id)
+    } catch (e: any) { setTraceErr("直达失败: " + (e?.message || e)) }
+  }
 
   useEffect(() => {
     let alive = true
@@ -122,6 +135,11 @@ export default function MonitorView({ onOpenSession, onOpenSessionTrace, onBack 
         <button className="mon-back" onClick={onBack}>← 返回对话</button>
         <span className="mon-title">观测总览</span>
         <span className="mon-sub">{m ? `共 ${fmt(m.turns.total)} 轮 · ${fmt(rows.length)} 会话` : "加载中…"}</span>
+        <span className="mon-trace-jump">
+          <input className="mon-trace-in" placeholder="trace # 直达(轮级)" aria-label="trace 直达" value={traceQ} onChange={(e) => setTraceQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); jumpTrace() } }} />
+          <button className="audit-btn" onClick={jumpTrace} title="按 trace # 直达该轮">直达</button>
+        </span>
+        {traceErr && <span className="mon-trace-err">{traceErr}</span>}
         <button className="audit-btn" onClick={() => setTick((x) => x + 1)}>刷新</button>
       </div>
       {err && <div className="hint">{err}</div>}
@@ -211,10 +229,10 @@ export default function MonitorView({ onOpenSession, onOpenSessionTrace, onBack 
             <>
               <div className="mon-sec-head">坏例所在会话(点进会话轨迹;轮级在轨迹内看 trace #)</div>
               <div className="mon-tags">
-                {(m.samples.error_turns || []).map((id) => <button key={"e" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>错误 · {id.slice(0, 8)}</button>)}
-                {(m.samples.tool_failures || []).map((id) => <button key={"t" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>工具失败 · {id.slice(0, 8)}</button>)}
-                {(m.samples.degradations || []).map((id) => <button key={"d" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>降级 · {id.slice(0, 8)}</button>)}
-                {(m.samples.retrieval_low_conf || []).map((id) => <button key={"r" + id} className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话(窗口)id " + id}>低置信 · {id.slice(0, 8)}</button>)}
+                {(m.samples.error_turns || []).map((id) => <span key={"e" + id} className="mon-trace-wrap"><button className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话 trace_id " + id}>错误 · {id.slice(0, 8)}</button><button className="mon-copy" onClick={(e) => { e.stopPropagation(); copyId(id) }} title="复制 trace_id">⧉</button></span>)}
+                {(m.samples.tool_failures || []).map((id) => <span key={"t" + id} className="mon-trace-wrap"><button className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话 trace_id " + id}>工具失败 · {id.slice(0, 8)}</button><button className="mon-copy" onClick={(e) => { e.stopPropagation(); copyId(id) }} title="复制 trace_id">⧉</button></span>)}
+                {(m.samples.degradations || []).map((id) => <span key={"d" + id} className="mon-trace-wrap"><button className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话 trace_id " + id}>降级 · {id.slice(0, 8)}</button><button className="mon-copy" onClick={(e) => { e.stopPropagation(); copyId(id) }} title="复制 trace_id">⧉</button></span>)}
+                {(m.samples.retrieval_low_conf || []).map((id) => <span key={"r" + id} className="mon-trace-wrap"><button className="kb-tag mon-trace" onClick={() => onOpenSession(id)} title={"会话 trace_id " + id}>低置信 · {id.slice(0, 8)}</button><button className="mon-copy" onClick={(e) => { e.stopPropagation(); copyId(id) }} title="复制 trace_id">⧉</button></span>)}
               </div>
             </>
           ) : null}

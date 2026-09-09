@@ -30,6 +30,7 @@ PROJ = os.path.dirname(HERE)
 sys.path.insert(0, PROJ)
 
 from app.observability.metrics import classify_retrieval_failure  # noqa: E402
+from app.businesses.insurance import prompt_version  # noqa: E402
 
 # 角标 [n]
 CITE_RE = re.compile(r"\[(\d+)\]")
@@ -45,13 +46,17 @@ def load_report(path: str) -> list[dict]:
 
 
 def _kstore():
-    """知识库只读句柄(走 app.db 方言:MySQL/SQLite 自适应)。"""
+    """知识库 + 费率库只读句柄(走 app.db 方言:MySQL/SQLite 自适应)。
+    calculate_premium 的引用 chunk_id 是 premium_rates 行 id(纯数字),知识库 chunks 是
+    varchar(如 尊享e生2025:12);两源都要能验真实存在,否则算费引用一律误报 chunk 缺失。"""
     from app.config import load as load_cfg
     from app.retrieval.knowledge_store import KnowledgeStore
-    return KnowledgeStore(cfg=load_cfg())
+    from app.businesses.premium import PremiumStore
+    cfg = load_cfg()
+    return KnowledgeStore(cfg=cfg), PremiumStore(cfg=cfg)
 
 
-def check_one(r: dict, kstore, chunk_cache: dict) -> dict:
+def check_one(r: dict, kstore, pstore, chunk_cache: dict) -> dict:
     """对单条结果做四项断言,返回 {id, ok, issues, n_cited, n_invalid, ...}。"""
     out: dict[str, Any] = {
         "id": r.get("id"), "type": r.get("type"),
@@ -69,6 +74,10 @@ def check_one(r: dict, kstore, chunk_cache: dict) -> dict:
     # ① 角标完整性
     idxs = [int(m.group(1)) for m in CITE_RE.finditer(answer)]
     out["n_cited"] = len(idxs)
+    if not by_idx:
+        # 无任何 citation 时,回答里的 [n] 视为文本举例(如复述用户问题里的编号),
+        # 不作引用角标校验——真引用必有 citations 数据
+        idxs = []
     for n in idxs:
         c = by_idx.get(n)
         if c is None:
@@ -85,11 +94,16 @@ def check_one(r: dict, kstore, chunk_cache: dict) -> dict:
             out["issues"].append(f"角标 [{n}] chunk={cid} 不在本轮检索集({len(retrieved)} 个)")
             out["n_out_of_retrieval"] += 1
             out["ok"] = False
-        # ③ chunk 真实性:能取到原文
+        # ③ chunk 真实性:能取到原文(纯数字 id 走费率库 premium_rates)
         if cid not in chunk_cache:
             try:
                 row = kstore.get_chunk(cid)
-                chunk_cache[cid] = (row.get("content") or "") if row else None
+                if row is None and cid.isdigit():
+                    prate = pstore.get_rate_by_id(int(cid))
+                    chunk_cache[cid] = (f"<rate#{cid} {prate.get('item_name')}>"
+                                        if prate else None)
+                else:
+                    chunk_cache[cid] = (row.get("content") or "") if row else None
             except Exception as e:  # noqa: BLE001
                 chunk_cache[cid] = f"<error {e}>"
         content = chunk_cache[cid]
@@ -129,11 +143,11 @@ def main() -> int:
         print("报告为空,无可校验条目。")
         return 0
 
-    kstore = _kstore()
+    kstore, pstore = _kstore()
     chunk_cache: dict[str, Any] = {}
     checks = []
     for r in results:
-        c = check_one(r, kstore, chunk_cache)
+        c = check_one(r, kstore, pstore, chunk_cache)
         checks.append(c)
         flag = "OK  " if c["ok"] else "FAIL"
         print(f"  [{flag}] {str(c['id']):16s} cites={c['n_cited']:>2d}  issues={len(c['issues'])}")
@@ -153,7 +167,7 @@ def main() -> int:
     }
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
-        json.dump({"summary": summary, "results": checks}, f, ensure_ascii=False, indent=1)
+        json.dump({"prompt_version": prompt_version(), "summary": summary, "results": checks}, f, ensure_ascii=False, indent=1)
 
     print(f"\n引用层校验: {summary['passed']}/{summary['total']} passed"
           f" | 角标总数={summary['total_citations']}"

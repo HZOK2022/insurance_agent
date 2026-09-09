@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class _Pending:
@@ -31,6 +34,8 @@ class ApprovalCenter:
         req = {"request_id": rid, "tool": tool, "args": args, "reason": reason}
         with self._lock:
             self._pending[rid] = _Pending(rid, tool, args, reason)
+        logger.info("【审批】收到写操作审批请求:请求 %s,工具 %s,原因 %s", rid, tool, (reason or "")[:60],
+                    extra={"op": "approval.request", "tool": tool})
         return rid, req
 
     def decide(self, request_id: str, status: str, edited_args=None,
@@ -39,10 +44,15 @@ class ApprovalCenter:
         with self._lock:
             p = self._pending.get(request_id)
             if p is None:
+                logger.warning("【审批】决定失败:未找到待审批请求 %s(状态=%s)", request_id, status,
+                               extra={"op": "approval.decide", "status": status})
                 return False
             p.decision = {"request_id": request_id, "status": status,
                           "edited_args": edited_args, "reason": reason, "decided_by": decided_by}
             p.event.set()
+        logger.info("【审批】已决定:请求 %s,工具 %s → %s(审批人=%s,已改参=%s,原因=%s)",
+                    request_id, p.tool, status, decided_by, edited_args is not None, (reason or "")[:60],
+                    extra={"op": "approval.decide", "tool": p.tool, "status": status})
         return True
 
     def wait(self, request_id: str, timeout: float | None = None):
@@ -52,4 +62,8 @@ class ApprovalCenter:
         if p is None:
             return None
         p.event.wait(timeout if timeout is not None else self.timeout)
-        return p.decision if p.decision is not None else {"status": "timeout"}
+        if p.decision is None:
+            logger.warning("【审批】等待超时:请求 %s 的工具 %s 未在时限内被决定", request_id, p.tool,
+                           extra={"op": "approval.timeout", "tool": p.tool})
+            return {"status": "timeout"}
+        return p.decision
